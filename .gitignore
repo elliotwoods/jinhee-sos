@@ -1,0 +1,38 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Arduino / ESP32 build artifacts
+.arduino/
+build/
+*.bin
+*.elf
+*.map
+
+# Vendored Arduino libraries
+/live files/libraries/
+
+# App runtime data (logs, databases, locks, exports)
+pairing_station/data/
+flashing_station/data/
+zones/flasher/data/
+
+# Scratch / generated intermediates
+/tmp/
+
+# Internal documents
+/*.pdf
+/output/
+
+# Verified, portable cube firmware only
+!flashing_station/build/
+flashing_station/build/*
+!flashing_station/build/manifest.json
+!flashing_station/build/neocore_usb.ino.bin
+!flashing_station/build/neocore_usb.ino.bootloader.bin
+!flashing_station/build/neocore_usb.ino.partitions.bin
+!flashing_station/build/boot_app0.bin

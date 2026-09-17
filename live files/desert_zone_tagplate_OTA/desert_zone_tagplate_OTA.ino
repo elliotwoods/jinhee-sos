@@ -1,0 +1,1342 @@
+/*
+========================================================
+ NCT IMMERSIVE DEEP
+ DESERT TAG PLATE
+
+ Version : v1.4.1-CH2-FIX
+ Date    : 2026-09-17
+
+ Hardware
+ - ESP32-C3 SuperMini
+ - PN532 I2C
+ - 1CH MOSFET
+ - 12V Light Panel
+
+ Pin
+ - PN532 SDA   = GPIO4
+ - PN532 SCL   = GPIO3
+ - MOSFET      = GPIO1
+
+ Changes from v1.3
+ - PN532 실제 CHIP ID(0x32) 확인 추가
+ - PN532 미연결 상태에서 FOUND 오판 방지
+ - WiFi.disconnect(true) 제거
+ - ESP-NOW Normal Mode에서 실제 STA MAC 유지
+ - 평상시 공유기에는 연결하지 않음
+ - ESP-NOW Normal Mode 채널을 CH2로 고정
+ - OTA 필요할 때만 Wi-Fi 접속
+ - Serial "OTA" 또는 MSG_ENTER_OTA로 OTA 진입
+ - OTA 5분 Timeout 후 자동 재부팅
+
+ Existing stable settings retained
+ - NFC CHECK = 30ms
+ - NFC READ TIMEOUT = 80ms
+ - TAG LEAVE = 700ms
+ - MSG_SET_ZONE / ZONE_DESERT
+ - MSG_TAG_STATE
+========================================================
+*/
+
+
+#include <WiFi.h>
+#include <esp_now.h>
+#include <Wire.h>
+#include <Adafruit_PN532.h>
+#include <ArduinoOTA.h>
+#include <esp_arduino_version.h>
+#include <esp_wifi.h>
+
+
+// =====================================================
+// WIFI / OTA
+// =====================================================
+
+const char* WIFI_SSID     = "CONFIGURE_LOCALLY";
+const char* WIFI_PASSWORD = "CONFIGURE_LOCALLY";
+const char* OTA_PASSWORD  = "CONFIGURE_LOCALLY";
+
+// 공유기 2.4GHz 고정 채널과 동일하게 사용
+const uint8_t ESPNOW_CHANNEL = 2;
+
+bool otaMode = false;
+
+unsigned long otaStartTime = 0;
+
+const unsigned long OTA_TIMEOUT =
+  5UL * 60UL * 1000UL;
+
+
+// =====================================================
+// PIN
+// =====================================================
+
+#define SDA_PIN      4
+#define SCL_PIN      3
+#define MOSFET_PIN   1
+
+Adafruit_PN532 nfc(-1, -1);
+
+
+// =====================================================
+// NFC
+// 기존 성공값 유지
+// =====================================================
+
+#define NFC_CHECK_INTERVAL 30
+#define NFC_READ_TIMEOUT   80
+#define TAG_LEAVE_TIMEOUT  700
+
+
+// =====================================================
+// MESSAGE TYPE
+// =====================================================
+
+enum MessageType : uint8_t {
+
+  MSG_DISCOVER       = 1,
+  MSG_DISCOVER_REPLY = 2,
+
+  MSG_REGISTER       = 3,
+  MSG_REGISTER_ACK   = 4,
+
+  MSG_ENTER_OTA      = 5,
+
+  MSG_SET_ZONE       = 6,
+
+  MSG_TAG_STATE      = 7
+};
+
+
+// =====================================================
+// ZONE
+// =====================================================
+
+enum ZoneType : uint8_t {
+
+  ZONE_IDLE     = 0,
+  ZONE_PRESHOW  = 1,
+  ZONE_DESERT   = 2,
+  ZONE_POOL     = 3,
+  ZONE_MAINSHOW = 4
+};
+
+
+// =====================================================
+// PACKET
+// =====================================================
+
+struct Packet {
+
+  uint8_t type;
+
+  uint32_t cubeID;
+
+  uint8_t mac[6];
+
+  uint8_t uidLength;
+  uint8_t uid[7];
+
+  uint8_t success;
+};
+
+
+// =====================================================
+// CUBE RECORD
+// =====================================================
+
+struct CubeRecord {
+
+  uint32_t cubeID;
+
+  uint8_t uidLength;
+  uint8_t uid[7];
+
+  uint8_t mac[6];
+};
+
+
+// =====================================================
+// CUBE TABLE
+// 현재 등록 32대
+// =====================================================
+
+CubeRecord cubeTable[] = {
+
+  {1,  7, {0x04,0x60,0x35,0x4A,0xB6,0x21,0x91}, {0xAC,0x27,0x6E,0x80,0x37,0xBC}},
+  {2,  7, {0x53,0x21,0xD4,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0x60,0x4C}},
+  {3,  7, {0x53,0x79,0xD8,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x80,0x30,0x24}},
+  {4,  7, {0x53,0xFA,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xDF,0x4C}},
+  {5,  7, {0x53,0x02,0xD5,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x83,0x16,0x64}},
+  {6,  7, {0x53,0xE9,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xC4,0x44}},
+  {7,  7, {0x53,0x2A,0xD4,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0x47,0x7C}},
+  {8,  7, {0x53,0x96,0xD4,0xCF,0x33,0x00,0x01}, {0xE0,0x72,0xA1,0x1E,0x0D,0x08}},
+  {9,  7, {0x53,0xF9,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xDE,0x04}},
+  {10, 7, {0x53,0x22,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF1,0xD2,0xB4}},
+  {11, 7, {0x04,0x60,0x3C,0x4A,0xB6,0x21,0x91}, {0xAC,0x27,0x6E,0x81,0xF9,0x38}},
+  {12, 7, {0x04,0x60,0x33,0x4A,0xB6,0x21,0x91}, {0x1C,0xDB,0xD4,0xF0,0xCF,0x10}},
+  {13, 7, {0x04,0x60,0x34,0x4A,0xB6,0x21,0x91}, {0xAC,0x27,0x6E,0x81,0xF3,0xE8}},
+  {14, 7, {0x53,0x20,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xEF,0x7B,0x14}},
+  {15, 7, {0x53,0xF4,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xCF,0xA0}},
+  {16, 7, {0x53,0xEB,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xC3,0x94}},
+  {17, 7, {0x53,0x1F,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xA8,0x30}},
+  {18, 7, {0x53,0xEA,0xD4,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x80,0x07,0xDC}},
+  {19, 7, {0x53,0x8E,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xD4,0x20}},
+  {20, 7, {0x53,0x8C,0xD4,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0x59,0x10}},
+  {21, 7, {0x53,0x8D,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xEF,0x43,0x8C}},
+  {22, 7, {0x04,0x60,0x32,0x4A,0xB6,0x21,0x91}, {0xAC,0x27,0x6E,0x82,0xAD,0x7C}},
+  {23, 7, {0x53,0x97,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xD2,0x5C}},
+  {24, 7, {0x53,0xEC,0xD4,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF1,0x47,0x44}},
+  {25, 7, {0x53,0x95,0xD8,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF1,0xD0,0x60}},
+  {26, 7, {0x53,0x74,0xD8,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xF0,0xCF,0xE8}},
+  {27, 7, {0x53,0x8D,0xD8,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0x28,0x30}},
+  {28, 7, {0x53,0x7B,0xD8,0xCF,0x33,0x00,0x01}, {0xE0,0x72,0xA1,0x1E,0x0D,0xD4}},
+  {29, 7, {0x53,0x73,0xD8,0xCF,0x33,0x00,0x01}, {0x1C,0xDB,0xD4,0xEF,0x70,0x40}},
+  {30, 7, {0x53,0x04,0xD5,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0x93,0x84}},
+  {31, 7, {0x53,0x97,0xD8,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x83,0x15,0x34}},
+  {32, 7, {0x53,0x7A,0xD8,0xCF,0x33,0x00,0x01}, {0xAC,0x27,0x6E,0x82,0xB9,0x44}}
+};
+
+
+const int CUBE_COUNT =
+  sizeof(cubeTable) / sizeof(cubeTable[0]);
+
+
+// =====================================================
+// NFC STATE
+// =====================================================
+
+bool tagPresent = false;
+
+uint8_t currentUid[7];
+uint8_t currentUidLength = 0;
+
+int currentCubeIndex = -1;
+
+unsigned long lastSeenTime = 0;
+unsigned long lastNfcCheck = 0;
+
+
+// =====================================================
+// FORWARD DECLARATION
+// =====================================================
+
+void enterOTAMode();
+
+
+// =====================================================
+// ESP-NOW RECEIVE
+// =====================================================
+
+void processIncomingData(
+  const uint8_t *data,
+  int len
+) {
+
+  if (len < sizeof(Packet)) {
+    return;
+  }
+
+
+  Packet packet;
+
+  memcpy(
+    &packet,
+    data,
+    sizeof(Packet)
+  );
+
+
+  if (
+    packet.type == MSG_ENTER_OTA
+  ) {
+
+    Serial.println();
+    Serial.println(
+      "MSG_ENTER_OTA RECEIVED"
+    );
+
+    enterOTAMode();
+  }
+}
+
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+
+void onDataRecv(
+  const esp_now_recv_info_t *info,
+  const uint8_t *data,
+  int len
+) {
+
+  processIncomingData(
+    data,
+    len
+  );
+}
+
+#else
+
+void onDataRecv(
+  const uint8_t *mac,
+  const uint8_t *data,
+  int len
+) {
+
+  processIncomingData(
+    data,
+    len
+  );
+}
+
+#endif
+
+
+// =====================================================
+// OTA MODE
+// =====================================================
+
+void enterOTAMode() {
+
+  if (otaMode) {
+    return;
+  }
+
+
+  otaMode = true;
+
+
+  // 도광판 OFF
+  digitalWrite(
+    MOSFET_PIN,
+    LOW
+  );
+
+
+  Serial.println();
+  Serial.println(
+    "============================"
+  );
+  Serial.println(
+    "ENTERING OTA MODE"
+  );
+  Serial.println(
+    "============================"
+  );
+
+
+  // 정상 ESP-NOW 종료
+  esp_now_deinit();
+
+
+  delay(200);
+
+
+  // Wi-Fi STA 모드는 이미 사용 중이지만
+  // 확실히 STA로 유지
+  WiFi.mode(
+    WIFI_STA
+  );
+
+
+  WiFi.setSleep(
+    false
+  );
+
+
+  Serial.print(
+    "WiFi connecting"
+  );
+
+
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
+
+
+  unsigned long start =
+    millis();
+
+
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - start < 15000
+  ) {
+
+    delay(250);
+
+    Serial.print(".");
+  }
+
+
+  Serial.println();
+
+
+  if (
+    WiFi.status() != WL_CONNECTED
+  ) {
+
+    Serial.println(
+      "OTA WIFI FAILED"
+    );
+
+    Serial.println(
+      "RESTARTING..."
+    );
+
+    delay(1000);
+
+    ESP.restart();
+  }
+
+
+  Serial.println(
+    "WiFi CONNECTED"
+  );
+
+
+  Serial.print(
+    "IP: "
+  );
+
+  Serial.println(
+    WiFi.localIP()
+  );
+
+
+  Serial.print(
+    "CHANNEL: "
+  );
+
+  Serial.println(
+    WiFi.channel()
+  );
+
+
+  // ===================================================
+  // OTA HOSTNAME
+  // ===================================================
+
+  uint64_t chipid =
+    ESP.getEfuseMac();
+
+
+  char hostname[40];
+
+
+  snprintf(
+    hostname,
+    sizeof(hostname),
+    "NCT-DESERT-%04X",
+    (uint16_t)(chipid & 0xFFFF)
+  );
+
+
+  ArduinoOTA.setHostname(
+    hostname
+  );
+
+
+  ArduinoOTA.setPassword(
+    OTA_PASSWORD
+  );
+
+
+  ArduinoOTA.onStart([]() {
+
+    digitalWrite(
+      MOSFET_PIN,
+      LOW
+    );
+
+    Serial.println();
+    Serial.println(
+      "OTA UPDATE START"
+    );
+  });
+
+
+  ArduinoOTA.onEnd([]() {
+
+    Serial.println();
+    Serial.println(
+      "OTA UPDATE COMPLETE"
+    );
+  });
+
+
+  ArduinoOTA.onProgress(
+    [](unsigned int progress,
+       unsigned int total) {
+
+      Serial.printf(
+        "OTA %u%%\r",
+        (progress * 100) / total
+      );
+    }
+  );
+
+
+  ArduinoOTA.onError(
+    [](ota_error_t error) {
+
+      Serial.printf(
+        "OTA ERROR [%u]\n",
+        error
+      );
+    }
+  );
+
+
+  ArduinoOTA.begin();
+
+
+  otaStartTime =
+    millis();
+
+
+  Serial.println();
+
+  Serial.print(
+    "OTA READY: "
+  );
+
+  Serial.println(
+    hostname
+  );
+
+
+  Serial.println(
+    "Waiting for update..."
+  );
+}
+
+
+// =====================================================
+// UID PRINT
+// =====================================================
+
+void printUid(
+  const uint8_t *uid,
+  uint8_t len
+) {
+
+  for (
+    int i = 0;
+    i < len;
+    i++
+  ) {
+
+    if (
+      uid[i] < 0x10
+    ) {
+
+      Serial.print("0");
+    }
+
+
+    Serial.print(
+      uid[i],
+      HEX
+    );
+
+
+    if (
+      i < len - 1
+    ) {
+
+      Serial.print(":");
+    }
+  }
+}
+
+
+// =====================================================
+// FIND CUBE
+// =====================================================
+
+int findCube(
+  const uint8_t *uid,
+  uint8_t uidLength
+) {
+
+  for (
+    int i = 0;
+    i < CUBE_COUNT;
+    i++
+  ) {
+
+    if (
+      cubeTable[i].uidLength
+      != uidLength
+    ) {
+
+      continue;
+    }
+
+
+    if (
+      memcmp(
+        cubeTable[i].uid,
+        uid,
+        uidLength
+      ) == 0
+    ) {
+
+      return i;
+    }
+  }
+
+
+  return -1;
+}
+
+
+// =====================================================
+// PEER
+// =====================================================
+
+bool addPeer(
+  const uint8_t *mac
+) {
+
+  if (
+    esp_now_is_peer_exist(mac)
+  ) {
+
+    return true;
+  }
+
+
+  esp_now_peer_info_t peer = {};
+
+
+  memcpy(
+    peer.peer_addr,
+    mac,
+    6
+  );
+
+
+  peer.channel = ESPNOW_CHANNEL;
+  peer.encrypt = false;
+
+
+  return (
+    esp_now_add_peer(&peer)
+    == ESP_OK
+  );
+}
+
+
+void removePeer(
+  const uint8_t *mac
+) {
+
+  delay(30);
+
+
+  if (
+    esp_now_is_peer_exist(mac)
+  ) {
+
+    esp_now_del_peer(
+      mac
+    );
+  }
+}
+
+
+// =====================================================
+// SEND DESERT
+// =====================================================
+
+void sendDesertZone(
+  const CubeRecord &cube
+) {
+
+  if (
+    !addPeer(cube.mac)
+  ) {
+
+    Serial.println(
+      "PEER ADD FAILED"
+    );
+
+    return;
+  }
+
+
+  Packet packet = {};
+
+
+  packet.type =
+    MSG_SET_ZONE;
+
+
+  packet.cubeID =
+    cube.cubeID;
+
+
+  packet.success =
+    ZONE_DESERT;
+
+
+  esp_err_t result =
+    esp_now_send(
+      cube.mac,
+      (uint8_t *)&packet,
+      sizeof(packet)
+    );
+
+
+  if (
+    result == ESP_OK
+  ) {
+
+    Serial.print(
+      "DESERT SENT -> Cube #"
+    );
+
+    Serial.println(
+      cube.cubeID
+    );
+
+  } else {
+
+    Serial.print(
+      "DESERT SEND FAILED: "
+    );
+
+    Serial.println(
+      result
+    );
+  }
+
+
+  removePeer(
+    cube.mac
+  );
+}
+
+
+// =====================================================
+// SEND TAG STATE
+// =====================================================
+
+void sendTagState(
+  const CubeRecord &cube,
+  bool active
+) {
+
+  if (
+    !addPeer(cube.mac)
+  ) {
+
+    Serial.println(
+      "PEER ADD FAILED"
+    );
+
+    return;
+  }
+
+
+  Packet packet = {};
+
+
+  packet.type =
+    MSG_TAG_STATE;
+
+
+  packet.cubeID =
+    cube.cubeID;
+
+
+  packet.success =
+    active ? 1 : 0;
+
+
+  esp_err_t result =
+    esp_now_send(
+      cube.mac,
+      (uint8_t *)&packet,
+      sizeof(packet)
+    );
+
+
+  if (
+    result == ESP_OK
+  ) {
+
+    if (active) {
+
+      Serial.println(
+        "TAG ACTIVE SENT"
+      );
+
+    } else {
+
+      Serial.println(
+        "TAG INACTIVE SENT"
+      );
+    }
+
+  } else {
+
+    Serial.print(
+      "TAG STATE SEND FAILED: "
+    );
+
+    Serial.println(
+      result
+    );
+  }
+
+
+  removePeer(
+    cube.mac
+  );
+}
+
+
+// =====================================================
+// TAG ENTER
+// =====================================================
+
+void handleTagEnter(
+  const uint8_t *uid,
+  uint8_t uidLength
+) {
+
+  Serial.println();
+
+
+  Serial.print(
+    "TAG ENTER: "
+  );
+
+
+  printUid(
+    uid,
+    uidLength
+  );
+
+
+  Serial.println();
+
+
+  int index =
+    findCube(
+      uid,
+      uidLength
+    );
+
+
+  if (
+    index < 0
+  ) {
+
+    Serial.println(
+      "UNKNOWN CUBE"
+    );
+
+    return;
+  }
+
+
+  currentCubeIndex =
+    index;
+
+
+  Serial.print(
+    "FOUND Cube #"
+  );
+
+
+  Serial.println(
+    cubeTable[index].cubeID
+  );
+
+
+  // 도광판 ON
+  digitalWrite(
+    MOSFET_PIN,
+    HIGH
+  );
+
+
+  Serial.println(
+    "DESERT LIGHT ON"
+  );
+
+
+  // 사막 Zone
+  sendDesertZone(
+    cubeTable[index]
+  );
+
+
+  // Pulse 시작 요청
+  sendTagState(
+    cubeTable[index],
+    true
+  );
+}
+
+
+// =====================================================
+// TAG LEAVE
+// =====================================================
+
+void handleTagLeave() {
+
+  // 도광판 OFF
+  digitalWrite(
+    MOSFET_PIN,
+    LOW
+  );
+
+
+  Serial.println(
+    "DESERT LIGHT OFF"
+  );
+
+
+  if (
+    currentCubeIndex >= 0
+  ) {
+
+    sendTagState(
+      cubeTable[currentCubeIndex],
+      false
+    );
+  }
+
+
+  currentCubeIndex =
+    -1;
+}
+
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup() {
+
+  Serial.begin(
+    115200
+  );
+
+
+  delay(
+    500
+  );
+
+
+  Serial.println();
+
+  Serial.println(
+    "================================"
+  );
+
+  Serial.println(
+    "NCT DESERT TAG PLATE v1.4.1-CH2-FIX"
+  );
+
+  Serial.println(
+    "NORMAL MODE / ESP-NOW"
+  );
+
+  Serial.println(
+    "================================"
+  );
+
+
+  // ===================================================
+  // MOSFET
+  // ===================================================
+
+  pinMode(
+    MOSFET_PIN,
+    OUTPUT
+  );
+
+
+  digitalWrite(
+    MOSFET_PIN,
+    LOW
+  );
+
+
+  Serial.println(
+    "MOSFET READY / LIGHT OFF"
+  );
+
+
+  // ===================================================
+  // PN532
+  // ===================================================
+
+  Wire.begin(
+    SDA_PIN,
+    SCL_PIN
+  );
+
+
+  delay(
+    300
+  );
+
+
+  nfc.begin();
+
+
+  uint32_t version =
+    nfc.getFirmwareVersion();
+
+
+  // 실제 PN532 Chip ID는 0x32
+  uint8_t chip =
+    (version >> 24) & 0xFF;
+
+
+  if (
+    chip != 0x32
+  ) {
+
+    Serial.print(
+      "PN532 INVALID RESPONSE: 0x"
+    );
+
+    Serial.println(
+      version,
+      HEX
+    );
+
+
+    Serial.println(
+      "PN532 NOT FOUND"
+    );
+
+
+    while (
+      true
+    ) {
+
+      delay(
+        100
+      );
+    }
+  }
+
+
+  Serial.print(
+    "PN532 FOUND / FW: 0x"
+  );
+
+  Serial.println(
+    version,
+    HEX
+  );
+
+
+  nfc.SAMConfig();
+
+
+  // ===================================================
+  // ESP-NOW NORMAL MODE
+  //
+  // Wi-Fi AP에는 연결하지 않음.
+  // STA Radio만 활성화하고 채널 2로 고정.
+  // 공유기 2.4GHz도 CH2로 고정되어 있어야 함.
+  // ===================================================
+
+  WiFi.mode(
+    WIFI_STA
+  );
+
+
+  // ★ 중요
+  // WiFi.disconnect(true) 사용하지 않음.
+
+
+  delay(
+    100
+  );
+
+
+  esp_err_t channelResult =
+    esp_wifi_set_channel(
+      ESPNOW_CHANNEL,
+      WIFI_SECOND_CHAN_NONE
+    );
+
+
+  if (
+    channelResult != ESP_OK
+  ) {
+
+    Serial.print(
+      "CHANNEL SET FAILED: "
+    );
+
+    Serial.println(
+      channelResult
+    );
+
+
+    while (
+      true
+    ) {
+
+      delay(
+        100
+      );
+    }
+  }
+
+
+  Serial.print(
+    "ESP-NOW CHANNEL: "
+  );
+
+  Serial.println(
+    ESPNOW_CHANNEL
+  );
+
+
+  Serial.print(
+    "STA MAC: "
+  );
+
+  Serial.println(
+    WiFi.macAddress()
+  );
+
+
+  if (
+    esp_now_init()
+    != ESP_OK
+  ) {
+
+    Serial.println(
+      "ESP-NOW INIT ERROR"
+    );
+
+
+    while (
+      true
+    ) {
+
+      delay(
+        100
+      );
+    }
+  }
+
+
+  esp_now_register_recv_cb(
+    onDataRecv
+  );
+
+
+  Serial.print(
+    "CUBE COUNT: "
+  );
+
+  Serial.println(
+    CUBE_COUNT
+  );
+
+
+  Serial.println(
+    "READY"
+  );
+
+
+  Serial.println(
+    "Serial command: OTA"
+  );
+}
+
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop() {
+
+  // ===================================================
+  // OTA MODE
+  // ===================================================
+
+  if (
+    otaMode
+  ) {
+
+    ArduinoOTA.handle();
+
+
+    if (
+      millis() - otaStartTime
+      > OTA_TIMEOUT
+    ) {
+
+      Serial.println();
+
+      Serial.println(
+        "OTA TIMEOUT"
+      );
+
+      Serial.println(
+        "RESTARTING NORMAL MODE"
+      );
+
+
+      delay(
+        500
+      );
+
+
+      ESP.restart();
+    }
+
+
+    return;
+  }
+
+
+  // ===================================================
+  // SERIAL OTA COMMAND
+  // ===================================================
+
+  if (
+    Serial.available()
+  ) {
+
+    String command =
+      Serial.readStringUntil('\n');
+
+
+    command.trim();
+
+
+    if (
+      command.equalsIgnoreCase("OTA")
+    ) {
+
+      enterOTAMode();
+
+      return;
+    }
+  }
+
+
+  // ===================================================
+  // NFC NORMAL MODE
+  // ===================================================
+
+  unsigned long now =
+    millis();
+
+
+  if (
+    now - lastNfcCheck
+    < NFC_CHECK_INTERVAL
+  ) {
+
+    return;
+  }
+
+
+  lastNfcCheck =
+    now;
+
+
+  uint8_t uid[7];
+  uint8_t uidLength;
+
+
+  bool found =
+    nfc.readPassiveTargetID(
+      PN532_MIFARE_ISO14443A,
+      uid,
+      &uidLength,
+      NFC_READ_TIMEOUT
+    );
+
+
+  // ===================================================
+  // TAG FOUND
+  // ===================================================
+
+  if (
+    found
+  ) {
+
+    lastSeenTime =
+      now;
+
+
+    if (
+      !tagPresent
+    ) {
+
+      tagPresent =
+        true;
+
+
+      currentUidLength =
+        uidLength;
+
+
+      memcpy(
+        currentUid,
+        uid,
+        uidLength
+      );
+
+
+      handleTagEnter(
+        uid,
+        uidLength
+      );
+    }
+
+
+    return;
+  }
+
+
+  // ===================================================
+  // TAG LEAVE
+  // ===================================================
+
+  if (
+    tagPresent &&
+    now - lastSeenTime
+      > TAG_LEAVE_TIMEOUT
+  ) {
+
+    tagPresent =
+      false;
+
+
+    Serial.print(
+      "TAG LEAVE: "
+    );
+
+
+    printUid(
+      currentUid,
+      currentUidLength
+    );
+
+
+    Serial.println();
+
+
+    handleTagLeave();
+  }
+}

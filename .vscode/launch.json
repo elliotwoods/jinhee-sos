@@ -1,0 +1,48 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pairing Station",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/pairing_station/app.py",
+      "args": ["--connect"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "USB Flash Station",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/flashing_station/app.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Zone Flasher",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/zones/flasher/app.py",
+      "cwd": "${workspaceFolder}/zones/flasher",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Install prerequisites (both apps)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "module": "pip",
+      "args": [
+        "install",
+        "-r", "${workspaceFolder}/pairing_station/requirements.txt",
+        "-r", "${workspaceFolder}/flashing_station/requirements.txt"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "Create shared Python environment"
+    }
+  ]
+}

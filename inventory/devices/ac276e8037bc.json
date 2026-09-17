@@ -1,0 +1,11 @@
+{
+  "cube_id": null,
+  "detail": "Previous number 1 cleared; assign physical label number",
+  "mac": "AC:27:6E:80:37:BC",
+  "pending_uid": "04:60:35:4A:B6:21:91",
+  "role": "auto",
+  "source": "imported",
+  "status": "needs_number",
+  "uid": "04:60:35:4A:B6:21:91",
+  "updated_at": "2026-09-17T08:01:18+00:00"
+}

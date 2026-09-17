@@ -1,0 +1,11 @@
+{
+  "cube_id": null,
+  "detail": "Previous number 34 cleared; assign physical label number",
+  "mac": "1C:DB:D4:EF:6D:4C",
+  "pending_uid": null,
+  "role": "auto",
+  "source": "discovered",
+  "status": "needs_number",
+  "uid": null,
+  "updated_at": "2026-09-17T08:01:18+00:00"
+}

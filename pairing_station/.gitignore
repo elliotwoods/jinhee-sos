@@ -1,0 +1,5 @@
+.venv/
+.arduino/
+__pycache__/
+data/
+*.pyc

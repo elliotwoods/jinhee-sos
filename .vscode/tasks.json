@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Create shared Python environment",
+      "type": "process",
+      "command": "python3",
+      "args": ["-m", "venv", "${workspaceFolder}/pairing_station/.venv"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": []
+    }
+  ]
+}

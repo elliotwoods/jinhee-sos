@@ -1,0 +1,2 @@
+# Treat each device as one transaction: concurrent changes require an explicit choice.
+inventory/devices/*.json -merge

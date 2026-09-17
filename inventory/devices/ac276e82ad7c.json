@@ -1,0 +1,11 @@
+{
+  "cube_id": 22,
+  "detail": "Renumbered from None to 22. New number needs transmission.",
+  "mac": "AC:27:6E:82:AD:7C",
+  "pending_uid": null,
+  "role": "auto",
+  "source": "imported",
+  "status": "not_transmitted",
+  "uid": "04:60:32:4A:B6:21:91",
+  "updated_at": "2026-09-17T09:27:25+00:00"
+}
