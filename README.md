@@ -2,6 +2,8 @@
 
 Python desktop tools and ESP32 firmware for Neocore cubes, the NFC pairing station, and exhibition zones.
 
+**Coding agents:** start with [AGENTS.md](AGENTS.md). For a complete new-machine setup, inventory migration, firmware builds, tests and troubleshooting, use [docs/SETUP.md](docs/SETUP.md).
+
 ## Flash cubes on another Mac
 
 Install Git and Python 3.14 with Tk (using Homebrew):
