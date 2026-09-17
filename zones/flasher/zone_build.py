@@ -48,7 +48,7 @@ def digest(path):
 
 def sources(sketch):
     sketch = ZONES / 'firmware' / sketch
-    files = sorted(sketch.glob('*.ino')) + sorted(sketch.glob('*.csv')) + sorted((ZONES / 'firmware/libraries/NctZone/src').glob('*'))
+    files = sorted(sketch.glob('*.ino')) + sorted(sketch.glob('*.h')) + sorted(sketch.glob('*.csv')) + sorted((ZONES / 'firmware/libraries/NctZone/src').glob('*'))
     return files
 
 
@@ -93,6 +93,8 @@ def build(name, run):
     out = build_dir(name)
     out.mkdir(parents=True, exist_ok=True)
     args = [cli, 'compile', '--fqbn', fqbn]
+    if name == 'PoolZone':
+        args += ['--build-property', 'build.extra_flags=-DPOOL_BUILD_ID=h' + before]
     for library in LIBRARIES:
         args += ['--libraries', str(library)]
     run(args + ['--build-path', str(out / 'cache'), '--output-dir', str(out), str(ZONES / 'firmware' / name)], timeout=900)

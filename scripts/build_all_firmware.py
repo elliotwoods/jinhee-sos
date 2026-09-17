@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Build all maintained firmware and diagnostic targets; never upload."""
+import argparse
+import importlib.util
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
+C3 = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'
+SUPERMINI = 'esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc,PartitionScheme=no_ota'
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--dry-run', action='store_true', help='List targets and output directories without compiling')
+    options = parser.parse_args()
+    sys.path.insert(0, str(ROOT/'flashing_station'))
+    cube = load('cube_build', ROOT/'flashing_station/build.py')
+    zones = load('zone_build', ROOT/'zones/flasher/zone_build.py')
+    cli = str(IDE_CLI) if IDE_CLI.exists() else shutil.which('arduino-cli')
+    if not cli and not options.dry_run:
+        parser.error('Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 first')
+
+    def run(args, timeout):
+        subprocess.run(args, check=True, timeout=timeout, cwd=ROOT)
+
+    def compile_sketch(sketch, out, board, libraries=()):
+        out.mkdir(parents=True, exist_ok=True)
+        args = [cli, 'compile', '--fqbn', board]
+        for library in libraries:
+            args += ['--libraries', str(ROOT/library)]
+        run(args + ['--build-path', str(out/'cache'), '--output-dir', str(out), str(ROOT/sketch)], 900)
+
+    targets = [('Neocore USB', ROOT/'flashing_station/build', lambda: cube.build(run))]
+    for name in zones.SKETCHES:
+        targets.append((name, zones.build_dir(name), lambda name=name: zones.build(name, run)))
+    for name, sketch, output, board, libraries in [
+        ('Pairing station', 'pairing_station/firmware/pairing_station', 'pairing_station/build', C3,
+         ('pairing_station/.arduino/libraries', 'zones/firmware/libraries')),
+        ('Pool radio test', 'poolzone_test/firmware/PoolRadioTest', 'poolzone_test/build', SUPERMINI, ()),
+        ('Pool central test', 'poolzone_test/firmware/PoolCentralTest', 'poolzone_test/build/central', C3, ()),
+        ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
+    ]:
+        out = ROOT/output
+        targets.append((name, out, lambda sketch=sketch, out=out, board=board, libraries=libraries:
+                        compile_sketch(sketch, out, board, libraries)))
+
+    failed = []
+    for name, out, build in targets:
+        print(f'\n=== {name} → {out.relative_to(ROOT)} ===', flush=True)
+        if options.dry_run:
+            continue
+        try:
+            build()
+            print(f'PASS: {name}', flush=True)
+        except Exception as exc:
+            failed.append(name)
+            print(f'FAIL: {name}: {exc}', file=sys.stderr, flush=True)
+    if options.dry_run:
+        print(f'\n{len(targets)} targets. Dry run; nothing compiled or uploaded.')
+    elif failed:
+        print('\nFailed targets: '+', '.join(failed), file=sys.stderr)
+        return 1
+    else:
+        print(f'\nAll {len(targets)} firmware targets built successfully. No devices were uploaded.')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

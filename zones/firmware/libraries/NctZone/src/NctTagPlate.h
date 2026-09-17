@@ -19,6 +19,7 @@ struct TagPlateOptions {
   const char *banner = "NCT TAG PLATE";
   uint8_t zoneType = 0;        // zone sent to cubes; 0 = use the zone type stored in zcfg
   int sdaPin = 4, sclPin = 3;  // field-proven PN532 wiring
+  bool nfcEnabled = true;     // local sensor calibration can bypass reader initialization/polling
   int ledPin = 8;              // SuperMini onboard LED (active low)
 };
 
@@ -60,11 +61,11 @@ class TagPlate {
     bool busClear = recoverBus();
     delay(300);
     nfcOk = false;
-    for (int attempt = 0; attempt < 3 && !nfcOk && busClear; attempt++) {
+    for (int attempt = 0; options_.nfcEnabled && attempt < 3 && !nfcOk && busClear; attempt++) {
       nfcOk = beginNfc();
       if (!nfcOk) delay(400);
     }
-    Serial.println(nfcOk ? "PN532 FOUND" : busClear ? "PN532 NOT FOUND (radio continues; retrying)"
+    Serial.println(!options_.nfcEnabled ? "PN532 disabled" : nfcOk ? "PN532 FOUND" : busClear ? "PN532 NOT FOUND (radio continues; retrying)"
                                                     : "PN532 I2C LINE HELD LOW (check wiring / power-cycle the reader; retrying)");
     lastNfcRetry_ = lastHealth_ = millis();
 
@@ -79,7 +80,7 @@ class TagPlate {
     if (!radioOk) {
       Serial.println("ESP-NOW INIT ERROR");
       link.setError(ERR_RADIO);
-    } else if (!nfcOk) {
+    } else if (options_.nfcEnabled && !nfcOk) {
       link.setError(ERR_NFC);
     }
   }
@@ -103,13 +104,15 @@ class TagPlate {
     link.poll();
     processSendResults();
     pollFlash();
-    pollNfc();
+    if (options_.nfcEnabled) pollNfc();
   }
 
   uint8_t zoneType() const { return options_.zoneType ? options_.zoneType : (configOk ? config.zoneType : 0); }
   bool tagPresent() const { return tagPresent_; }
   const uint8_t *currentUid() const { return currentUid_; }
   uint8_t currentUidLength() const { return currentUidLength_; }
+  const Record &currentCube() const { return currentCube_; }
+  int currentDelivery() const { return currentDelivery_; }  // 0 pending/unknown, 1 ACK, -1 failed
 
   // Unicast a 24-byte cube Packet. `handle` (from link.noteTag) receives the delivery result.
   bool sendToCube(const Record &cube, uint8_t type, uint8_t value, uint32_t handle = 0) {
@@ -235,6 +238,8 @@ class TagPlate {
       if (!oldest) continue;
       oldest->active = false;
       if (!r.ok) link.noteSendFail();
+      if (oldest->handle && oldest->handle == currentTagHandle_)
+        currentDelivery_ = r.ok ? 1 : -1;
       if (oldest->handle) link.updateTag(oldest->handle, r.ok ? TAG_DELIVERED : TAG_UNCONFIRMED);
       if (oldest->cubeID) {
         Serial.printf("Cube #%lu %s\n", (unsigned long)oldest->cubeID, r.ok ? "DELIVERED" : "NOT ACKNOWLEDGED");
@@ -254,6 +259,8 @@ class TagPlate {
     Serial.println();
     const Record *cube = db.find(uid, length);
     currentCube_ = cube ? *cube : Record{};
+    currentDelivery_ = 0;
+    currentTagHandle_ = 0;
     Serial.print("EVT TAG uid=");
     printHex(uid, length);
     if (cube) {
@@ -269,9 +276,10 @@ class TagPlate {
     } else {
       Serial.printf("FOUND Cube #%lu\n", (unsigned long)cube->cubeID);
       uint32_t handle = link.noteTag(uid, length, cube->cubeID, TAG_PENDING);
+      currentTagHandle_ = handle;
       if (flashing_ && flashCube_.cubeID == cube->cubeID) flashing_ = false;  // a real tap wins over a test flash
       if (zoneType() >= ZONE_PRESHOW && zoneType() <= ZONE_MAINSHOW) {
-        sendToCube(*cube, MSG_SET_ZONE, zoneType(), handle);
+        if (!sendToCube(*cube, MSG_SET_ZONE, zoneType(), handle)) currentDelivery_ = -1;
       } else {
         Serial.println("ZONE TYPE NOT CONFIGURED: cube not updated");
         link.updateTag(handle, TAG_UNCONFIRMED);
@@ -454,6 +462,8 @@ class TagPlate {
   bool tagPresent_ = false;
   uint8_t currentUid_[7] = {}, currentUidLength_ = 0;
   Record currentCube_ = {};
+  uint32_t currentTagHandle_ = 0;
+  int currentDelivery_ = 0;
   uint32_t lastSeen_ = 0, lastNfcCheck_ = 0, lastNfcRetry_ = 0, enteredAt_ = 0, lastHealth_ = 0;
   uint32_t nfcVersion_ = 0, nfcPolls_ = 0, nfcFound_ = 0, nfcLastMs_ = 0, nfcMaxMs_ = 0, nfcFastFails_ = 0, nfcRecoveries_ = 0;
   uint8_t fastFailRun_ = 0;

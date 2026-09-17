@@ -26,7 +26,8 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
 
 - **No router dependency.** No zone joins the Wi-Fi router any more; the channel is fixed at 2.
 - **Desert OTA is gone.** The cube table now updates over ESP-NOW, so OTA is no longer needed.
-- **Pool radio settings.** The radio ID (1-6) is the zone point. The slider calibration (mm at member 1 and member 23) is entered in the flasher and stored in flash. Serial `dist` streams the measured distance so you can read the two values off.
+- **Pool calibration and diagnostics.** PoolZone restores NeoCube-gated pool light output and provides an explicitly armed, watchdog-protected Python override. Use [`calibration/Launch.command`](calibration/README.md) for live hardware tracking, control-point interpolation across 23 ticks, ±33% acceptance windows and persistent flash calibration.
+- **Legacy Pool radio settings.** The radio ID (1-6) is the zone point. The slider calibration (mm at member 1 and member 23) is entered in the flasher and stored in flash. Serial `dist` streams the measured distance so you can read the two values off.
 - **Pool central controller must be reflashed.** `PoolZone_Central_Controiler` is now on channel 2 (one-line change) and needs reflashing, the same as the SerialDAT bridge.
 
 ## Flash zones (zones/flasher/Launch.command)

@@ -2,12 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "PoolZone Calibration & Diagnostics",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/zones/calibration/app.py",
+      "args": [
+        "--port",
+        "/dev/cu.usbmodem101"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Poolzone Light Test",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/poolzone_test/app.py",
+      "args": [
+        "--port",
+        "/dev/cu.usbmodem101",
+        "--central",
+        "/dev/cu.usbmodem2101"
+      ],
+      "cwd": "${workspaceFolder}/poolzone_test",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Pairing Station",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
       "program": "${workspaceFolder}/pairing_station/app.py",
-      "args": ["--connect"],
+      "args": [
+        "--connect"
+      ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },
@@ -37,12 +67,24 @@
       "module": "pip",
       "args": [
         "install",
-        "-r", "${workspaceFolder}/pairing_station/requirements.txt",
-        "-r", "${workspaceFolder}/flashing_station/requirements.txt"
+        "-r",
+        "${workspaceFolder}/pairing_station/requirements.txt",
+        "-r",
+        "${workspaceFolder}/flashing_station/requirements.txt"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "preLaunchTask": "Create shared Python environment"
+    },
+    {
+      "name": "Build all firmwares",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/build_all_firmware.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ]
 }

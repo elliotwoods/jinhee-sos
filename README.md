@@ -75,3 +75,7 @@ pairing_station/.venv/bin/python flashing_station/tests/gui_smoke.py
 ```
 
 GUI tests require a desktop session and use simulated devices.
+
+## Poolzone central light test
+
+[Poolzone test console](poolzone_test/README.md) provides a USB ESP32-C3 bridge and Python GUI for the legacy central controller on ESP-NOW channel 2. Run `./poolzone_test/Launch.command` for member toggles, sequential testing, and All Off.

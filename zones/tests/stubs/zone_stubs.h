@@ -197,9 +197,27 @@ struct Adafruit_PN532 {
 inline bool laserPresent = true;
 inline uint16_t laserDistance = 0;
 struct VL53L4CD {
+  struct { uint8_t range_status = 0; } ranging_data;
   void setTimeout(uint16_t) {}
   bool init(bool = true, bool = false) { return laserPresent; }
+  bool dataReady() { return true; }
+  bool setRangeTiming(uint8_t, uint32_t) { return true; }
   void startContinuous() {}
   uint16_t readRangeContinuousMillimeters(bool = true) { return laserDistance; }
   bool timeoutOccurred() { return false; }
+};
+
+// Preferences blob storage survives simulated sketch restarts.
+struct Preferences {
+  inline static std::vector<uint8_t> blob;
+  bool begin(const char *, bool) { return true; }
+  void end() {}
+  size_t getBytesLength(const char *) { return blob.size(); }
+  size_t putBytes(const char *, const void *p, size_t n) {
+    blob.assign((const uint8_t*)p, (const uint8_t*)p+n); return n;
+  }
+  size_t getBytes(const char *, void *p, size_t n) {
+    if (blob.size()!=n) return 0;
+    memcpy(p,blob.data(),n); return n;
+  }
 };
