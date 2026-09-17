@@ -92,8 +92,6 @@ class Controller:
         row = self.db.get(mac)
         if row and row['cube_id'] is None:
             self.db.validate_number(mac, number)
-        if row and row['pending_uid'] and row['cube_id'] is not None:
-            raise ValueError('Retry the pending registration before re-pairing this cube')
         if self.mode == 'preview':
             self.stop(then=('repair', mac, number))
             self.notify('scan', 'PREPARING TO REGISTER', f'{mac} · Switching from the selection preview to continuous flashing…')

@@ -29,6 +29,29 @@ class StationTests(unittest.TestCase):
         self.temp.cleanup()
     def reply(self,ack=True):
         self.c.event(dict(event='registered',id=self.c.request,mac=self.c.active['mac'],cube_id=self.c.active['cube_id'],acknowledged=ack))
+    def test_known_physical_numbers_are_reserved_without_fake_devices(self):
+        self.db.clear_unseen_numbers()
+        with self.db.conn:
+            for number in range(33,44):
+                if number not in (39,43):
+                    self.db.conn.execute('INSERT INTO reserved_numbers VALUES (?,?)',(number,'test occupied'))
+        self.assertEqual(self.db.suggested_number(),44)
+        self.c.event(dict(event='device',mac=NEW))
+        self.db.rename(NEW,39)  # Explicit identification of the real labelled module is allowed.
+        self.assertEqual(self.db.get(NEW)['cube_id'],39)
+        self.db.close(); self.db=Database(self.path)
+        self.assertEqual({2,22,39,43} & {r[0] for r in self.db.conn.execute('SELECT cube_id FROM reserved_numbers')},{2,22,39,43})
+        self.assertEqual(self.db.suggested_number(),44)
+
+    def test_suggested_number_is_free_above_32_and_reuses_gaps(self):
+        self.db.clear_unseen_numbers()
+        self.assertEqual(self.db.suggested_number(),33)
+        self.db.reserve(NEW); self.db.rename(NEW,33)
+        self.db.reserve(NEW2); self.db.rename(NEW2,35)
+        self.assertEqual(self.db.suggested_number(),34)
+        self.db.rename(NEW,36)
+        self.assertEqual(self.db.suggested_number(),33)
+
     def test_original_number_remains_visible_without_reserving_it(self):
         from dashboard import inventory
         from types import SimpleNamespace
@@ -184,6 +207,7 @@ class StationTests(unittest.TestCase):
     def test_failed_repair_does_not_leave_a_phantom_active_target(self):
         self.db.reserve(NEW)
         self.db.prepare(NEW,UID)
+        self.db.set_role(NEW, 'excluded')
         with self.assertRaises(ValueError): self.c.repair(NEW)
         self.assertIsNone(self.c.active)
         self.assertEqual(self.c.mode,'')

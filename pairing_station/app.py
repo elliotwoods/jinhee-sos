@@ -13,6 +13,7 @@ from serial.tools import list_ports
 from database import Database, ROOT
 from controller import Controller
 from transport import Transport
+from usb_identify import UsbIdentifier
 from zone_registry import ZoneRegistry
 
 class App:
@@ -26,9 +27,16 @@ class App:
         self.zones = ZoneRegistry(self.db, self.transport.send, self.log)
         self.zones_window = None
         self.last_ping = 0
+        self.last_hello_retry = 0
         self.last_rx = 0
         self.opened_at = 0
         self.closing = False
+        self.usb_identifier = UsbIdentifier()
+        self.usb_firmware = {}
+        self.usb_locked_mac = None
+        self.usb_locked_key = None
+        self.usb_pending = None
+        self.usb_prompt_active = False
         root.title('NCT · NFC Pairing Station')
         self.dashboard = Dashboard(self)
         # Native menus expose the same actions to keyboard/accessibility users.
@@ -90,6 +98,7 @@ class App:
         self.transport.open(self.port.get())
         self.opened_at = self.last_rx = time.monotonic()
         self.controller.emit('hello')
+        self.last_hello_retry = self.opened_at
         self.log('Opened '+self.port.get())
 
     def disconnect(self):
@@ -118,9 +127,10 @@ class App:
         row = self.selected()
         if row['cube_id'] is None:
             while True:
+                suggested = self.db.suggested_number()
                 number = simpledialog.askinteger('Register device — number',
-                    f"Device {row['mac']}\n\nEnter the number on its label to begin NFC registration:",
-                    minvalue=1, maxvalue=0xFFFFFFFF, parent=self.root)
+                    f"Device {row['mac']}\n\nSuggested free ID: {suggested} (above 32).\nPress Enter to accept, or type the number on its label:",
+                    initialvalue=suggested, minvalue=1, maxvalue=0xFFFFFFFF, parent=self.root)
                 if number is None:
                     return
                 try:
@@ -136,11 +146,91 @@ class App:
 
     def rename(self):
         row = self.selected()
+        suggested = row['cube_id'] or self.db.suggested_number()
         number = simpledialog.askinteger('Rename device',
-            f"Device {row['mac']}\nCurrent number: {row['cube_id'] or 'Unnumbered'}\n\nEnter the number on its label:",
-            initialvalue=row['cube_id'], minvalue=1, maxvalue=0xFFFFFFFF, parent=self.root)
+            f"Device {row['mac']}\nCurrent number: {row['cube_id'] or 'Unnumbered'}\n\nPress Enter to accept {suggested}, or type the number on its label:",
+            initialvalue=suggested, minvalue=1, maxvalue=0xFFFFFFFF, parent=self.root)
         if number is not None:
             self.controller.rename(row['mac'], number)
+
+    def toggle_usb_identification(self):
+        if self.dashboard.usb_enabled.get():
+            blocked = {mac for mac, role in self.db.roles().items() if role == 'excluded'}
+            if self.controller.station.get('mac'): blocked.add(self.controller.station['mac'])
+            try:
+                self.usb_identifier.start(blocked, {self.transport.port.port} if self.transport.port else set())
+            except Exception:
+                self.dashboard.usb_enabled.set(False)
+                raise
+            self.dashboard.usb_status.set('Watching USB for a cube…')
+        else:
+            self.usb_identifier.stop()
+            self.usb_pending = None
+            self.dashboard.usb_status.set('USB identification off; selection remains pinned' if self.usb_locked_mac else 'USB identification off')
+
+    def unlock_usb(self):
+        self.usb_locked_mac = self.usb_locked_key = self.usb_pending = None
+        self.dashboard.usb_status.set('Unlocked · waiting for a new USB connection' if self.dashboard.usb_enabled.get() else 'USB identification off')
+        self.dashboard.render(force=True)
+
+    def poll_usb(self):
+        if self.usb_prompt_active: return
+        while True:
+            try: event = self.usb_identifier.events.get_nowait()
+            except queue.Empty: break
+            if event['generation'] != self.usb_identifier.generation: continue
+            if event['kind'] == 'identified':
+                if self.db.excluded(event['mac']) or event['mac'] == self.controller.station.get('mac'): continue
+                self.usb_pending = event
+                self.usb_firmware[event['mac']] = dict(status='checking', version=None, expected=None, detail='Checking firmware over USB…')
+                self.log(f"USB identified {event['mac']} · {event['source']}")
+                if self.controller.mode and self.controller.phase != 'stopping':
+                    self.controller.stop()
+            elif event['kind'] == 'firmware':
+                self.usb_firmware[event['mac']] = event['firmware']
+                self.log(f"USB firmware {event['mac']}: {event['firmware']}")
+                fw = event['firmware']
+                if fw['status'] == 'different':
+                    self.controller.notify('error', 'CUBE FIRMWARE UPDATE NEEDED',
+                        f"{event['mac']} · Installed: {fw['version']} · Latest local build: {fw['expected']}. Update this cube with USB Flash Station.")
+                elif fw['status'] == 'unknown':
+                    self.controller.notify('sending', 'CUBE FIRMWARE NOT VERIFIED',
+                        f"{event['mac']} · {fw['detail']}. Latest local build: {fw.get('expected') or 'unknown'}.")
+                if self.usb_locked_mac == event['mac']:
+                    self.dashboard.usb_status.set(f"Pinned {event['mac']} · Firmware {event['firmware']['status']} (see details)")
+            elif event['kind'] == 'removed' and event['key'] == self.usb_locked_key:
+                self.dashboard.usb_status.set(f'USB removed · {self.usb_locked_mac} stays pinned for registration')
+            elif event['kind'] == 'error':
+                self.dashboard.usb_status.set('USB: '+event['detail'])
+                self.log('USB identification: '+event['detail'])
+        if not self.usb_pending or self.controller.mode: return
+        event, self.usb_pending = self.usb_pending, None
+        mac = event['mac']
+        previously_known = self.db.get(mac) is not None
+        self.db.reserve(mac, source='usb')
+        self.usb_locked_mac, self.usb_locked_key = mac, event['key']
+        self.dashboard.usb_status.set(f'Pinned {mac} · unplugging keeps selection')
+        self.dashboard.select(mac)
+        self.dashboard.reset_scroll()
+        row = self.db.get(mac)
+        if not previously_known or row['cube_id'] is None:
+            self.usb_prompt_active = True
+            try:
+                while True:
+                    suggested = self.db.get(mac)['cube_id'] or self.db.suggested_number()
+                    number = simpledialog.askinteger('USB cube — number',
+                        f"USB cube {mac}\nSuggested ID: {suggested}.\nPress Enter to accept, or type the number on its label:",
+                        initialvalue=suggested, minvalue=1, maxvalue=0xFFFFFFFF, parent=self.root)
+                    if number is None: break
+                    try:
+                        self.db.rename(mac, number, fresh_scan=True)
+                        self.log(f'USB cube {mac} assigned #{number}; ready for NFC registration')
+                        break
+                    except ValueError as exc:
+                        messagebox.showerror('Number unavailable', str(exc), parent=self.root)
+            finally:
+                self.usb_prompt_active = False
+            self.dashboard.render(force=True)
 
     def export_csv(self):
         path = filedialog.asksaveasfilename(defaultextension='.csv', initialfile='devices.csv')
@@ -161,6 +251,14 @@ class App:
         self.dashboard.render()
         if self.zones_window:
             self.zones_window.render()
+
+    def recover_station_connection(self, now):
+        # Logical disconnection can leave a healthy USB handle open (e.g. a
+        # command timeout). Re-handshake; never restart the interrupted action.
+        if self.transport.port and not self.controller.connected and now-self.last_hello_retry>=3:
+            self.controller.emit('hello')
+            self.last_hello_retry = now
+            self.controller.message = 'Reconnecting to the NFC station…'
 
     def poll(self):
         if self.closing: return
@@ -187,13 +285,12 @@ class App:
             if self.transport.port and self.controller.connected and now-self.last_ping>=1:
                 self.controller.emit('ping')
                 self.last_ping = now
-            if self.transport.port and not self.controller.connected and now-self.opened_at>3 and now-self.opened_at<4:
-                self.controller.emit('hello')
-                self.opened_at = 0
+            self.recover_station_connection(now)
             if self.transport.port and now-self.last_rx>(8 if self.controller.connected else 30):
                 self.finish_disconnect()
                 self.log('Station stopped responding; reconnect.')
             if self.api: self.api.drain()
+            self.poll_usb()
             self.controller.tick()
             self.zones.tick(self.transport.port is not None and self.controller.connected, self.controller.station, bool(self.controller.mode))
             self.render()
@@ -207,6 +304,7 @@ class App:
 
     def close(self):
         self.closing = True
+        self.usb_identifier.stop()
         if self.api: self.api.close()
         try:
             if self.controller.connected: self.controller.stop()

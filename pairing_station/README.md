@@ -174,3 +174,52 @@ unseen** (amber) or **Original #N · NFC scanned**. The details panel separates 
 current assigned number, the original hardcoded table number, and local NFC scan
 history. Original numbers are reference information, not live firmware readback,
 and do not reserve cleared numbers. Search also matches the original number.
+
+### Identify a cube over USB
+
+Enable **Identify cubes over USB** in the pairing app, then plug in a cube.
+The app detects its MAC, pins it at the top of the grid, and locks selection to
+it even if search or filters would hide it. A new/unnumbered device prompts for
+its physical label number; cancelling leaves it pinned and Register can ask again.
+Unplug the cube and use the normal NFC registration procedure. **Unlock selection**
+releases the pin. A newly identified USB cube replaces it, stopping any active
+pairing operation first. The pin lasts for this app session. Disabling USB
+identification stops watching but leaves the existing pin until Unlock.
+
+Native Espressif USB uses the MAC exposed in its USB serial identity without
+opening or resetting the device. This identifies the chip, not its firmware type.
+Other USB serial adapters are queried with `?` for a `Cube MAC:` response or read
+for the same boot-log line, using cross-app serial locks. Older firmware that
+doesn't answer the query may need unplugging/reconnecting to capture its boot log.
+No bootloader reset or firmware upload is performed. The registration station
+and known excluded reader/base identities are skipped. Identification failures
+appear beside the checkbox; reconnect to retry. Keep the optional watcher off
+while using the USB flashing app to avoid competing for adapter serial ports.
+
+USB identification also queries the cube's firmware version and compares it with
+`flashing_station/build/manifest.json` on each connection. A matching cube MAC,
+version line and ready response are required. A different version produces a red
+**CUBE FIRMWARE UPDATE NEEDED** banner with installed and latest local versions;
+no response produces **CUBE FIRMWARE NOT VERIFIED**. Cards and details retain the
+result after unplugging. This compares the firmware's reported version, not its
+binary hash, and does not automatically flash the cube. The latest version here
+means the locally maintained build, not an internet release.
+
+**REGISTER DEVICE** also works when an earlier attempt is unconfirmed or was
+stopped. It starts a fresh scan while retaining the existing pending tag
+reservation. Only a new accepted scan replaces that pending tag; the committed
+mapping still waits for a matching cube acknowledgment. **Transmit saved mapping**
+remains available to retry the saved tag without scanning again.
+
+Unnumbered-device prompts prefill the lowest free ID above 32. Press **Enter**
+to accept it or type the physical label number instead. The prompt explains this
+shortcut. A suggestion does not reserve the number until accepted; duplicate
+validation still applies, and a conflicting registration/USB prompt suggests a
+new free number on retry. IDs 1–32 remain available for explicit manual entry.
+
+IDs **2, 22, 39 and 43** are reserved for known physical modules in the
+`reserved_numbers` table, independent of whether their MAC/NFC mapping is known.
+Automatic allocations and suggested IDs skip these numbers. You can still type
+one explicitly when identifying the corresponding labelled module. Reservations
+survive clearing device numbers and app restarts; no placeholder MAC or UID is
+invented for them.

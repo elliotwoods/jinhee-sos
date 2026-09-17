@@ -28,6 +28,7 @@ def inventory(app):
     nfc_seen = {r[0] for r in app.db.conn.execute("SELECT DISTINCT mac FROM events WHERE action='nfc_seen'")}
     for mac, row in rows.items():
         age = now - c.discovered[mac] if mac in c.discovered else None
+        row['usb_firmware'] = getattr(app, 'usb_firmware', {}).get(mac)
         row.update(original_number=ORIGINAL_NUMBERS.get(mac), nfc_seen=mac in nfc_seen, age=age, recent=c.connected and age is not None and age < 10,
                    role=roles.get(mac, 'auto'), telemetry=c.telemetry.get(mac, {}))
         row['kind'] = ('Reader / base · excluded' if row['role'] == 'excluded' else
@@ -103,6 +104,14 @@ class Dashboard:
             self.button(connection, label, action).pack(side='left', padx=4)
         app.connection = tk.StringVar()
         ttk.Label(connection, textvariable=app.connection, foreground='#82b8fa').pack(side='left', padx=10)
+        usb_row = ttk.Frame(frame); usb_row.pack(fill='x', pady=(8, 0))
+        self.usb_enabled = tk.BooleanVar(value=False)
+        ttk.Checkbutton(usb_row, text='Identify cubes over USB', variable=self.usb_enabled,
+                        command=lambda: app.action(app.toggle_usb_identification)).pack(side='left')
+        self.usb_status = tk.StringVar(value='USB identification off')
+        ttk.Label(usb_row, textvariable=self.usb_status, style='Muted.TLabel').pack(side='left', padx=10)
+        self.unlock_button = self.button(usb_row, 'Unlock selection', app.unlock_usb)
+        self.unlock_button.pack(side='right')
         app.status = tk.StringVar()
         self.banner = tk.Label(frame, textvariable=app.status, wraplength=1200, font=('Helvetica', 12, 'bold'),
                                bg='#1b2633', fg=TEXT, anchor='w', justify='left', padx=12, pady=8)
@@ -159,6 +168,8 @@ class Dashboard:
             b=self.button(inspector, label, callback)
             if not self.selected_buttons: b.configure(style='Register.TButton')
             b.pack(fill='x', pady=3); self.selected_buttons.append(b)
+        self.registration_hint = tk.StringVar()
+        ttk.Label(inspector, textvariable=self.registration_hint, wraplength=310, style='Muted.TLabel').pack(fill='x', pady=(0,4))
         self.rename_button = self.button(inspector, 'Rename device…', app.rename)
         self.rename_button.pack(fill='x', pady=3)
         row = ttk.Frame(inspector); row.pack(fill='x', pady=3)
@@ -204,6 +215,10 @@ class Dashboard:
         self.select(ids[max(0, min(len(ids)-1, index+delta))])
 
     def select(self, mac):
+        locked = self.app.usb_locked_mac
+        if locked and mac != locked:
+            self.usb_status.set('Selection pinned by USB · click Unlock selection to choose another device')
+            return
         changed = mac != self.selected_mac
         self.selected_mac = mac
         role = self.app.db.roles().get(mac, 'auto')
@@ -234,7 +249,10 @@ class Dashboard:
         self.last_render = now
         app, c = self.app, self.app.controller
         all_rows = inventory(app)
-        self.rows = [r for r in all_rows if matches(r, self.filter.get(), self.search.get())]
+        locked = app.usb_locked_mac
+        self.rows = [r for r in all_rows if r['mac']==locked or matches(r, self.filter.get(), self.search.get())]
+        self.rows.sort(key=lambda r: r['mac'] != locked)
+        self.unlock_button.configure(state='normal' if locked else 'disabled')
         feedback = c.feedback
         app.status.set(feedback['title']+'\n'+feedback['detail'] if feedback else c.message)
         self.banner.configure(bg={'scan':'#243d60','sending':'#51401d','success':'#174c39','error':'#652d35'}.get(feedback.get('kind'), CARD),
@@ -253,7 +271,7 @@ class Dashboard:
         app.progress.set(f'{len(self.rows)} shown / {len(all_rows)} known · {len(c.discovered)} discovered this session' + (f' · {c.progress}/{c.total}' if c.mode in ('bulk','flash_all') else '') + (' · CSV export failed' if app.db.export_error else ''))
         canvas=self.canvas; canvas.delete('all'); self.hitboxes=[]
         width=max(canvas.winfo_width(), 400); columns=max(2, width//192)
-        tile=(width-12)/columns; height=170
+        tile=(width-12)/columns; height=190
         for i,row in enumerate(self.rows):
             x=(i%columns)*tile+3; y=(i//columns)*height+3
             selected=row['mac']==self.selected_mac
@@ -263,6 +281,7 @@ class Dashboard:
                                     outline='#92c5ff' if selected else '#c9a0ff' if active else '#2a3849',width=2 if selected or active else 1)
             canvas.create_rectangle(x,y,x+4,y+height-10,fill=color,outline='')
             title=f"Neocore {row['cube_id']:02}" if row['cube_id'] else 'New device'
+            if row['mac']==locked: title='📌 '+title
             canvas.create_text(x+14,y+17,text=title,anchor='w',fill=TEXT,font=('Helvetica',13,'bold'))
             canvas.create_oval(x+tile-32,y+12,x+tile-24,y+20,fill='#54d6a0' if row['recent'] else '#536174',outline='')
             label, led = led_state(row,c.connected)
@@ -278,6 +297,9 @@ class Dashboard:
             if row['original_number'] is not None:
                 original = f"Original #{row['original_number']} · " + ('NFC scanned' if row['nfc_seen'] else 'NFC unseen')
                 canvas.create_text(x+14,y+143,text=original,anchor='w',fill=MUTED if row['nfc_seen'] else '#ffc16b',font=('Helvetica',9))
+            if row.get('usb_firmware'):
+                fw=row['usb_firmware']
+                canvas.create_text(x+14,y+165,text='Firmware: '+fw['status'],anchor='w',fill='#54d6a0' if fw['status']=='current' else '#ffc16b',font=('Helvetica',10))
             self.hitboxes.append((x,y,x+tile-10,y+height-10,row['mac']))
         if not self.rows:
             canvas.create_text(width/2,80,text='No devices match this view.\nTry Discover now or change the filter.',fill=MUTED,font=('Helvetica',14),justify='center')
@@ -289,10 +311,16 @@ class Dashboard:
         usable=idle and row and row['role']!='excluded'
         for i,b in enumerate(self.selected_buttons):
             if i == 0:
-                enabled = c.connected and c.reader_ok and row and row['role']!='excluded' and (not row['pending_uid'] or row['cube_id'] is None) and (not c.mode or (c.mode=='preview' and c.phase=='flashing'))
+                enabled = c.connected and c.reader_ok and row and row['role']!='excluded' and (not c.mode or (c.mode=='preview' and c.phase=='flashing'))
             else:
                 enabled=usable and (bool(row['cube_id'] is not None and (row['uid'] or row['pending_uid'])) if i==1 else True)
             b.configure(state='normal' if enabled else 'disabled')
+        reason = ('Connect the NFC station to register. Cube USB identification alone is not enough.' if not c.connected else
+                  'NFC reader is unavailable; check the station/reader connection.' if not c.reader_ok else
+                  'Select a device to register.' if not row else
+                  'This device is excluded as a reader/base station.' if row['role']=='excluded' else
+                  'An operation is active. Use Stop / static before registering.' if c.mode and not (c.mode=='preview' and c.phase=='flashing') else '')
+        self.registration_hint.set(reason)
         self.rename_button.configure(state='normal' if row and row['role']!='excluded' and (not row['pending_uid'] or row['cube_id'] is None) and (not c.mode or (c.mode=='preview' and c.phase=='flashing')) else 'disabled')
         self.role_button.configure(state='normal' if row and not c.mode else 'disabled')
         self.retry_button.configure(state='normal' if c.phase=='paused' else 'disabled')
@@ -302,7 +330,9 @@ class Dashboard:
             t=row['telemetry']; age='Never in this session' if row['age'] is None else f"{int(row['age'])} seconds ago"
             original = f"#{row['original_number']} (original hardcoded table)" if row['original_number'] is not None else 'No original table entry'
             scan = 'Scanned at this station' if row['nfc_seen'] else 'Not yet scanned at this station'
-            detail=f"NUMBERS / NFC HISTORY\nAssigned: {row['cube_id'] or 'None'}\nOriginal: {original}\n{scan}\n\nMAC\n{row['mac']}\n\nCLASSIFICATION\n{row['kind']}\n\nREGISTRATION\n{LABELS.get(row['status'],row['status'])}\nUID: {row['uid'] or '—'}\nPending: {row['pending_uid'] or '—'}\n\nRADIO / LIGHTS\nDiscovery: {age}\nLast delivery: {t.get('delivery','unknown')}\nLED: {led_state(row,c.connected)[0]}\n\nDATABASE\nSource: {row['source']}\nUpdated: {row['updated_at']}\n{row['detail']}"
+            firmware = row.get('usb_firmware')
+            firmware_detail = (f"USB FIRMWARE\nReported: {firmware.get('version') or 'Unknown'}\nLatest local build: {firmware.get('expected') or 'Unknown'}\nStatus: {firmware['status']}\n{firmware['detail']}\n\n" if firmware else '')
+            detail=firmware_detail+f"NUMBERS / NFC HISTORY\nAssigned: {row['cube_id'] or 'None'}\nOriginal: {original}\n{scan}\n\nMAC\n{row['mac']}\n\nCLASSIFICATION\n{row['kind']}\n\nREGISTRATION\n{LABELS.get(row['status'],row['status'])}\nUID: {row['uid'] or '—'}\nPending: {row['pending_uid'] or '—'}\n\nRADIO / LIGHTS\nDiscovery: {age}\nLast delivery: {t.get('delivery','unknown')}\nLED: {led_state(row,c.connected)[0]}\n\nDATABASE\nSource: {row['source']}\nUpdated: {row['updated_at']}\n{row['detail']}"
         else:
             self.detail_title.set('Select a device')
             detail='Click a card to inspect its MAC address, NFC mapping, radio delivery and LED command.\n\nGreen means a registration ACK was received. Amber needs attention. Grey radio dots mean no recent discovery reply.\n\nReaders which do not answer cube discovery never appear here. Exact firmware and physical LED state are not reported by the legacy protocol.'

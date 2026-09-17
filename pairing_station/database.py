@@ -60,6 +60,7 @@ class Database:
                 self.conn.execute("INSERT INTO metadata VALUES ('original_imported','1')")
             if recover_pending:
                 self.conn.execute("UPDATE devices SET status='unconfirmed', detail='Interrupted; retry the saved transaction' WHERE status='pending'")
+        self.ensure_reserved_numbers()
         self.export_default()
 
     @staticmethod
@@ -104,7 +105,7 @@ class Database:
             if row:
                 return row
             automatic = self.conn.execute("SELECT value FROM metadata WHERE key='auto_number'").fetchone()
-            cube_id = self.conn.execute('SELECT COALESCE(MAX(cube_id),0)+1 FROM devices').fetchone()[0] if automatic is None or automatic[0]=='1' else None
+            cube_id = self.suggested_number() if automatic is None or automatic[0]=='1' else None
             self.conn.execute('INSERT INTO devices VALUES (?,?,NULL,NULL,?,?,?,?)',
                               (mac, cube_id, source, 'awaiting_tag' if cube_id else 'needs_number', timestamp(), 'ID reserved' if cube_id else 'Choose Rename device to assign its label number'))
         self.export_default()
@@ -125,6 +126,22 @@ class Database:
             self.conn.execute("INSERT OR REPLACE INTO metadata VALUES ('auto_number','0')")
         self.export_default()
         return len(rows)
+
+    def ensure_reserved_numbers(self):
+        with self.conn:
+            self.conn.execute("CREATE TABLE IF NOT EXISTS reserved_numbers (cube_id INTEGER PRIMARY KEY, detail TEXT NOT NULL)")
+            self.conn.executemany('INSERT OR IGNORE INTO reserved_numbers VALUES (?,?)',
+                [(number, 'Known existing physical module; exclude from automatic numbering') for number in (2,22,39,43)])
+
+    def suggested_number(self):
+        number = 33
+        for row in self.conn.execute('SELECT cube_id FROM devices WHERE cube_id>=33 UNION SELECT cube_id FROM reserved_numbers WHERE cube_id>=33 ORDER BY cube_id'):
+            if row[0] > number:
+                break
+            number = row[0] + 1
+        if number > 0xFFFFFFFF:
+            raise ValueError('No free device numbers remain above 32')
+        return number
 
     def validate_number(self, mac, number):
         if type(number) is not int or not 1 <= number <= 0xFFFFFFFF:

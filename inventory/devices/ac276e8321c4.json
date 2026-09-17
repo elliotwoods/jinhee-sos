@@ -1,0 +1,11 @@
+{
+  "cube_id": null,
+  "detail": "Choose Rename device to assign its label number",
+  "mac": "AC:27:6E:83:21:C4",
+  "pending_uid": null,
+  "role": "auto",
+  "source": "discovered",
+  "status": "needs_number",
+  "uid": null,
+  "updated_at": "2026-09-17T13:58:51+00:00"
+}

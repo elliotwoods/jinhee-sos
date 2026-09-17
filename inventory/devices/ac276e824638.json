@@ -1,11 +1,11 @@
 {
-  "cube_id": null,
-  "detail": "Choose Rename device to assign its label number",
+  "cube_id": 41,
+  "detail": "Cube acknowledged; flash persistence not verified",
   "mac": "AC:27:6E:82:46:38",
   "pending_uid": null,
   "role": "auto",
   "source": "discovered",
-  "status": "needs_number",
-  "uid": null,
-  "updated_at": "2026-09-17T08:29:15+00:00"
+  "status": "acknowledged",
+  "uid": "53:A1:40:C9:33:00:01",
+  "updated_at": "2026-09-17T14:14:08+00:00"
 }
