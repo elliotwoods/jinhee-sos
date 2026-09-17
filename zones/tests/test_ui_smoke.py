@@ -96,6 +96,26 @@ class UiSmokeTests(unittest.TestCase):
                 window.profile_label.set(zone_build_labels['desert'])
                 window.profile_changed()
                 self.assertEqual((window.name.get(), window.form()['params']), ('Desert 4', []))
+                # Identifying a legacy board reboots it: the port vanishes and comes back. It must not be identified again.
+                legacy = dict(port='/dev/cu.legacy', key='3C:0F:02:AF:61:C0', description='USB JTAG', candidate=True, serial='3C:0F:02:AF:61:C0')
+                with patch.object(flasher_app, 'ports', return_value=[station, zone, legacy]):
+                    window.scan_ports()
+                    self.assertEqual(window.pending_detect, {'/dev/cu.legacy'})
+                with patch.object(flasher_app, 'ports', return_value=[station, zone]):   # rebooting while being identified
+                    window.scan_ports()
+                    window.handle('detected', ('/dev/cu.legacy', dict(kind='legacy_zone', label='Legacy PreshowZone plate', mac=legacy['serial'], profile='preshow')))
+                    window.scan_ports()
+                    self.assertNotIn('/dev/cu.legacy', window.detections)
+                with patch.object(flasher_app, 'ports', return_value=[station, zone, legacy]):  # back on USB
+                    window.pending_detect.clear()
+                    window.scan_ports()
+                    self.assertEqual(window.detections['/dev/cu.legacy']['label'], 'Legacy PreshowZone plate')
+                    self.assertEqual(window.pending_detect, set())
+                    self.assertIn('FLASH', window.port_tree.item('/dev/cu.legacy', 'values')[6])
+                    window.port_tree.selection_set('/dev/cu.legacy')
+                    window.detect_selected()      # "Detect again" does identify again
+                    self.assertEqual(window.pending_detect, {'/dev/cu.legacy'})
+                    window.pending_detect.clear()
                 # The monitor connects to a detected zone by itself, but not after a manual disconnect.
                 connected = []
                 window.monitor.connect = connected.append

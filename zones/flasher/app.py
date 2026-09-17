@@ -96,6 +96,7 @@ class App:
         self.port_rows, self.detections, self.results = {}, {}, {}
         self.scheduler = Scheduler()
         self.pending_detect = set()
+        self.remembered, self.port_keys = {}, {}
         self.last_scan = 0
         self.state = MonitorState()
         self.monitor = SerialMonitor(self.emit)
@@ -288,12 +289,23 @@ class App:
         # ESP32 USB devices only (the protected pairing station is listed so it is visibly refused).
         found = [p for p in ports() if p['candidate'] or (p.get('serial') or '').upper() in zone_detect.PROTECTED]
         self.port_rows = {p['port']: p for p in found}
+        # Identifying or flashing reboots the board, so its USB port vanishes for a moment. Remember what we know
+        # by USB identity (an ESP32-C3's serial number is its MAC) instead of identifying again in a loop.
+        now = time.monotonic()
         for gone in set(self.detections) - set(self.port_rows):
-            self.detections.pop(gone, None)
-            self.results.pop(gone, None)
+            self.remembered[self.port_keys.get(gone)] = (self.detections.pop(gone), self.results.pop(gone, None), now)
+        self.remembered = {k: v for k, v in self.remembered.items() if k and now - v[2] < v[0].get('remember_s', 15)}
         self.scheduler.scan(found, self.busy)
         for p in found:
-            if p['port'] not in self.detections and p['port'] not in self.pending_detect and p['port'] != self.monitor.port:
+            self.port_keys[p['port']] = p['key']
+            if p['port'] in self.detections or p['port'] in self.pending_detect or p['port'] == self.monitor.port:
+                continue
+            if p['key'] in self.remembered:
+                detection, result, _ = self.remembered.pop(p['key'])
+                self.detections[p['port']] = detection
+                if result:
+                    self.results[p['port']] = result
+            else:
                 self.pending_detect.add(p['port'])
         self.render_ports()
 
@@ -407,6 +419,7 @@ class App:
             return messagebox.showerror('Zone flasher', str(exc), parent=self.root)
         self.detections.pop(port, None)
         self.results.pop(port, None)
+        self.remembered.pop(self.port_keys.get(port), None)
         self.pending_detect.add(port)
 
     def flash(self, port, plan, auto=False):
@@ -726,6 +739,11 @@ class App:
         elif kind == 'detected':
             port, detection = value
             self.pending_detect.discard(port)
+            if port in self.port_rows or port in self.port_keys:
+                detection['remember_s'] = 600 if (self.port_rows.get(port) or {}).get('serial') or detection.get('mac') else 15
+            if port not in self.port_rows and self.port_keys.get(port):
+                self.remembered[self.port_keys[port]] = (detection, None, time.monotonic())
+                self.append(self.log, f'{port}: {detection["label"]} ({detection.get("source", "")}); waiting for the board to reconnect')
             if port in self.port_rows:
                 self.detections[port] = detection
                 self.append(self.log, f'{port}: {detection["label"]} ({detection.get("source", "")})')
