@@ -1,6 +1,7 @@
-"""Application-only updates for an already configured PoolZone; preserves all device data."""
+"""PoolZone firmware + cube database updates; preserves calibration and zone identity."""
 import json
 import re
+import sqlite3
 from pathlib import Path
 import shutil
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0,str(ROOT.parent/'pairing_station'))
 from port_lock import PortLock
 from zone_flash import Runner, tool_command, ports, parse_report, MAC_RE, ZoneFlasher
 import zone_build
+from zone_flash import DEFAULT_DATABASE, Database, ZoneStore, zonedb
 
 
 ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))')
@@ -93,6 +95,54 @@ def status(report, calibration):
     return 'update', f'Update available · installed {report["firmware"]} / {installed[1:11]} → local {version} / {expected[1:11]}'
 
 
+def local_database(publish=False, path=DEFAULT_DATABASE):
+    path=Path(path)
+    if not path.is_file(): raise RuntimeError('Pairing database is missing; refusing to replace cube mappings.')
+    if publish:
+        db=Database(path,recover_pending=False)
+        try: return ZoneStore(db).publish()
+        finally: db.close()
+    # Read-only preview: checking versions must not publish or modify the master database.
+    conn=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.3)
+    try:
+        conn.row_factory=sqlite3.Row
+        with conn:
+            conn.execute('BEGIN')
+            rows=[dict(r) for r in conn.execute("SELECT d.* FROM devices d LEFT JOIN device_roles r ON r.mac=d.mac WHERE COALESCE(r.role,'auto')!='excluded'")]
+            meta=dict(conn.execute('SELECT key,value FROM metadata'))
+        records=zonedb.records_from_rows(rows)
+        version=int(meta.get('zone_db_version',0))
+        if zonedb.content_hash(records)!=meta.get('zone_db_hash'): version+=1
+        return zonedb.Publication(version,records)
+    finally: conn.close()
+
+
+def database_status(report, publication):
+    target=f'Local v{publication.version} · {publication.count} cubes'
+    if not report: return 'unknown', 'Board database: waiting · '+target
+    installed=f'Board v{report.get("db_version",0)} · {report.get("db_count",0)} cubes · CRC {report.get("db_crc",0):08X}'
+    matches=all(report.get(k)==v for k,v in dict(db_version=publication.version,db_count=publication.count,db_crc=publication.crc).items())
+    if matches: return 'current', installed+' · in sync with '+target
+    if report.get('db_version',0)>publication.version:
+        return 'ahead', installed+' · newer than '+target+'; check the master database before updating'
+    return 'update', installed+' · needs '+target
+
+
+def database_plan(backup, publication):
+    slots=[zonedb.parse_slot(backup[o:o+0x8000]) for o in (0x211000,0x219000)]
+    valid=[i for i in range(2) if slots[i]]
+    active=max(valid,key=lambda i:(slots[i]['version'],slots[i]['generation'],-i)) if valid else None
+    current=slots[active] if active is not None else None
+    if current and current['version']>publication.version:
+        raise RuntimeError('Board database is newer than the local master; refusing a database rollback.')
+    if current and (current['version'],current['count'],current['crc'])==(publication.version,publication.count,publication.crc): return None
+    inactive=1-active if active is not None else 0
+    generation=max((s['generation'] for s in slots if s),default=0)+1
+    image=zonedb.slot_image(publication.records,publication.version,generation).ljust(0x8000,b'\xff')
+    if len(image)!=0x8000: raise RuntimeError('Cube database exceeds slot capacity.')
+    return (0x211000,0x219000)[inactive],image
+
+
 def flash(port_name, emit):
     folder=Path(__file__).parent/'build'/'firmware-runs'/uuid.uuid4().hex
     folder.mkdir(parents=True)
@@ -105,8 +155,12 @@ def flash(port_name, emit):
         check_identity(before,before['mac'])
         state, detail = status(before,calibration)
         emit('stage',detail)
-        if state == 'current':
-            return dict(port=port_name,version=before['firmware'],backup='',log=str(folder/'upload.log'),skipped=True)
+        publication=local_database(publish=True)
+        db_state, db_detail=database_status(before,publication)
+        emit('stage',db_detail)
+        if db_state=='ahead': raise RuntimeError(db_detail)
+        if state == 'current' and db_state=='current':
+            return dict(port=port_name,version=before['firmware'],db_version=publication.version,db_count=publication.count,backup='',log=str(folder/'upload.log'),skipped=True)
         manifest=ensure_build(runner,emit)
         # Freeze checked artifacts so another build cannot change this upload mid-flight.
         for segment in manifest['segments']:
@@ -136,22 +190,38 @@ def flash(port_name, emit):
             check_layout(backup,table)
             app=next(s for s in manifest['segments'] if s['file']=='PoolZone.ino.bin')
             if app['offset']!=0x10000 or app['size']>0x200000: raise RuntimeError('Unexpected application layout.')
-            emit('stage',f'Flashing {manifest["version"]} · application only…')
-            tool('write-flash','0x10000',folder/app['file'])
+            if state != 'current':
+                emit('stage',f'Flashing {manifest["version"]}…')
+                tool('write-flash','0x10000',folder/app['file'])
             emit('stage','Verifying firmware and preserved calibration/database…')
             tool('verify-flash','0x10000',folder/app['file'])
+            expected_flash=bytearray(backup)
+            plan=database_plan(backup,publication)
+            if plan:
+                offset,image=plan
+                emit('stage',f'Updating cube database v{publication.version} · {publication.count} mappings…')
+                # Keep the active slot intact. Stage records with an invalid header, then
+                # commit the first sector (header + first records) only after verification.
+                staged=folder/'database-staged.bin'; staged.write_bytes(b'\xff'*24+image[24:])
+                committed=folder/'database.bin'; committed.write_bytes(image)
+                header=folder/'database-commit-sector.bin'; header.write_bytes(image[:0x1000])
+                tool('write-flash',hex(offset),staged)
+                tool('verify-flash',hex(offset),staged)
+                tool('write-flash',hex(offset),header)
+                tool('verify-flash',hex(offset),committed)
+                expected_flash[offset:offset+0x8000]=image
             for name,offset,size in [('nvs',0x9000,0x5000),('zone-data',0x210000,0x11000)]:
                 path=folder/f'{name}-after.bin'
                 tool('read-flash',hex(offset),hex(size),path)
-                if path.read_bytes()!=backup[offset:offset+size]: raise RuntimeError(f'{name} changed unexpectedly; backup retained at {backup_path}')
+                if path.read_bytes()!=expected_flash[offset:offset+size]: raise RuntimeError(f'{name} changed unexpectedly; backup retained at {backup_path}')
         finally:
             if connected:
                 try: tool('read-mac',after='watchdog-reset' if selected.get('native_usb') else 'hard-reset',timeout=15)
                 except Exception as exc: runner.line('Reset: '+str(exc))
         emit('stage','Checking reboot and firmware version…')
         report=ZoneFlasher(folder/'unused.sqlite3',emit).boot_report(selected,runner)
-        expected={k:before[k] for k in ('mac','channel','zone_type','point_id','name','db_version','db_count','db_crc')}
-        expected['firmware']=manifest['version']
+        expected={k:before[k] for k in ('mac','channel','zone_type','point_id','name')}
+        expected.update(firmware=manifest['version'],db_version=publication.version,db_count=publication.count,db_crc=publication.crc)
         if not report or any(report.get(k)!=v for k,v in expected.items()):
             raise RuntimeError('Flash verified, but boot/identity verification failed. See '+str(folder/'upload.log'))
         current=next((p for p in ports() if p['key']==selected['key']),None)
@@ -161,7 +231,10 @@ def flash(port_name, emit):
             raise RuntimeError('Firmware booted but build fingerprint does not match.')
         if any(after.get(k)!=calibration.get(k) for k in ('ticks','anchors')):
             raise RuntimeError('Firmware booted but calibration verification failed; backup retained.')
-    result=dict(port=current['port'],version=manifest['version'],backup=str(backup_path),log=str(folder/'upload.log'))
+    db=Database(DEFAULT_DATABASE,recover_pending=False)
+    try: ZoneStore(db).seen(report['mac'],report,source='poolzone-flash')
+    finally: db.close()
+    result=dict(port=current['port'],version=manifest['version'],db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
     (folder/'result.json').write_text(json.dumps(result,indent=2))
-    emit('stage','Firmware verified · calibration preserved · reconnecting…')
+    emit('stage','Firmware and cube database verified · calibration preserved · reconnecting…')
     return result

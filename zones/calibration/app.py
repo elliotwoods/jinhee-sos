@@ -78,13 +78,14 @@ class App:
         self.raw_distance = None
         self.distance = None
         self.index = -1
-        self.last_rx = self.last_sample = self.last_query = 0
+        self.last_rx = self.last_sample = self.last_query = self.last_report = 0
         self.queue = deque()
         self.pending = None
         self.dirty = False
         self.flashing = False
         self.firmware_calibration = None
         self.firmware_state = 'unknown'
+        self.database_state = 'unknown'
         self.flash_events = queue.Queue()
         root.title('PoolZone · Laser calibration')
         root.geometry('1120x800')
@@ -128,14 +129,17 @@ class App:
         firmware_tab = self.firmware_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
         tabs.add(firmware_tab, text='Firmware')
         self.label(firmware_tab, 'Update PoolZone firmware', 20, FG).pack(anchor='w')
-        self.label(firmware_tab, 'Install current firmware; reuse a verified build or compile if needed.\nCalibration, radio identity and cube database are backed up and preserved.', 12).pack(anchor='w', pady=8)
+        self.label(firmware_tab, 'Update firmware and cube mappings; preserve calibration and radio identity.', 12).pack(anchor='w', pady=8)
         self.flash_button = ttk.Button(firmware_tab, text='Update firmware', command=self.start_flash)
         self.flash_button.pack(anchor='w')
         self.check_firmware_button = ttk.Button(firmware_tab, text='Check installed firmware', command=self.check_firmware)
         self.check_firmware_button.pack(anchor='w', pady=4)
         self.flash_status = self.label(firmware_tab, 'Connect to PoolZone to enable firmware updates.', 11, GOLD)
         self.flash_status.configure(wraplength=950)
-        self.flash_status.pack(anchor='w', pady=8)
+        self.flash_status.pack(anchor='w', pady=5)
+        self.database_label = self.label(firmware_tab, 'Cube database: waiting for board', 11, GOLD)
+        self.database_label.configure(wraplength=930)
+        self.database_label.pack(anchor='w', pady=4)
         self.flash_progress = ttk.Progressbar(firmware_tab, mode='indeterminate')
         self.flash_progress.pack(fill='x')
         self.flash_log = tk.Text(firmware_tab, height=5, bg=PANEL, fg=DIM, font=('Menlo',10), state='disabled', relief='flat')
@@ -150,6 +154,8 @@ class App:
         self.reader_label.pack(anchor='w', pady=8)
         self.radio_label = self.label(debug, 'Pool central: no status', 11)
         self.radio_label.pack(anchor='w')
+        self.database_debug = self.label(debug, 'Database: waiting for report', 11)
+        self.database_debug.pack(anchor='w')
         self.filter_label = self.label(debug, 'One Euro filter · waiting for sensor', 11)
         self.filter_label.pack(anchor='w', pady=5)
         self.label(debug, '150 ms heartbeat · 700 ms tag removal · 1.5 s override watchdog\nCentral packets are broadcasts: queued does not confirm receipt or physical illumination.', 11).pack(anchor='w', pady=8)
@@ -195,6 +201,7 @@ class App:
         self.label(controls, 'Amber = draft. Captures record the displayed filtered value.', 11).pack(anchor='w')
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.refresh()
+        self.update_firmware_status()
         self.draw()
         root.after(30, self.poll)
         if port: root.after(200, self.connect)
@@ -216,7 +223,7 @@ class App:
             self.lock = PortLock(self.port.get())
             self.connection = serial.Serial(self.port.get(),115200,timeout=0,write_timeout=.2,exclusive=True)
             self.buffer = b''
-            self.last_rx = time.monotonic()
+            self.last_rx = self.last_report = time.monotonic()
             self.connect_button.configure(text='Disconnect')
             self.status.configure(text='Waiting for calibration firmware…')
             self.send('HOST DISARM')
@@ -234,7 +241,10 @@ class App:
         self.interaction = {}
         self.monitor = MonitorState()
         self.firmware_calibration = None
-        self.firmware_state = 'unknown'
+        self.firmware_state = self.database_state = 'unknown'
+        if not self.flashing: self.flash_status.configure(text='Connect to detect firmware and database versions.')
+        self.database_label.configure(text='Cube database: disconnected')
+        self.database_debug.configure(text='Cube database: disconnected')
         if self.lock: self.lock.close()
         self.connection = self.lock = None
         self.ready = False
@@ -266,11 +276,21 @@ class App:
     def update_firmware_status(self):
         if self.flashing: return
         self.firmware_state, detail = firmware.status(self.monitor.zone,self.firmware_calibration)
-        self.flash_status.configure(text=detail)
+        self.flash_status.configure(text=detail if self.connection else 'Connect to detect firmware and database versions.')
+        try:
+            publication=firmware.local_database()
+            self.database_state, db_detail=firmware.database_status(self.monitor.zone,publication)
+        except Exception as exc:
+            self.database_state, db_detail='unknown', 'Local database unavailable: '+str(exc)
+        self.database_label.configure(text=db_detail,fg=GREEN if self.database_state=='current' else GOLD)
+        self.database_debug.configure(text=db_detail)
         self.draw()
 
     def start_flash(self):
         if self.flashing or not self.ready or not self.connection: return
+        if self.database_state in ('ahead','unknown'):
+            self.flash_status.configure(text='Resolve the database status below before updating.')
+            return
         if self.dirty or self.pending or self.queue:
             self.flash_status.configure(text='Apply & save your draft calibration, or reload saved ticks, before flashing.')
             return
@@ -465,7 +485,7 @@ class App:
         self.draw()
 
     def draw(self):
-        self.flash_button.configure(text='Firmware up to date' if self.firmware_state=='current' else 'Update firmware', state='normal' if self.ready and not self.flashing and self.firmware_state=='update' else 'disabled')
+        self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.ready and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
         self.check_firmware_button.configure(state='normal' if self.connection and not self.flashing else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
         self.ports.configure(state='disabled' if self.flashing else 'normal')
@@ -534,6 +554,9 @@ class App:
             if self.connection and self.ready and self.queue and not self.pending:
                 cmd=self.queue.popleft()
                 if self.send(cmd): self.pending=(cmd,now)
+        if self.connection and self.ready and now-self.last_report>=5:
+            self.last_report=now
+            self.send('?')
         if self.connection and self.arm_requested:
             if now-self.last_interaction>.6 or now-self.last_sample>.6:
                 self.arm_requested=False
