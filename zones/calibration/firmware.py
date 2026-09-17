@@ -1,5 +1,6 @@
 """Application-only updates for an already configured PoolZone; preserves all device data."""
 import json
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -13,6 +14,39 @@ sys.path.insert(0,str(ROOT.parent/'pairing_station'))
 from port_lock import PortLock
 from zone_flash import Runner, tool_command, ports, parse_report, MAC_RE, ZoneFlasher
 import zone_build
+
+
+ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))')
+
+def clean_output(text):
+    text=ANSI.sub('',str(text))
+    return ''.join(c for c in text if c in '\n\t' or ord(c)>=32).strip()
+
+class FlashRunner(Runner):
+    def __init__(self, emit, logfile):
+        super().__init__(emit,logfile)
+        self.errors=[]
+    def line(self,line):
+        line=clean_output(line)
+        if re.search(r'(?:fatal error:|error:|A fatal error|Error:)',line,re.I): self.errors.append(line)
+        if line: super().line(line)
+    def __call__(self,args,timeout=90):
+        self.errors=[]
+        try: return super().__call__(args,timeout)
+        except Exception as exc:
+            useful=self.errors[0] if self.errors else clean_output(str(exc)).split('\n')[0]
+            raise RuntimeError(useful[:300]+' — full details in the log below.') from exc
+
+
+def ensure_build(runner,emit):
+    try:
+        manifest=zone_build.load_manifest('PoolZone')
+    except (ValueError,OSError,KeyError,TypeError) as exc:
+        emit('stage','Building firmware: '+str(exc))
+        zone_build.build('PoolZone',runner)
+        return zone_build.load_manifest('PoolZone')
+    emit('stage',f'Using existing verified build {manifest["version"]} · no compilation needed')
+    return manifest
 
 
 def snapshot(port, timeout=4):
@@ -62,7 +96,7 @@ def status(report, calibration):
 def flash(port_name, emit):
     folder=Path(__file__).parent/'build'/'firmware-runs'/uuid.uuid4().hex
     folder.mkdir(parents=True)
-    runner=Runner(emit,folder/'upload.log')
+    runner=FlashRunner(emit,folder/'upload.log')
     selected=next((p for p in ports() if p['port']==port_name),None)
     if not selected or not selected['candidate']: raise RuntimeError('Select a connected ESP32 PoolZone board.')
     with PortLock(port_name):
@@ -73,9 +107,7 @@ def flash(port_name, emit):
         emit('stage',detail)
         if state == 'current':
             return dict(port=port_name,version=before['firmware'],backup='',log=str(folder/'upload.log'),skipped=True)
-        emit('stage','Building current PoolZone firmware…')
-        zone_build.build('PoolZone',runner)
-        manifest=zone_build.load_manifest('PoolZone')
+        manifest=ensure_build(runner,emit)
         # Freeze checked artifacts so another build cannot change this upload mid-flight.
         for segment in manifest['segments']:
             target=folder/segment['file']
@@ -114,7 +146,7 @@ def flash(port_name, emit):
                 if path.read_bytes()!=backup[offset:offset+size]: raise RuntimeError(f'{name} changed unexpectedly; backup retained at {backup_path}')
         finally:
             if connected:
-                try: tool('run',after='hard-reset',timeout=15)
+                try: tool('read-mac',after='watchdog-reset' if selected.get('native_usb') else 'hard-reset',timeout=15)
                 except Exception as exc: runner.line('Reset: '+str(exc))
         emit('stage','Checking reboot and firmware version…')
         report=ZoneFlasher(folder/'unused.sqlite3',emit).boot_report(selected,runner)

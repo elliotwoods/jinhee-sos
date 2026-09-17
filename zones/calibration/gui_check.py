@@ -35,6 +35,19 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(self.app.distance,129.25)
         self.assertEqual(self.app.raw_distance,140)
 
+    def test_firmware_status_and_unsaved_draft_guard(self):
+        self.app.monitor.zone=dict(firmware='pool-old',zone_type=3)
+        self.app.update_firmware_status()
+        self.assertEqual(self.app.firmware_state,'update')
+        self.assertIn('Update available',self.app.flash_status.cget('text'))
+        self.app.connection=object()
+        self.app.dirty=True
+        try:
+            self.app.start_flash()
+            self.assertFalse(self.app.flashing)
+            self.assertIn('draft',self.app.flash_status.cget('text'))
+        finally: self.app.connection=None
+
     def test_stale_snapshot_and_disarm(self):
         self.feed(override=True,tag=False,output=12)
         self.app.last_interaction=time.monotonic()-2

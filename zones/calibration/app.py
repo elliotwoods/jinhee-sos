@@ -128,8 +128,8 @@ class App:
         firmware_tab = self.firmware_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
         tabs.add(firmware_tab, text='Firmware')
         self.label(firmware_tab, 'Update PoolZone firmware', 20, FG).pack(anchor='w')
-        self.label(firmware_tab, 'Build the current source and flash this connected PoolZone.\nCalibration, radio identity and cube database are backed up and preserved.', 12).pack(anchor='w', pady=8)
-        self.flash_button = ttk.Button(firmware_tab, text='Build & flash firmware', command=self.start_flash)
+        self.label(firmware_tab, 'Install current firmware; reuse a verified build or compile if needed.\nCalibration, radio identity and cube database are backed up and preserved.', 12).pack(anchor='w', pady=8)
+        self.flash_button = ttk.Button(firmware_tab, text='Update firmware', command=self.start_flash)
         self.flash_button.pack(anchor='w')
         self.check_firmware_button = ttk.Button(firmware_tab, text='Check installed firmware', command=self.check_firmware)
         self.check_firmware_button.pack(anchor='w', pady=4)
@@ -279,7 +279,7 @@ class App:
         self.disconnect('Firmware update in progress…')
         self.tabs.select(self.firmware_tab)
         self.flash_progress.start(15)
-        self.flash_status.configure(text='Building current PoolZone firmware…')
+        self.flash_status.configure(text='Checking connected board and existing build…')
         def worker():
             try:
                 result=firmware.flash(port,lambda kind,value: self.flash_events.put((kind,value)))
@@ -293,6 +293,7 @@ class App:
             try: kind,value=self.flash_events.get_nowait()
             except queue.Empty: break
             if kind=='log':
+                value=firmware.clean_output(value)
                 self.flash_log.configure(state='normal')
                 self.flash_log.insert('end',value+'\n')
                 if int(self.flash_log.index('end-1c').split('.')[0])>300: self.flash_log.delete('1.0','50.0')
@@ -464,7 +465,7 @@ class App:
         self.draw()
 
     def draw(self):
-        self.flash_button.configure(text='Firmware up to date' if self.firmware_state=='current' else 'Build & flash firmware', state='normal' if self.ready and not self.flashing and self.firmware_state=='update' else 'disabled')
+        self.flash_button.configure(text='Firmware up to date' if self.firmware_state=='current' else 'Update firmware', state='normal' if self.ready and not self.flashing and self.firmware_state=='update' else 'disabled')
         self.check_firmware_button.configure(state='normal' if self.connection and not self.flashing else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
         self.ports.configure(state='disabled' if self.flashing else 'normal')

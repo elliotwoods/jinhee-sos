@@ -49,6 +49,8 @@ def digest(path):
 def sources(sketch):
     sketch = ZONES / 'firmware' / sketch
     files = sorted(sketch.glob('*.ino')) + sorted(sketch.glob('*.h')) + sorted(sketch.glob('*.csv')) + sorted((ZONES / 'firmware/libraries/NctZone/src').glob('*'))
+    if sketch.name == 'PoolZone':
+        files.append(Path(__file__))  # include build flags in the installed-source fingerprint
     return files
 
 
@@ -94,7 +96,7 @@ def build(name, run):
     out.mkdir(parents=True, exist_ok=True)
     args = [cli, 'compile', '--fqbn', fqbn]
     if name == 'PoolZone':
-        args += ['--build-property', 'build.extra_flags=-DPOOL_BUILD_ID=h' + before]
+        args += ['--build-property', 'compiler.cpp.extra_flags=-DPOOL_BUILD_ID=h' + before]
     for library in LIBRARIES:
         args += ['--libraries', str(library)]
     run(args + ['--build-path', str(out / 'cache'), '--output-dir', str(out), str(ZONES / 'firmware' / name)], timeout=900)

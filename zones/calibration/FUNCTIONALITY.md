@@ -44,3 +44,5 @@ No core tagged PoolZone interaction from the NFC-enabled baseline is intentional
 - ASan/UBSan host suite: shared zone core and all four zone sketches; PoolZone covers boundary/gap handling, flash reload, NeoCube POOL packet and ACK/failure, unknown tags, strip activation, member changes, heartbeat, tag removal, override renewal/expiry/late-ping refusal, real-tag precedence and calibration-upload interlock.
 - Python interpolation/noisy-capture unit tests and Tk arming/debug/stale-state checks pass.
 - Attached PoolZone `3C:0F:02:9F:D4:E4`: `pool-2.5.0` installed with application-only flash; latest control points preserved. Live test passed NFC/radio readiness, no-tag OFF, armed member transmission/heartbeat, watchdog release, late-ping refusal and explicit disarm. Evidence: local ignored `build/integration-hardware.log`.
+
+- Firmware-tab updater: connected-board identity check, source/build fingerprint comparison, validated local-build reuse, full backup, application-only write, data verification and automatic disarmed reconnect. Older firmware without a fingerprint is offered a one-time update.
