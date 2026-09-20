@@ -1,0 +1,11 @@
+{
+  "cube_id": 105,
+  "detail": "Cube acknowledged; flash persistence not verified",
+  "mac": "1C:DB:D4:F0:D2:70",
+  "pending_uid": null,
+  "role": "auto",
+  "source": "discovered",
+  "status": "acknowledged",
+  "uid": "53:9E:D5:CF:33:00:01",
+  "updated_at": "2026-09-18T23:15:11+00:00"
+}

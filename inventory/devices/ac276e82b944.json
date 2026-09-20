@@ -1,11 +1,11 @@
 {
-  "cube_id": null,
-  "detail": "Previous number 32 cleared; assign physical label number",
+  "cube_id": 106,
+  "detail": "Renumbered from None to 106. New number needs transmission.",
   "mac": "AC:27:6E:82:B9:44",
   "pending_uid": null,
   "role": "auto",
   "source": "imported",
-  "status": "needs_number",
+  "status": "not_transmitted",
   "uid": "53:7A:D8:CF:33:00:01",
-  "updated_at": "2026-09-17T08:01:18+00:00"
+  "updated_at": "2026-09-18T23:15:55+00:00"
 }

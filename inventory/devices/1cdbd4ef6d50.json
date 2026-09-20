@@ -1,0 +1,11 @@
+{
+  "cube_id": 74,
+  "detail": "Cube acknowledged; flash persistence not verified",
+  "mac": "1C:DB:D4:EF:6D:50",
+  "pending_uid": null,
+  "role": "auto",
+  "source": "usb_flash",
+  "status": "acknowledged",
+  "uid": "53:59:D5:CF:33:00:01",
+  "updated_at": "2026-09-17T19:09:13+00:00"
+}

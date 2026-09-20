@@ -1,11 +1,11 @@
 {
   "cube_id": 43,
-  "detail": "No matching acknowledgment after three attempts",
+  "detail": "Cube acknowledged; flash persistence not verified",
   "mac": "1C:DB:D4:F0:D2:DC",
-  "pending_uid": "53:59:D7:CF:33:00:01",
+  "pending_uid": null,
   "role": "auto",
   "source": "discovered",
-  "status": "unconfirmed",
+  "status": "acknowledged",
   "uid": "53:59:D7:CF:33:00:01",
-  "updated_at": "2026-09-17T13:43:08+00:00"
+  "updated_at": "2026-09-17T18:47:04+00:00"
 }

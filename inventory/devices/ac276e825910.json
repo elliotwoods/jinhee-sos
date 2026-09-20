@@ -1,11 +1,11 @@
 {
-  "cube_id": null,
-  "detail": "Previous number 20 cleared; assign physical label number",
+  "cube_id": 103,
+  "detail": "Cube acknowledged; flash persistence not verified",
   "mac": "AC:27:6E:82:59:10",
-  "pending_uid": "53:8C:D4:CF:33:00:01",
+  "pending_uid": null,
   "role": "auto",
   "source": "imported",
-  "status": "needs_number",
-  "uid": "53:8C:D4:CF:33:00:01",
-  "updated_at": "2026-09-17T08:01:18+00:00"
+  "status": "acknowledged",
+  "uid": "53:9F:D5:CF:33:00:01",
+  "updated_at": "2026-09-19T18:02:11+00:00"
 }
