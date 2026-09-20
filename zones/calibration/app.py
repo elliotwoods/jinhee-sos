@@ -137,7 +137,8 @@ class App:
         self.canvas = tk.Canvas(body, height=145, bg=PANEL, highlightthickness=0)
         self.canvas.pack(fill='x', pady=8)
         self.canvas.bind('<Configure>', lambda e: self.draw())
-        self.label(body, 'Green bands: ±33% of neighboring tick spacing. Gaps: no selection. Circle: One Euro filtered position.', 11).pack(anchor='w')
+        self.range_note = self.label(body, 'Green bands: acceptance window around each tick. Gaps: no selection. Circle: filtered position.', 11)
+        self.range_note.pack(anchor='w')
         tabs = self.tabs = ttk.Notebook(body)
         tabs.pack(fill='both', expand=True, pady=8)
         work = self.work_tab = tk.Frame(tabs, bg=BG)
@@ -576,7 +577,7 @@ class App:
         self.tuning = None
         self.index_changes.clear()
         if self.record_state is not None: self.stop_recording('Disconnected during recording.')
-        if not self.flashing: self.flash_status.configure(text='Connect to detect firmware and database versions.')
+        if not self.flashing: self.flash_status.configure(text='Connect to a configured PoolZone to enable firmware updates, including legacy firmware without calibration.')
         self.database_label.configure(text='Cube database: disconnected')
         self.database_debug.configure(text='Cube database: disconnected')
         if self.lock: self.lock.close()
@@ -610,6 +611,8 @@ class App:
     def update_firmware_status(self):
         if self.flashing: return
         self.firmware_state, detail = firmware.status(self.monitor.zone,self.firmware_calibration)
+        if self.firmware_state == 'update' and not self.ready:
+            detail += ' · Calibration unavailable; legacy update supported. Existing NVS will be preserved.'
         self.flash_status.configure(text=detail if self.connection else 'Connect to detect firmware and database versions.')
         try:
             publication=firmware.local_database()
@@ -665,7 +668,8 @@ class App:
         self.log_event('EVENT zone status written to registry')
 
     def start_flash(self, database_only=False):
-        if self.flashing or not self.ready or not self.connection: return
+        # A legacy board reports no calibration, so readiness cannot gate the update.
+        if self.flashing or self.firmware_state not in ('current','update') or not self.connection: return
         if self.database_state in ('ahead','unknown'):
             self.flash_status.configure(text='Resolve the database status below before updating.')
             return
@@ -701,7 +705,7 @@ class App:
                 self.flashing=False
                 self.flash_progress.stop()
                 if kind=='done':
-                    self.flash_status.configure(text='Already up to date; no flash needed.' if value.get('skipped') else f'Installed {value["version"]}. Calibration preserved. Backup: {value["backup"]}')
+                    self.flash_status.configure(text='Already up to date; no flash needed.' if value.get('skipped') else f'Installed {value["version"]}. Device data preserved. Backup: {value["backup"]}')
                     self.log_event('Firmware: '+str(value))
                     self.port.set(value['port'])
                     self.connect()
@@ -798,7 +802,11 @@ class App:
     def handle(self, line):
         if line.startswith(('EVT ', 'NFC:', 'FW:', 'MAC:', 'CHANNEL:', 'ZONE:', 'DB:', 'STATS:', 'POOL:', 'READY')):
             try:
-                if self.monitor.feed(line) and line=='READY': self.update_firmware_status()
+                if self.monitor.feed(line) and line=='READY':
+                    # A legacy board answers READY but never sends calibration; keep the link alive.
+                    self.last_rx = time.monotonic()
+                    if not self.ready: self.status.configure(text='Connected · firmware identified · waiting for calibration')
+                    self.update_firmware_status()
             except (ValueError, KeyError): pass
         if line.startswith(('EVT ', 'EVENT ', 'PN532 ', 'ERR')): self.log_event(line)
         if line.startswith('ERR'):
@@ -868,7 +876,7 @@ class App:
         self.draw()
 
     def draw(self):
-        self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.ready and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
+        self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.connection and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
         self.check_firmware_button.configure(state='normal' if self.connection and not self.flashing else 'disabled')
         idle = bool(self.connection) and not self.flashing
         self.database_check_button.configure(state='normal' if idle else 'disabled')
@@ -891,6 +899,9 @@ class App:
                         f" / median {self.tuning['median']} · enter {self.tuning['enter']:g} / exit {self.tuning['exit']:g}")
         self.filter_label.configure(text=reading)
         self.stability_label.configure(text=self.stability_text(time.monotonic()))
+        if self.tuning:
+            self.range_note.configure(text=f"Green bands: enter window {self.tuning['enter']:g} of tick spacing "
+                f"(a selected tick is held to {self.tuning['exit']:g}). Gaps: no selection. Circle: filtered position.")
         c = self.canvas
         c.delete('all')
         w = max(c.winfo_width(), 900)
@@ -947,7 +958,7 @@ class App:
             except (OSError,serial.SerialException) as exc: self.disconnect(str(exc))
             if self.connection and now-self.last_rx>4: self.disconnect('No calibration telemetry — check firmware / USB')
             elif self.connection and not self.ready and now-self.last_query>1:
-                self.last_query=now; self.send('CAL GET')
+                self.last_query=now; self.send('CAL GET'); self.send('?')
             elif self.connection and self.ready and self.tuning is None and now-self.last_query>1:
                 self.last_query=now; self.send('TUNE GET')
             if self.pending and now-self.pending[1]>2:
