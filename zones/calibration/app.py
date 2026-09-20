@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'flasher'))
 from zone_monitor import MonitorState
 import firmware
+import recording as rec
 
 BG, PANEL, FG, DIM, GREEN, GOLD = '#101820', '#1c2833', '#eff7fa', '#9bb2c2', '#52e0bd', '#ffc56b'
 
@@ -75,6 +76,23 @@ class App:
         self.ticks = [0.0]*23
         self.hardware_ticks = [0.0]*23
         self.samples = deque(maxlen=30)
+        # Tuning and guided recording state. The recording buffer is deliberately
+        # unbounded: `samples` above is a short window for control-point capture.
+        self.tuning = None
+        self.tuning_defaults = None
+        self.tuning_saved = False
+        self.tuning_dirty = False
+        self.tuning_vars = {}
+        self.record_state = None
+        self.record_steps = []
+        self.record_step = 0
+        self.record_buffer = []
+        self.record_started = 0.0
+        self.record_phase_at = 0.0
+        self.recording = None
+        self.analysis = None
+        self.proposal = None
+        self.index_changes = deque(maxlen=200)
         self.raw_distance = None
         self.distance = None
         self.index = -1
@@ -122,8 +140,10 @@ class App:
         self.label(body, 'Green bands: ±33% of neighboring tick spacing. Gaps: no selection. Circle: One Euro filtered position.', 11).pack(anchor='w')
         tabs = self.tabs = ttk.Notebook(body)
         tabs.pack(fill='both', expand=True, pady=8)
-        work = tk.Frame(tabs, bg=BG)
+        work = self.work_tab = tk.Frame(tabs, bg=BG)
         tabs.add(work, text='Calibration')
+        tune = self.tune_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
+        tabs.add(tune, text='Tuning & recording')
         debug = tk.Frame(tabs, bg=BG, padx=18, pady=12)
         tabs.add(debug, text='NeoCube & output diagnostics')
         firmware_tab = self.firmware_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
@@ -137,9 +157,32 @@ class App:
         self.flash_status = self.label(firmware_tab, 'Connect to PoolZone to enable firmware updates.', 11, GOLD)
         self.flash_status.configure(wraplength=950)
         self.flash_status.pack(anchor='w', pady=5)
-        self.database_label = self.label(firmware_tab, 'Cube database: waiting for board', 11, GOLD)
-        self.database_label.configure(wraplength=930)
+        database_panel = tk.Frame(firmware_tab, bg=PANEL, padx=14, pady=10)
+        database_panel.pack(fill='x', pady=10)
+        self.label(database_panel, 'Cube database  ·  NeoCube UID → ID mappings', 15, FG).pack(anchor='w')
+        self.database_label = self.label(database_panel, 'Cube database: waiting for board', 11, GOLD)
+        self.database_label.configure(wraplength=900)
         self.database_label.pack(anchor='w', pady=4)
+        self.database_detail = self.label(database_panel, 'Board — · Local master —', 11)
+        self.database_detail.configure(wraplength=900)
+        self.database_detail.pack(anchor='w')
+        db_row = tk.Frame(database_panel, bg=PANEL)
+        db_row.pack(anchor='w', pady=6)
+        self.database_check_button = ttk.Button(db_row, text='Check master database', command=self.check_firmware)
+        self.database_check_button.pack(side='left')
+        self.database_button = ttk.Button(db_row, text='Update cube database', command=self.start_database)
+        self.database_button.pack(side='left', padx=8)
+        registry_panel = tk.Frame(firmware_tab, bg=PANEL, padx=14, pady=10)
+        registry_panel.pack(fill='x', pady=(0,10))
+        self.label(registry_panel, 'Zone status registry', 15, FG).pack(anchor='w')
+        self.label(registry_panel, 'The shared zones table the pairing station and flashers read. '
+                   'A firmware or database update writes this automatically; update it on its own '
+                   'to record a board you only inspected or tuned.', 11).pack(anchor='w', pady=4)
+        self.registry_label = self.label(registry_panel, 'Registry: connect to read board identity', 11)
+        self.registry_label.configure(wraplength=900)
+        self.registry_label.pack(anchor='w')
+        self.registry_button = ttk.Button(registry_panel, text='Update zone status in registry', command=self.update_registry)
+        self.registry_button.pack(anchor='w', pady=6)
         self.flash_progress = ttk.Progressbar(firmware_tab, mode='indeterminate')
         self.flash_progress.pack(fill='x')
         self.flash_log = tk.Text(firmware_tab, height=5, bg=PANEL, fg=DIM, font=('Menlo',10), state='disabled', relief='flat')
@@ -157,10 +200,68 @@ class App:
         self.database_debug = self.label(debug, 'Database: waiting for report', 11)
         self.database_debug.pack(anchor='w')
         self.filter_label = self.label(debug, 'One Euro filter · waiting for sensor', 11)
+        self.filter_label.configure(wraplength=900)
         self.filter_label.pack(anchor='w', pady=5)
+        # Flicker has to be measurable before and after a tuning change, not judged by eye.
+        self.stability_label = self.label(debug, 'Output stability · waiting for telemetry', 13, GREEN)
+        self.stability_label.pack(anchor='w')
         self.label(debug, '150 ms heartbeat · 700 ms tag removal · 1.5 s override watchdog\nCentral packets are broadcasts: queued does not confirm receipt or physical illumination.', 11).pack(anchor='w', pady=8)
         self.event_log = tk.Text(debug, height=5, bg=PANEL, fg=DIM, font=('Menlo',10), state='disabled', relief='flat')
         self.event_log.pack(fill='both', expand=True)
+        # ---- Tuning & recording tab ----
+        self.label(tune, 'Guided recording and filter tuning', 20, FG).pack(anchor='w')
+        self.label(tune, 'Records the slider at a series of positions, then measures the sensor noise and\n'
+                   'proposes filter and hysteresis settings that stop the output flickering.', 12).pack(anchor='w', pady=6)
+        plan_row = tk.Frame(tune, bg=BG)
+        plan_row.pack(anchor='w', pady=4)
+        self.stride_var = tk.StringVar(value='4')
+        self.settle_var = tk.StringVar(value='3')
+        self.hold_var = tk.StringVar(value='5')
+        for text, var, width in [('Every Nth tick', self.stride_var, 4), ('Move time (s)', self.settle_var, 4), ('Hold time (s)', self.hold_var, 4)]:
+            self.label(plan_row, text+':', 11).pack(side='left', padx=(0,4))
+            ttk.Entry(plan_row, textvariable=var, width=width).pack(side='left', padx=(0,12))
+        self.record_button = ttk.Button(plan_row, text='Start guided recording', command=self.start_recording)
+        self.record_button.pack(side='left')
+        self.record_abort = ttk.Button(plan_row, text='Abort', command=self.stop_recording)
+        self.record_abort.pack(side='left', padx=8)
+        self.record_prompt = self.label(tune, 'Endpoints plus every Nth tick. Both ends are always included.', 22, DIM)
+        self.record_prompt.pack(anchor='w', pady=10)
+        panes = tk.Frame(tune, bg=BG)
+        panes.pack(fill='both', expand=True)
+        left = tk.Frame(panes, bg=BG)
+        left.pack(side='left', fill='y')
+        self.result_table = ttk.Treeview(left, columns=('tick','mm','noise','ok'), show='headings', height=9, selectmode='none')
+        for key, text, width in [('tick','Tick',50), ('mm','Measured (mm)',110), ('noise','Noise (mm)',90), ('ok','',40)]:
+            self.result_table.heading(key, text=text)
+            self.result_table.column(key, width=width, anchor='center')
+        self.result_table.pack(side='left', fill='y')
+        right = tk.Frame(panes, bg=BG, padx=16)
+        right.pack(side='left', fill='both', expand=True)
+        self.result_note = self.label(right, 'Run a guided recording to measure the slider and propose tuning.', 11)
+        self.result_note.configure(wraplength=560, justify='left')
+        self.result_note.pack(anchor='w')
+        apply_row = tk.Frame(right, bg=BG)
+        apply_row.pack(anchor='w', pady=8)
+        ttk.Button(apply_row, text='Use recording as calibration', command=self.apply_recording_calibration).pack(side='left')
+        ttk.Button(apply_row, text='Apply & save tuning', command=lambda: self.apply_recommended_tuning(True)).pack(side='left', padx=8)
+        fields = tk.Frame(right, bg=PANEL, padx=12, pady=10)
+        fields.pack(fill='x', pady=6)
+        self.tune_state = self.label(fields, 'Device tuning · waiting for board', 13, GOLD)
+        self.tune_state.grid(row=0, column=0, columnspan=4, sticky='w', pady=(0,6))
+        for i, (key, (text, whole, low, high)) in enumerate(rec.FIELDS.items()):
+            var = tk.StringVar()
+            self.tuning_vars[key] = var
+            self.label(fields, text, 10).grid(row=1+i//2, column=(i%2)*2, sticky='w', padx=(0,6), pady=1)
+            ttk.Entry(fields, textvariable=var, width=9).grid(row=1+i//2, column=(i%2)*2+1, sticky='w', padx=(0,18), pady=1)
+        button_row = tk.Frame(right, bg=BG)
+        button_row.pack(anchor='w', pady=4)
+        ttk.Button(button_row, text='Apply live', command=lambda: self.apply_tuning_fields(False)).pack(side='left')
+        ttk.Button(button_row, text='Apply & save to flash', command=lambda: self.apply_tuning_fields(True)).pack(side='left', padx=8)
+        ttk.Button(button_row, text='Reload saved', command=self.load_tuning).pack(side='left')
+        ttk.Button(button_row, text='Firmware defaults', command=self.default_tuning).pack(side='left', padx=8)
+        self.tune_note = self.label(right, 'Apply live to judge a change before committing it to flash.', 11, GOLD)
+        self.tune_note.configure(wraplength=560)
+        self.tune_note.pack(anchor='w', pady=4)
         self.table = ttk.Treeview(work, columns=('index','mm','source'), show='headings', height=12, selectmode='browse')
         self.table.heading('index', text='Index')
         self.table.heading('mm', text='Calibration (mm)')
@@ -206,6 +307,236 @@ class App:
         root.after(30, self.poll)
         if port: root.after(200, self.connect)
 
+    # ---------------- tuning and guided recording ----------------
+
+    def note_index(self, index, now):
+        """Track confirmed-index changes so flicker is measurable, not judged by eye."""
+        if self.index_changes and self.index_changes[-1][1] == index: return
+        self.index_changes.append((now, index))
+
+    def stability_text(self, now):
+        recent = [t for t, _ in self.index_changes if now - t <= 10]
+        changes = max(0, len(recent) - 1)
+        if not self.index_changes: return 'Output stability · waiting for telemetry'
+        held = now - self.index_changes[-1][0]
+        return f'Output stability · {changes} index changes in the last 10 s · steady for {held:.1f} s'
+
+    def absorb_tuning(self, data):
+        values = {}
+        for key, name in rec.JSON_KEYS.items():
+            value = data.get(name)
+            if type(value) in (int, float) and math.isfinite(value):
+                values[key] = int(value) if rec.FIELDS[key][1] else float(value)
+        if len(values) != len(rec.JSON_KEYS): return
+        self.tuning = values
+        self.tuning_saved = bool(data.get('saved'))
+        defaults = data.get('defaults')
+        if isinstance(defaults, dict):
+            self.tuning_defaults = {k: defaults.get(n) for k, n in rec.JSON_KEYS.items()}
+        if self.pending and self.pending[0].startswith(('TUNE SET ', 'TUNE SAVE', 'TUNE LOAD', 'TUNE DEFAULTS')):
+            cmd = self.pending[0]
+            if cmd.startswith('TUNE SET '):
+                _, _, key, value = cmd.split()
+                got = values.get(key)
+                if got is None or abs(float(got) - float(value)) > max(1e-4, abs(float(value)) * 1e-3):
+                    self.tune_note.configure(text=f'Device did not accept {key}; tuning left unchanged.')
+                    self.queue.clear(); self.pending = None; self.refresh_tuning(); return
+            elif cmd == 'TUNE SAVE' and not self.tuning_saved:
+                self.tune_note.configure(text='Tuning save was not confirmed by the device.')
+                self.queue.clear(); self.pending = None; self.refresh_tuning(); return
+            elif cmd == 'TUNE SAVE':
+                self.tuning_dirty = False
+                self.tune_note.configure(text='Tuning saved to device flash and verified.')
+            self.pending = None
+        self.refresh_tuning()
+
+    def refresh_tuning(self):
+        for key, var in self.tuning_vars.items():
+            if self.tuning and not var.get().strip():
+                var.set(self.format_field(key, self.tuning[key]))
+        if self.tuning:
+            state = 'saved to flash' if self.tuning_saved else 'live only, not saved'
+            self.tune_state.configure(text=f'Device tuning · {state}', fg=GREEN if self.tuning_saved else GOLD)
+        self.draw_tuning_table()
+
+    @staticmethod
+    def format_field(key, value):
+        return str(int(value)) if rec.FIELDS[key][1] else f'{float(value):g}'
+
+    def send_tuning(self, values, save):
+        """Queue TUNE SET for each changed field, verified one reply at a time."""
+        reason = rec.valid(values)
+        if reason:
+            messagebox.showerror('Tuning', reason); return
+        current = self.tuning or {}
+        queue = [f'TUNE SET {k} {self.format_field(k, v)}' for k, v in values.items()
+                 if current.get(k) is None or abs(float(current[k]) - float(v)) > 1e-6]
+        if not queue and not save:
+            self.tune_note.configure(text='Tuning already matches the device.'); return
+        if save: queue.append('TUNE SAVE')
+        self.queue.extend(queue)
+        self.tuning_dirty = True
+        self.tune_note.configure(text=f'Applying {len(queue)} tuning command(s)…')
+
+    def read_tuning_fields(self):
+        values = {}
+        for key, var in self.tuning_vars.items():
+            text = var.get().strip()
+            try: value = float(text)
+            except ValueError:
+                messagebox.showerror('Tuning', f'{rec.FIELDS[key][0]}: "{text}" is not a number'); return None
+            values[key] = int(round(value)) if rec.FIELDS[key][1] else value
+        return values
+
+    def apply_tuning_fields(self, save):
+        values = self.read_tuning_fields()
+        if values is not None: self.send_tuning(values, save)
+
+    def load_tuning(self):
+        self.queue.append('TUNE LOAD')
+        for var in self.tuning_vars.values(): var.set('')
+        self.tune_note.configure(text='Reloading saved tuning from the device…')
+
+    def default_tuning(self):
+        self.queue.append('TUNE DEFAULTS')
+        for var in self.tuning_vars.values(): var.set('')
+        self.tune_note.configure(text='Applying firmware defaults live (not saved).')
+
+    # ---- guided recording ----
+
+    def start_recording(self):
+        if not self.ready:
+            messagebox.showerror('Recording', 'Connect to a PoolZone first.'); return
+        if self.dirty and not messagebox.askyesno('Recording', 'An unsaved calibration draft will be replaced by the recording. Continue?'):
+            return
+        try:
+            stride = int(self.stride_var.get()); settle = float(self.settle_var.get()); hold = float(self.hold_var.get())
+            self.record_steps = rec.plan_steps(stride, settle, hold)
+        except ValueError as exc:
+            messagebox.showerror('Recording', str(exc)); return
+        self.recording = self.analysis = self.proposal = None
+        self.record_buffer = []
+        self.record_step = 0
+        self.record_state = 'move'
+        self.record_started = time.monotonic()
+        self.record_phase_at = self.record_started
+        self.record_steps_data = []
+        self.send('RAW ON')
+        self.log_event(f'EVENT recording started · {len(self.record_steps)} positions')
+
+    def stop_recording(self, reason='Recording aborted.'):
+        if self.record_state is None: return
+        self.record_state = None
+        self.send('RAW OFF')
+        self.record_prompt.configure(text=reason)
+        self.draw_tuning_table()
+
+    def collect_raw(self, data, now):
+        if self.record_state is None: return
+        t = data.get('t')
+        if type(t) not in (int, float): return
+        mm = data.get('mm')
+        if type(mm) not in (int, float) or not math.isfinite(mm): mm = None
+        self.record_buffer.append(dict(t=int(t), mm=mm, st=data.get('st', 0)))
+
+    def advance_recording(self, now):
+        """Drive the move/hold schedule from the Tk poll callback (never blocks)."""
+        if self.record_state is None: return
+        if not self.connection: self.stop_recording('Disconnected during recording.'); return
+        step = self.record_steps[self.record_step]
+        elapsed = now - self.record_phase_at
+        if self.record_state == 'move':
+            remaining = step['settle'] - elapsed
+            self.record_prompt.configure(
+                text=f"MOVE TO {step['tick']}          {max(0.0, remaining):.1f} s", fg=GOLD)
+            if remaining <= 0:
+                self.record_state = 'hold'
+                self.record_phase_at = now
+                self.record_hold_from = self.record_buffer[-1]['t'] if self.record_buffer else 0
+        else:
+            remaining = step['hold'] - elapsed
+            self.record_prompt.configure(
+                text=f"HOLD AT {step['tick']}          {max(0.0, remaining):.1f} s", fg=GREEN)
+            if remaining <= 0:
+                self.record_steps_data.append(dict(tick=step['tick'], hold_from=self.record_hold_from,
+                                                   samples=self.record_buffer))
+                self.record_buffer = []
+                self.record_step += 1
+                if self.record_step >= len(self.record_steps):
+                    self.finish_recording(); return
+                self.record_state = 'move'
+                self.record_phase_at = now
+
+    def finish_recording(self):
+        self.record_state = None
+        self.send('RAW OFF')
+        self.recording = dict(steps=self.record_steps_data, ticks=23,
+                              created=time.strftime('%Y-%m-%d %H:%M:%S'),
+                              firmware=(self.monitor.zone or {}).get('firmware'))
+        try:
+            self.analysis = rec.analyse(self.recording)
+            proposal = rec.recommend(self.analysis, current=self.tuning)
+            fitted = rec.fit_budget(self.recording, self.analysis, proposal['tuning'])
+            proposal['tuning'] = fitted['tuning']
+            proposal['fit'] = fitted
+            proposal['before'] = rec.simulate(self.recording, self.tuning or rec.DEFAULTS, self.analysis['ticks'])
+            proposal['after'] = rec.simulate(self.recording, fitted['tuning'], self.analysis['ticks'])
+            self.proposal = proposal
+        except ValueError as exc:
+            self.record_prompt.configure(text=f'Recording unusable: {exc}', fg=GOLD)
+            self.analysis = self.proposal = None
+            return
+        try:
+            path = rec.save(self.recording, Path(__file__).resolve().parent / 'build/recordings')
+            self.log_event(f'EVENT recording saved {path.name}')
+        except OSError as exc:
+            self.log_event(f'EVENT recording not saved: {exc}')
+        self.record_prompt.configure(text='Recording complete. Review below, then apply.', fg=GREEN)
+        self.draw_tuning_table()
+
+    def draw_tuning_table(self):
+        table = self.result_table
+        for row in table.get_children(): table.delete(row)
+        if not self.analysis:
+            self.result_note.configure(text='Run a guided recording to measure the slider and propose tuning.')
+            return
+        for entry in self.analysis['steps']:
+            table.insert('', 'end', values=(
+                entry['tick'],
+                '—' if entry['mm'] is None else f"{entry['mm']:.2f}",
+                '—' if entry['noise'] is None else f"{entry['noise']:.2f}",
+                '⚠' if entry['warnings'] else 'ok'))
+        p = self.proposal
+        if not p: return
+        lines = [f"Raw noise {self.analysis['noise']:.2f} mm · tightest tick gap {self.analysis['min_gap']:.1f} mm · "
+                 f"sample period {self.analysis['sample_period_ms']:.0f} ms"]
+        before, after = p['before'], p['after']
+        lines.append(f"Predicted: {before['flicker']} output changes while held now → {after['flicker']} after tuning "
+                     f"(settles in {after['settle_ms']} ms, budget {p['settle_budget_ms']} ms)")
+        if not p['fit']['budget_met']:
+            lines.append('No setting met the settling budget; the least-flicker option is shown.')
+        lines += ['• ' + n for n in p['notes']]
+        lines += ['⚠ ' + w for w in p['warnings']]
+        self.result_note.configure(text='\n'.join(lines))
+
+    def apply_recording_calibration(self):
+        if not self.analysis: return
+        try:
+            self.points = dict(self.analysis['points'])
+            self.ticks = validate(rec.interpolate_ticks(self.points))
+        except ValueError as exc:
+            messagebox.showerror('Calibration', str(exc)); return
+        self.dirty = True
+        self.tabs.select(self.work_tab)
+        self.note.configure(text='Calibration drafted from the recording. Review, then Apply & save to flash.')
+        self.draw()
+
+    def apply_recommended_tuning(self, save):
+        if not self.proposal: return
+        values = self.proposal['tuning']
+        for key, var in self.tuning_vars.items(): var.set(self.format_field(key, values[key]))
+        self.send_tuning(values, save)
+
     def label(self, parent, text, size=12, color=DIM):
         return tk.Label(parent, text=text, font=('Helvetica',size), bg=parent.cget('bg'), fg=color, justify='left')
 
@@ -242,6 +573,9 @@ class App:
         self.monitor = MonitorState()
         self.firmware_calibration = None
         self.firmware_state = self.database_state = 'unknown'
+        self.tuning = None
+        self.index_changes.clear()
+        if self.record_state is not None: self.stop_recording('Disconnected during recording.')
         if not self.flashing: self.flash_status.configure(text='Connect to detect firmware and database versions.')
         self.database_label.configure(text='Cube database: disconnected')
         self.database_debug.configure(text='Cube database: disconnected')
@@ -284,9 +618,53 @@ class App:
             self.database_state, db_detail='unknown', 'Local database unavailable: '+str(exc)
         self.database_label.configure(text=db_detail,fg=GREEN if self.database_state=='current' else GOLD)
         self.database_debug.configure(text=db_detail)
+        zone = self.monitor.zone or {}
+        def version(source, prefix):
+            parts = [f"{prefix} v{source.get('db_version','?')}", f"{source.get('db_count','?')} mappings"]
+            crc = source.get('db_crc')
+            if crc is not None: parts.append(f'CRC {int(crc):08X}' if isinstance(crc,int) else f'CRC {crc}')
+            return ' · '.join(parts)
+        try:
+            local = firmware.local_database()
+            master = f"Local master v{local.version} · {local.count} mappings · CRC {local.crc:08X}"
+        except Exception as exc:
+            master = 'Local master unavailable: '+str(exc)
+        self.database_detail.configure(text=(version(zone,'Board') if zone else 'Board — (not connected)')+'     '+master)
+        self.registry_label.configure(
+            text=(f"{zone.get('name','?')} · point {zone.get('point_id','?')} · {zone.get('firmware','?')} · "
+                  f"{zone.get('mac','?')} · {version(zone,'database')}") if zone else
+                 'Registry: connect to read board identity')
         self.draw()
 
-    def start_flash(self):
+    def start_database(self):
+        """Update only the board's cube database, leaving a current application alone."""
+        if self.flashing or not self.ready or not self.connection: return
+        if self.database_state == 'ahead':
+            self.flash_status.configure(text='The board database is newer than the local master; resolve that first.')
+            return
+        if self.database_state != 'update':
+            self.flash_status.configure(text='Cube database is already current on this board.')
+            return
+        self.start_flash(database_only=True)
+
+    def update_registry(self):
+        """Record this board in the shared zones table without flashing anything."""
+        zone = self.monitor.zone
+        if self.flashing or not zone or not zone.get('mac'):
+            self.registry_label.configure(text='Connect and wait for the board report before updating the registry.')
+            return
+        detail = None
+        if self.tuning:
+            detail = 'tuning ' + ('saved' if self.tuning_saved else 'live') + ': ' + ', '.join(
+                f'{k}={self.format_field(k, v)}' for k, v in self.tuning.items())
+        try:
+            firmware.record_zone_status(zone, detail=detail)
+        except Exception as exc:
+            self.registry_label.configure(text='Registry update failed: '+str(exc)); return
+        self.registry_label.configure(text=f"Registry updated for {zone.get('name','?')} ({zone.get('mac')}) at {time.strftime('%H:%M:%S')}.")
+        self.log_event('EVENT zone status written to registry')
+
+    def start_flash(self, database_only=False):
         if self.flashing or not self.ready or not self.connection: return
         if self.database_state in ('ahead','unknown'):
             self.flash_status.configure(text='Resolve the database status below before updating.')
@@ -299,10 +677,10 @@ class App:
         self.disconnect('Firmware update in progress…')
         self.tabs.select(self.firmware_tab)
         self.flash_progress.start(15)
-        self.flash_status.configure(text='Checking connected board and existing build…')
+        self.flash_status.configure(text='Checking cube database…' if database_only else 'Checking connected board and existing build…')
         def worker():
             try:
-                result=firmware.flash(port,lambda kind,value: self.flash_events.put((kind,value)))
+                result=firmware.flash(port,lambda kind,value: self.flash_events.put((kind,value)),database_only=database_only)
                 self.flash_events.put(('done',result))
             except Exception as exc: self.flash_events.put(('failed',str(exc)))
         threading.Thread(target=worker,daemon=False).start()
@@ -482,15 +860,37 @@ class App:
             self.raw_distance = raw if valid and type(raw) in (int,float) and math.isfinite(raw) and 10 <= raw <= 1000 else None
             if valid and self.raw_distance is not None: self.samples.append((now,value))
             else: self.samples.clear()
+            self.note_index(self.index, now)
+        elif data.get('type') == 'raw':
+            self.collect_raw(data, now)
+        elif data.get('type') == 'tuning':
+            self.absorb_tuning(data)
         self.draw()
 
     def draw(self):
         self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.ready and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
         self.check_firmware_button.configure(state='normal' if self.connection and not self.flashing else 'disabled')
+        idle = bool(self.connection) and not self.flashing
+        self.database_check_button.configure(state='normal' if idle else 'disabled')
+        self.database_button.configure(
+            text='Cube database up to date' if self.database_state=='current' else 'Update cube database',
+            state='normal' if idle and self.ready and self.database_state=='update' else 'disabled')
+        self.registry_button.configure(state='normal' if idle and self.monitor.zone else 'disabled')
+        recording_now = self.record_state is not None
+        self.record_button.configure(state='disabled' if recording_now or not self.ready or self.flashing else 'normal')
+        self.record_abort.configure(state='normal' if recording_now else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
+        if self.record_state is not None and not self.connection: self.stop_recording('Disconnected during recording.')
         self.ports.configure(state='disabled' if self.flashing else 'normal')
         self.draw_interaction()
-        self.filter_label.configure(text=(f'One Euro · raw {self.raw_distance:.1f} mm → filtered {self.distance:.2f} mm' if self.distance is not None and self.raw_distance is not None else 'One Euro · no valid sensor reading')+' · min 0.8 Hz / beta 0.03')
+        reading = (f'One Euro · raw {self.raw_distance:.1f} mm → filtered {self.distance:.2f} mm'
+                   if self.distance is not None and self.raw_distance is not None else 'One Euro · no valid sensor reading')
+        # Read the live parameters from the board: they are tunable, so a fixed label would lie.
+        if self.tuning:
+            reading += (f" · min {self.tuning['mincutoff']:g} Hz / beta {self.tuning['beta']:g}"
+                        f" / median {self.tuning['median']} · enter {self.tuning['enter']:g} / exit {self.tuning['exit']:g}")
+        self.filter_label.configure(text=reading)
+        self.stability_label.configure(text=self.stability_text(time.monotonic()))
         c = self.canvas
         c.delete('all')
         w = max(c.winfo_width(), 900)
@@ -548,6 +948,8 @@ class App:
             if self.connection and now-self.last_rx>4: self.disconnect('No calibration telemetry — check firmware / USB')
             elif self.connection and not self.ready and now-self.last_query>1:
                 self.last_query=now; self.send('CAL GET')
+            elif self.connection and self.ready and self.tuning is None and now-self.last_query>1:
+                self.last_query=now; self.send('TUNE GET')
             if self.pending and now-self.pending[1]>2:
                 self.pending=None; self.queue.clear()
                 self.note.configure(text='Command timed out. Save is unconfirmed; reconnect to inspect device state.')
@@ -566,6 +968,7 @@ class App:
                 self.send('HOST PING')
         if now-self.last_sample>.6:
             self.raw_distance=None; self.distance=None; self.index=-1; self.samples.clear()
+        self.advance_recording(now)
         self.draw()
         self.root.after(40,self.poll)
 

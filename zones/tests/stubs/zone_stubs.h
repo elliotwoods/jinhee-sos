@@ -196,28 +196,46 @@ struct Adafruit_PN532 {
 // ---- VL53L4CD time-of-flight sensor ----
 inline bool laserPresent = true;
 inline uint16_t laserDistance = 0;
+inline uint8_t laserStatus = 0;            // VL53L4CD range_status; non-zero is an invalid reading
+inline bool laserReady = true;             // dataReady()
+inline uint8_t laserBudgetMs = 0;          // last accepted timing budget
+inline uint32_t laserIntervalMs = 0;       // last accepted inter-measurement period
+inline int laserContinuous = 0;            // startContinuous/stopContinuous balance
 struct VL53L4CD {
   struct { uint8_t range_status = 0; } ranging_data;
   void setTimeout(uint16_t) {}
   bool init(bool = true, bool = false) { return laserPresent; }
-  bool dataReady() { return true; }
-  bool setRangeTiming(uint8_t, uint32_t) { return true; }
-  void startContinuous() {}
-  uint16_t readRangeContinuousMillimeters(bool = true) { return laserDistance; }
+  bool dataReady() { ranging_data.range_status = laserStatus; return laserReady; }
+  // Mirrors the real library's limits: budget 10..200 ms, period 0 or above the budget.
+  bool setRangeTiming(uint8_t budget, uint32_t interval) {
+    if (budget < 10 || budget > 200) return false;
+    if (interval != 0 && interval <= budget) return false;
+    laserBudgetMs = budget; laserIntervalMs = interval; return true;
+  }
+  void startContinuous() { laserContinuous++; }
+  void stopContinuous() { laserContinuous--; }
+  uint16_t readRangeContinuousMillimeters(bool = true) { ranging_data.range_status = laserStatus; return laserDistance; }
   bool timeoutOccurred() { return false; }
 };
 
-// Preferences blob storage survives simulated sketch restarts.
+// Preferences blob storage survives simulated sketch restarts. Keyed by
+// namespace+key: PoolZone stores calibration and tuning as separate blobs.
 struct Preferences {
-  inline static std::vector<uint8_t> blob;
-  bool begin(const char *, bool) { return true; }
-  void end() {}
-  size_t getBytesLength(const char *) { return blob.size(); }
-  size_t putBytes(const char *, const void *p, size_t n) {
-    blob.assign((const uint8_t*)p, (const uint8_t*)p+n); return n;
+  inline static std::map<std::string, std::vector<uint8_t>> blobs;
+  std::string space;
+  bool begin(const char *name, bool) { space = name ? name : ""; return true; }
+  void end() { space.clear(); }
+  std::string at(const char *key) const { return space + "/" + (key ? key : ""); }
+  size_t getBytesLength(const char *key) {
+    auto it = blobs.find(at(key));
+    return it == blobs.end() ? 0 : it->second.size();
   }
-  size_t getBytes(const char *, void *p, size_t n) {
-    if (blob.size()!=n) return 0;
-    memcpy(p,blob.data(),n); return n;
+  size_t putBytes(const char *key, const void *p, size_t n) {
+    blobs[at(key)].assign((const uint8_t*)p, (const uint8_t*)p+n); return n;
+  }
+  size_t getBytes(const char *key, void *p, size_t n) {
+    auto it = blobs.find(at(key));
+    if (it == blobs.end() || it->second.size()!=n) return 0;
+    memcpy(p, it->second.data(), n); return n;
   }
 };

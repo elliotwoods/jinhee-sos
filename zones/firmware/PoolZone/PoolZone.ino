@@ -6,6 +6,8 @@
 // RadioPacket heartbeat 150 ms; registered NeoCubes receive POOL via the shared tag core.
 // CAL commands edit 23 ticks; outputs pause during unsaved calibration uploads.
 // CAL SAVE persists to NVS. Legacy endpoints seed an unsaved initial calibration.
+// TUNE commands edit filter/decision parameters live; TUNE SAVE persists them.
+// RAW ON streams every sensor sample for host-side filter tuning.
 // =====================================================
 
 #include <Adafruit_PN532.h>
@@ -13,11 +15,12 @@
 #include <NctTagPlate.h>
 #include <Preferences.h>
 #include "SliderCalibration.h"
+#include "SliderTuning.h"
 #include "OneEuroFilter.h"
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "pool-2.7.0";
+constexpr const char *FIRMWARE_VERSION = "pool-2.8.0";
 // Embedded by the zone builder for exact-source update detection.
 #ifndef POOL_BUILD_ID
 #define POOL_BUILD_ID unknown
@@ -28,8 +31,6 @@ constexpr const char *FIRMWARE_BUILD_ID = POOL_STRINGIFY(POOL_BUILD_ID);
 
 #define STRIP_LED_PIN 5
 #define MEMBER_COUNT 23
-#define RANGE_INTERVAL_MS 20
-#define POSITION_STABLE_MS 50
 #define HEARTBEAT_MS 150
 #define PACKET_MAGIC 0x4E435450
 
@@ -51,7 +52,11 @@ VL53L4CD laser;
 bool laserOk = false, streamDistance = false;
 float calPos1 = 0, calPos23 = 0;
 SliderCalibration calibration;
-bool calibrationSaved = false, sampleValid = false;
+SliderTuning tuning;
+bool calibrationSaved = false, tuningSaved = false, sampleValid = false;
+bool rawStream = false;
+uint8_t rangeStatus = 0;
+uint16_t sampleIntervalMs = 10;
 constexpr uint32_t OVERRIDE_TIMEOUT_MS = 1500;
 bool hostArmed = false, calibrationEditing = false;
 uint32_t lastHost = 0, centralQueued = 0, centralErrors = 0, lastDebug = 0;
@@ -84,10 +89,77 @@ bool saveCalibration() {
   prefs.end();
   return ok;
 }
+
+void tuningReport() {
+  SliderTuning d;
+  Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"tuning\",\"saved\":%s,\"valid\":%s,"
+                "\"min_cutoff_hz\":%.4f,\"beta\":%.5f,\"derivative_cutoff_hz\":%.4f,"
+                "\"enter_frac\":%.4f,\"exit_frac\":%.4f,\"confirm_ms\":%u,\"release_ms\":%u,"
+                "\"dropout_ms\":%u,\"timing_budget_ms\":%u,\"interval_ms\":%u,\"median_window\":%u,",
+                tuningSaved ? "true" : "false", tuning.valid() ? "true" : "false",
+                tuning.minCutoffHz, tuning.beta, tuning.derivativeCutoffHz, tuning.enterFrac, tuning.exitFrac,
+                tuning.confirmMs, tuning.releaseMs, tuning.dropoutMs, tuning.timingBudgetMs, tuning.intervalMs,
+                tuning.medianWindow);
+  Serial.printf("\"defaults\":{\"min_cutoff_hz\":%.4f,\"beta\":%.5f,\"derivative_cutoff_hz\":%.4f,"
+                "\"enter_frac\":%.4f,\"exit_frac\":%.4f,\"confirm_ms\":%u,\"release_ms\":%u,"
+                "\"dropout_ms\":%u,\"timing_budget_ms\":%u,\"interval_ms\":%u,\"median_window\":%u}}\n",
+                d.minCutoffHz, d.beta, d.derivativeCutoffHz, d.enterFrac, d.exitFrac, d.confirmMs,
+                d.releaseMs, d.dropoutMs, d.timingBudgetMs, d.intervalMs, d.medianWindow);
+}
+
+bool loadTuning() {
+  Preferences prefs;
+  if (!prefs.begin("pool-slider", true)) return false;
+  SliderTuning loaded;
+  bool ok = prefs.getBytesLength("tune-v1") == sizeof(loaded) && prefs.getBytes("tune-v1", &loaded, sizeof(loaded)) == sizeof(loaded) && loaded.valid();
+  prefs.end();
+  if (ok) tuning = loaded;
+  return ok;
+}
+
+bool saveTuning() {
+  if (!tuning.valid()) return false;
+  Preferences prefs;
+  if (!prefs.begin("pool-slider", false)) return false;
+  SliderTuning check;
+  bool ok = prefs.putBytes("tune-v1", &tuning, sizeof(tuning)) == sizeof(tuning) &&
+            prefs.getBytes("tune-v1", &check, sizeof(check)) == sizeof(check) && !memcmp(&check, &tuning, sizeof(check));
+  prefs.end();
+  return ok;
+}
 OneEuroFilter distanceFilter;
+MedianFilter medianFilter;
 float rawDistance = 0, filteredDistance = 0;
 int candidatePosition = -1, confirmedPosition = -1;
 uint32_t candidateSince = 0, lastRangeRead = 0, lastHeartbeat = 0, lastStream = 0;
+// 0 means "not currently in a run"; millis() 0 is stored as 1 so the sentinel holds.
+uint32_t releaseSince = 0;
+
+// sampleValid means "the last read was good" and drives the telemetry the calibration
+// GUI captures control points from, so it must go false the moment a read fails.
+// sliderLive() means "a good read is recent enough to keep driving the output", which
+// is what tolerates a short dropout without releasing the member.
+bool sliderLive(uint32_t now) { return lastSample && now - lastSample <= tuning.dropoutMs; }
+
+// Applied live so an operator sees the effect of a parameter before committing it.
+// Filter history is deliberately preserved: re-seeding would itself look like a glitch.
+void applyTuning(const SliderTuning &previous, bool retime) {
+  distanceFilter.configure(tuning.minCutoffHz, tuning.beta, tuning.derivativeCutoffHz, tuning.dropoutMs);
+  medianFilter.configure(tuning.medianWindow);
+  sampleIntervalMs = tuning.pollIntervalMs();
+  if (!retime || !laserOk) return;
+  laser.stopContinuous();
+  if (!laser.setRangeTiming(uint8_t(tuning.timingBudgetMs), tuning.intervalMs)) {
+    // Never leave the sensor unconfigured: put back the timing that was working.
+    tuning.timingBudgetMs = previous.timingBudgetMs;
+    tuning.intervalMs = previous.intervalMs;
+    laser.setRangeTiming(uint8_t(tuning.timingBudgetMs), tuning.intervalMs);
+    sampleIntervalMs = tuning.pollIntervalMs();
+    Serial.println("ERR TUNE: sensor rejected timing; previous timing kept");
+  }
+  laser.startContinuous();
+  lastRangeRead = millis();
+}
 
 bool radioValid() { return plate.configOk && plate.config.pointId >= 1 && plate.config.pointId <= 6; }
 bool calibrationValid() { return calibration.valid(); }
@@ -112,7 +184,7 @@ void sendCentralState(bool active) {
 bool overrideActive() { return hostArmed && millis() - lastHost < OVERRIDE_TIMEOUT_MS; }
 bool interactionActive() { return plate.tagPresent() || overrideActive(); }
 int outputMember() {
-  return interactionActive() && !calibrationEditing && sampleValid && millis()-lastSample <= 400 && calibrationValid() && confirmedPosition > 0 ? confirmedPosition : 0;
+  return interactionActive() && !calibrationEditing && sliderLive(millis()) && calibrationValid() && confirmedPosition > 0 ? confirmedPosition : 0;
 }
 
 void updateInteraction() {
@@ -144,30 +216,57 @@ int distanceToMember(float distance) {
   return calibration.select(distance);
 }
 
+void rawReport(uint32_t now) {
+  if (!rawStream) return;
+  Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"raw\",\"t\":%lu,\"mm\":", (unsigned long)now);
+  if (sampleValid) Serial.printf("%.0f", rawDistance); else Serial.print("null");
+  // A tolerated dropout does not advance the filter, so there is no fresh filtered
+  // value to report; null rather than repeating a stale one.
+  Serial.print(",\"f\":");
+  if (sampleValid) Serial.printf("%.2f", filteredDistance); else Serial.print("null");
+  Serial.printf(",\"st\":%u,\"idx\":%d}\n", rangeStatus, confirmedPosition);
+}
+
+// The single release path, shared by the per-sample dropout and the staleness watchdog
+// so the two can never disagree about what "released" means.
+void releaseSlider(uint32_t now) {
+  distanceFilter.reset();
+  medianFilter.reset();
+  candidatePosition = confirmedPosition = -1;
+  candidateSince = now;
+  releaseSince = 0;
+}
+
 void processSlider() {
   uint32_t now = millis();
-  if (!laserOk || now - lastRangeRead < RANGE_INTERVAL_MS) return;
+  if (!laserOk || now - lastRangeRead < sampleIntervalMs) return;
   lastRangeRead = now;
   if (!laser.dataReady()) return;
   uint16_t distance = laser.readRangeContinuousMillimeters(false);
-  sampleValid = !laser.timeoutOccurred() && laser.ranging_data.range_status == 0 && distance >= 10 && distance <= 1000;
+  rangeStatus = laser.ranging_data.range_status;
+  sampleValid = !laser.timeoutOccurred() && rangeStatus == 0 && distance >= 10 && distance <= 1000;
   if (!sampleValid) {
-    distanceFilter.reset();
-    candidatePosition = confirmedPosition = -1;
+    // A single bad reading used to reset the filter and drop the output outright,
+    // which showed up as a flickering relay. Hold the member for dropoutMs instead.
+    if (!sliderLive(now)) releaseSlider(now);
+    rawReport(now);
     return;
   }
-  lastSample = millis();
+  lastSample = now;
   rawDistance = distance;
-  filteredDistance = distanceFilter.update(rawDistance, lastSample);
-  int member = distanceToMember(filteredDistance);
-  // Leaving any acceptance window clears immediately; entering requires stability.
-  if (member != confirmedPosition) confirmedPosition = -1;
-  if (member != candidatePosition) {
-    candidatePosition = member;
-    candidateSince = now;
-  } else if (member >= 1 && now - candidateSince >= POSITION_STABLE_MS) {
-    confirmedPosition = member;
-  }
+  filteredDistance = distanceFilter.update(medianFilter.update(rawDistance), now);
+  int member = calibration.select(filteredDistance, confirmedPosition, tuning.enterFrac, tuning.exitFrac);
+  if (member != candidatePosition) { candidatePosition = member; candidateSince = now; }
+  uint32_t held = now - candidateSince;
+  // Entering a member needs confirmMs of agreement; leaving the confirmed member needs
+  // releaseMs of sustained disagreement. Both directions are debounced, where 2.7.0
+  // debounced only entry. When releaseMs >= confirmMs the two branches collapse into
+  // one pass, so a normal tick-to-tick slide never emits an intermediate member 0.
+  if (confirmedPosition >= 1 && candidatePosition != confirmedPosition && held >= tuning.releaseMs)
+    confirmedPosition = -1;
+  if (confirmedPosition < 1 && candidatePosition >= 1 && held >= tuning.confirmMs)
+    confirmedPosition = candidatePosition;
+  rawReport(now);
   if (streamDistance && now - lastStream >= 250) {
     lastStream = now;
     Serial.printf("DIST=%.1f MEMBER=%d TAG=%s\n", filteredDistance, confirmedPosition, plate.tagPresent() ? "ON" : "OFF");
@@ -176,7 +275,13 @@ void processSlider() {
 
 void telemetry() {
   uint32_t now = millis();
-  if (now - lastSample > 400) { sampleValid = false; confirmedPosition = candidatePosition = -1; distanceFilter.reset(); }
+  // Backstop for a sensor that stops delivering readings at all, where the per-sample
+  // dropout path never runs. staleMs() is always above dropoutMs so this cannot fire
+  // first and make dropout tolerance inert.
+  if (now - lastSample > tuning.staleMs() && (sampleValid || confirmedPosition > 0)) {
+    sampleValid = false;
+    releaseSlider(now);
+  }
   if (now - lastTelemetry < 100) return;
   lastTelemetry = now;
   Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"sample\",\"sensor\":%s,\"distance\":", sampleValid ? "true" : "false");
@@ -200,7 +305,88 @@ void tagLeave(const uint8_t *, uint8_t, const Record *) {
   updateInteraction();
 }
 
+// Applies one named field to a copy, so an out-of-range value is rejected whole.
+bool tuningAssign(SliderTuning &t, const char *key, float value) {
+  if (!isfinite(value)) return false;
+  // Guard the magnitude before any integer conversion: lround/uint16_t casts of a
+  // negative or huge float are undefined behaviour, which the test harness's UBSan
+  // build treats as a failure.
+  if (value < -1.0f || value > 65535.0f) return false;
+  auto whole = [&](long lo, long hi, uint16_t &field) {
+    long v = lround(value);
+    if (v < lo || v > hi) return false;
+    field = uint16_t(v); return true;
+  };
+  if (!strcmp(key, "mincutoff")) { t.minCutoffHz = value; return true; }
+  if (!strcmp(key, "beta")) { t.beta = value; return true; }
+  if (!strcmp(key, "dcutoff")) { t.derivativeCutoffHz = value; return true; }
+  if (!strcmp(key, "enter")) { t.enterFrac = value; return true; }
+  if (!strcmp(key, "exit")) { t.exitFrac = value; return true; }
+  if (!strcmp(key, "confirm")) return whole(0, 2000, t.confirmMs);
+  if (!strcmp(key, "release")) return whole(0, 2000, t.releaseMs);
+  if (!strcmp(key, "dropout")) return whole(0, 2000, t.dropoutMs);
+  if (!strcmp(key, "budget")) return whole(10, 200, t.timingBudgetMs);
+  if (!strcmp(key, "interval")) return whole(0, 1000, t.intervalMs);
+  if (!strcmp(key, "median")) {
+    long v = lround(value);
+    if (v < 1 || v > 9 || !(v & 1)) return false;
+    t.medianWindow = uint8_t(v); return true;
+  }
+  return false;
+}
+
+bool tuneCommand(const char *line) {
+  if (!strcmp(line, "TUNE GET")) { tuningReport(); return true; }
+  if (!strcmp(line, "TUNE SAVE")) {
+    tuningSaved = saveTuning();
+    Serial.println(tuningSaved ? "OK TUNE SAVE" : "ERR TUNE SAVE: invalid parameters or flash failure");
+    tuningReport(); return true;
+  }
+  if (!strcmp(line, "TUNE LOAD")) {
+    SliderTuning previous = tuning;
+    tuningSaved = loadTuning();
+    if (!tuningSaved) tuning = SliderTuning();
+    applyTuning(previous, true);
+    Serial.println(tuningSaved ? "OK TUNE LOAD" : "ERR no saved tuning; firmware defaults applied");
+    tuningReport(); return true;
+  }
+  if (!strcmp(line, "TUNE DEFAULTS")) {
+    SliderTuning previous = tuning;
+    tuning = SliderTuning();
+    tuningSaved = false;
+    applyTuning(previous, true);
+    Serial.println("OK TUNE DEFAULTS");
+    tuningReport(); return true;
+  }
+  if (strncmp(line, "TUNE SET ", 9)) return false;
+  char key[16]; float value; char extra;
+  if (sscanf(line + 9, "%15s %f %c", key, &value, &extra) != 2) {
+    Serial.println("ERR TUNE SET: expected <key> <value>"); return true;
+  }
+  SliderTuning candidate = tuning;
+  if (!tuningAssign(candidate, key, value) || !candidate.valid()) {
+    Serial.println("ERR TUNE SET: unknown key or value out of range"); return true;
+  }
+  SliderTuning previous = tuning;
+  bool retime = candidate.timingBudgetMs != previous.timingBudgetMs || candidate.intervalMs != previous.intervalMs;
+  tuning = candidate;
+  tuningSaved = false;
+  // Applied live and without pausing output: watching the change take effect is the point.
+  applyTuning(previous, retime);
+  tuningReport(); return true;
+}
+
 bool serialCommand(const char *line) {
+  if (!strncmp(line, "TUNE ", 5)) return tuneCommand(line);
+  if (!strncmp(line, "RAW ", 4)) {
+    // Never persisted and off at boot: USB CDC writes block when the host stops
+  // reading, which would wreck the sample cadence and the 150 ms heartbeat.
+  if (!strcmp(line + 4, "ON")) rawStream = true;
+    else if (!strcmp(line + 4, "OFF")) rawStream = false;
+    else { Serial.println("ERR RAW: expected ON or OFF"); return true; }
+    Serial.printf("OK RAW %s\n", rawStream ? "ON" : "OFF");
+    return true;
+  }
   if (!strcmp(line, "HOST ARM")) {
     hostArmed = true; lastHost = millis(); updateInteraction(); interactionReport(); return true;
   }
@@ -255,18 +441,22 @@ bool serialCommand(const char *line) {
 }
 
 void report() {
-  Serial.printf("POOL: radio=%u cal1=%.1f cal23=%.1f laser=%s member=%d\n", plate.configOk ? plate.config.pointId : 0, calPos1,
-                calPos23, laserOk ? "ok" : "MISSING", confirmedPosition);
+  Serial.printf("POOL: radio=%u cal1=%.1f cal23=%.1f laser=%s member=%d tune=%s\n", plate.configOk ? plate.config.pointId : 0, calPos1,
+                calPos23, laserOk ? "ok" : "MISSING", confirmedPosition, tuningSaved ? "saved" : "defaults");
 }
 
 void setup() {
-  hostArmed = calibrationEditing = false;
+  hostArmed = calibrationEditing = rawStream = false;
   lastOutput = -1;
   calPos1 = calPos23 = 0;
   calibration = SliderCalibration();
+  tuning = SliderTuning();
   distanceFilter.reset();
+  medianFilter.reset();
   sampleValid = false;
   confirmedPosition = candidatePosition = -1;
+  candidateSince = releaseSince = 0;
+  lastSample = 0;
   pinMode(STRIP_LED_PIN, OUTPUT);
   digitalWrite(STRIP_LED_PIN, LOW);
   TagPlateOptions options;
@@ -287,10 +477,21 @@ void setup() {
   if (!calibrationSaved && calPos1 >= 10 && calPos23 >= 10 && calPos1 != calPos23) {
     for (int i=0; i<23; ++i) calibration.mm[i] = calPos1 + (calPos23-calPos1)*i/22.0f;
   }
+  // Absent or unreadable tuning leaves the firmware defaults in place. Nothing is
+  // written here: the updater verifies the nvs partition is unchanged by an update.
+  tuningSaved = loadTuning();
   laser.setTimeout(100);
   laserOk = laser.init();
-  if (laserOk) laserOk = laser.setRangeTiming(20, 0);
+  // A saved timing the sensor rejects must not leave the slider dead at every boot.
+  if (laserOk && !laser.setRangeTiming(uint8_t(tuning.timingBudgetMs), tuning.intervalMs)) {
+    Serial.println("ERR TUNE: sensor rejected saved timing; using defaults");
+    SliderTuning defaults;
+    tuning.timingBudgetMs = defaults.timingBudgetMs;
+    tuning.intervalMs = defaults.intervalMs;
+    laserOk = laser.setRangeTiming(uint8_t(tuning.timingBudgetMs), tuning.intervalMs);
+  }
   if (laserOk) laser.startContinuous();
+  applyTuning(tuning, false);
   Serial.println(laserOk ? "[OK] VL53L4CD" : "[ERROR] VL53L4CD");
   if (plate.link.lastError() == ERR_NONE) {
     if (!laserOk) plate.link.setError(ERR_SENSOR);
@@ -299,6 +500,7 @@ void setup() {
   if (plate.radioOk) plate.link.ensurePeer(BROADCAST_MAC, true);
   plate.printReport();
   calibrationReport();
+  tuningReport();
 }
 
 void loop() {

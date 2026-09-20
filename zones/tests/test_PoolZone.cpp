@@ -19,10 +19,20 @@ int main() {
   assert(distanceToMember(383+step*.33f)==1);
   assert(distanceToMember(383+step*.34f)==-1);
   assert(distanceToMember(383-step*.5f)==-1);
-  laserDistance=213; run(300); assert(confirmedPosition==12);
-  laserDistance=220; run(300); assert(confirmedPosition==-1);
-  laserDistance=213; run(300); assert(confirmedPosition==12);
-  laserDistance=0; run(100); assert(confirmedPosition==-1 && !sampleValid);
+  // A full-scale jump settles, then releases member 1 and confirms 12 in one pass.
+  laserDistance=213; run(500); assert(confirmedPosition==12);
+  // Hysteresis: a held member keeps a wider window (exitFrac) than it needed to enter
+  // (enterFrac). 4 mm off a ~15.5 mm pitch used to release; now it holds.
+  laserDistance=217; run(400); assert(confirmedPosition==12);
+  laserDistance=222; run(400); assert(confirmedPosition==-1);
+  laserDistance=213; run(400); assert(confirmedPosition==12);
+  // A bad reading marks the sample invalid at once, but the member is held for
+  // dropoutMs so one glitch cannot drop the relay. This is the flicker fix.
+  laserStatus=4; run(100); assert(!sampleValid && confirmedPosition==12 && outputMember()==0);
+  laserStatus=0; run(200); assert(sampleValid && confirmedPosition==12);
+  laserStatus=4; run(700); assert(confirmedPosition==-1 && !sampleValid);
+  laserStatus=0; run(400); assert(confirmedPosition==12);
+  laserDistance=0; run(700); assert(confirmedPosition==-1 && !sampleValid);
   assert(has(serial("CAL GET"), "PoolZoneCalibration"));
   serial("CAL SET 1 nan"); assert(calibration.mm[0]==383);
   serial("CAL SET 24 50"); assert(calibration.mm[0]==383);
@@ -45,8 +55,11 @@ int main() {
   assert(plate.currentCube().cubeID==FIRST_ID && plate.currentDelivery()==1);
   size_t beats=framesTo(BROADCAST).size(); run(1500);
   assert(framesTo(BROADCAST).size()-beats>=8 && framesTo(BROADCAST).size()-beats<=11);
-  laserDistance=220; run(250); assert(!central().active && central().member==0);
-  laserDistance=383; run(300); assert(central().member==1);
+  // A brief sensor glitch must not interrupt a live central broadcast.
+  laserStatus=4; run(150); assert(central().active && central().member==12);
+  laserStatus=0; run(150); assert(central().active && central().member==12);
+  laserDistance=222; run(400); assert(!central().active && central().member==0);
+  laserDistance=383; run(600); assert(central().member==1);
   presentedTag.clear(); run(450); assert(plate.tagPresent());
   run(500); assert(!plate.tagPresent() && !central().active && pinLevels[STRIP_LED_PIN]==LOW);
   // Original unknown-tag behavior remains active without addressing an unregistered cube.
@@ -64,8 +77,8 @@ int main() {
   // Disarming an override never removes a real tag's activation.
   presentedTag=FIRST_UID; run(250); serial("HOST ARM"); serial("HOST DISARM");
   assert(central().active && interactionActive());
-  laserDistance=0; run(100); assert(!central().active);
-  laserDistance=383; run(300); assert(central().active);
+  laserDistance=0; run(700); assert(!central().active);
+  laserDistance=383; run(500); assert(central().active);
   serial("CAL SET 1 380"); assert(!central().active && calibrationEditing);
   serial("CAL LOAD"); run(250); assert(central().active && !calibrationEditing);
   presentedTag.clear(); run(1000);

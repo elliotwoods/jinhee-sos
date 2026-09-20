@@ -20,6 +20,7 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
 | Pool light diagnostics | `poolzone_test/` | Radio test bridge, central-controller test firmware, light-test GUI |
+| ESP-NOW range test | `rangetest/` | Dual-role TX/RX link survey firmware, RSSI capture, survey GUI |
 | Original registration utility | `registration_console/` | Screenless replay of original mappings; not the modern GUI station |
 | Historical references | `live files/`, root `ForKimchi.ino`, `m5core2_controlloer.ino` | Existing installation behavior and protocol compatibility |
 
@@ -180,7 +181,7 @@ There is no guarantee that a historically recorded test count is current. Run an
 report the current suite. A GUI abort in a sandbox/headless process is different
 from a test assertion failure; use a desktop-capable execution environment.
 
-`python scripts/build_all_firmware.py --dry-run` lists nine maintained firmware
+`python scripts/build_all_firmware.py --dry-run` lists ten maintained firmware
 and diagnostic targets. Without `--dry-run`, it builds them, reuses existing cube/
 zone manifest builders, reports failures, and exits nonzero if any fail. No uploads.
 `live files` sketches are historical and are not all part of this build command.

@@ -81,3 +81,7 @@ GUI tests require a desktop session and use simulated devices.
 ## Poolzone central light test
 
 [Poolzone test console](poolzone_test/README.md) provides a USB ESP32-C3 bridge and Python GUI for the legacy central controller on ESP-NOW channel 2. Run `./poolzone_test/Launch.command` for member toggles, sequential testing, and All Off.
+
+## ESP-NOW range test
+
+[Range test](rangetest/README.md) measures link reliability between the exhibition space and the back room on channel 2, using two cube-identical XIAO ESP32-C3 boards. Carry the blue TX unit and read its LEDs; the red RX unit stays in the back room and answers every ping with the RSSI it measured. Run `./rangetest/Launch.command --rx /dev/cu.usbmodemXXXX` to capture the survey.

@@ -143,7 +143,24 @@ def database_plan(backup, publication):
     return (0x211000,0x219000)[inactive],image
 
 
-def flash(port_name, emit):
+def record_zone_status(report, source='poolzone-calibration', detail=None):
+    """Write this board's row in the shared zones table.
+
+    Previously this happened only as a side effect of a flash, so a board that was
+    merely inspected or tuned never appeared in the registry.
+    """
+    if not report or not report.get('mac'): raise RuntimeError('No board report to record.')
+    db=Database(DEFAULT_DATABASE,recover_pending=False)
+    try:
+        store=ZoneStore(db)
+        store.seen(report['mac'],report,source=source)
+        if detail:
+            with store.conn: store.conn.execute('UPDATE zones SET detail=? WHERE mac=?',(detail[:400],report['mac']))
+    finally: db.close()
+    return report['mac']
+
+
+def flash(port_name, emit, database_only=False):
     folder=Path(__file__).parent/'build'/'firmware-runs'/uuid.uuid4().hex
     folder.mkdir(parents=True)
     runner=FlashRunner(emit,folder/'upload.log')
@@ -159,6 +176,10 @@ def flash(port_name, emit):
         db_state, db_detail=database_status(before,publication)
         emit('stage',db_detail)
         if db_state=='ahead': raise RuntimeError(db_detail)
+        if database_only:
+            # Leave a current application alone; only the A/B database slot is rewritten.
+            if db_state != 'update': raise RuntimeError('Cube database is already current on this board.')
+            state = 'current'
         if state == 'current' and db_state=='current':
             return dict(port=port_name,version=before['firmware'],db_version=publication.version,db_count=publication.count,backup='',log=str(folder/'upload.log'),skipped=True)
         manifest=ensure_build(runner,emit)
@@ -194,7 +215,8 @@ def flash(port_name, emit):
                 emit('stage',f'Flashing {manifest["version"]}…')
                 tool('write-flash','0x10000',folder/app['file'])
             emit('stage','Verifying firmware and preserved calibration/database…')
-            tool('verify-flash','0x10000',folder/app['file'])
+            if not database_only:
+                tool('verify-flash','0x10000',folder/app['file'])
             expected_flash=bytearray(backup)
             plan=database_plan(backup,publication)
             if plan:
@@ -221,20 +243,21 @@ def flash(port_name, emit):
         emit('stage','Checking reboot and firmware version…')
         report=ZoneFlasher(folder/'unused.sqlite3',emit).boot_report(selected,runner)
         expected={k:before[k] for k in ('mac','channel','zone_type','point_id','name')}
-        expected.update(firmware=manifest['version'],db_version=publication.version,db_count=publication.count,db_crc=publication.crc)
+        expected.update(firmware=before['firmware'] if database_only else manifest['version'],
+                        db_version=publication.version,db_count=publication.count,db_crc=publication.crc)
         if not report or any(report.get(k)!=v for k,v in expected.items()):
             raise RuntimeError('Flash verified, but boot/identity verification failed. See '+str(folder/'upload.log'))
         current=next((p for p in ports() if p['key']==selected['key']),None)
         if not current: raise RuntimeError('Firmware written but USB port did not return.')
         _,after=snapshot(current['port'])
-        if after.get('build_id') != 'h'+manifest['source_hash']:
+        if not database_only and after.get('build_id') != 'h'+manifest['source_hash']:
             raise RuntimeError('Firmware booted but build fingerprint does not match.')
         if any(after.get(k)!=calibration.get(k) for k in ('ticks','anchors')):
             raise RuntimeError('Firmware booted but calibration verification failed; backup retained.')
-    db=Database(DEFAULT_DATABASE,recover_pending=False)
-    try: ZoneStore(db).seen(report['mac'],report,source='poolzone-flash')
-    finally: db.close()
+    record_zone_status(report,source='poolzone-database' if database_only else 'poolzone-flash')
     result=dict(port=current['port'],version=manifest['version'],db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
     (folder/'result.json').write_text(json.dumps(result,indent=2))
-    emit('stage','Firmware and cube database verified · calibration preserved · reconnecting…')
+    emit('stage',('Cube database verified · firmware and calibration untouched · reconnecting…'
+                  if database_only else
+                  'Firmware and cube database verified · calibration preserved · reconnecting…'))
     return result

@@ -36,17 +36,104 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(self.app.raw_distance,140)
 
     def test_firmware_status_and_unsaved_draft_guard(self):
-        self.app.monitor.zone=dict(firmware='pool-old',zone_type=3)
-        self.app.update_firmware_status()
-        self.assertEqual(self.app.firmware_state,'update')
-        self.assertIn('Update available',self.app.flash_status.cget('text'))
+        # The status detail is only shown while connected, so connect before checking it.
         self.app.connection=object()
-        self.app.dirty=True
         try:
+            self.app.monitor.zone=dict(firmware='pool-old',zone_type=3)
+            self.app.update_firmware_status()
+            self.assertEqual(self.app.firmware_state,'update')
+            self.assertIn('Update available',self.app.flash_status.cget('text'))
+            self.app.dirty=True
             self.app.start_flash()
             self.assertFalse(self.app.flashing)
             self.assertIn('draft',self.app.flash_status.cget('text'))
         finally: self.app.connection=None
+
+    def test_database_and_registry_controls_are_visible(self):
+        self.app.connection=object()
+        try:
+            self.app.monitor.zone=dict(firmware='pool-2.8.0',zone_type=3,mac='02:11:22:33:44:55',
+                                       name='Pool Radio 4',point_id=4,db_version=1,db_count=32,db_crc=123)
+            self.app.ready=True
+            self.app.update_firmware_status()
+            self.assertIn('Board', self.app.database_detail.cget('text'))
+            self.assertIn('Pool Radio 4', self.app.registry_label.cget('text'))
+            # A separate database control exists and is not the firmware button.
+            self.assertIsNot(self.app.database_button, self.app.flash_button)
+            self.app.database_state='current'
+            self.app.draw()
+            self.assertEqual(str(self.app.database_button['state']),'disabled')
+            self.app.database_state='update'
+            self.app.draw()
+            self.assertEqual(str(self.app.database_button['state']),'normal')
+            self.assertEqual(str(self.app.registry_button['state']),'normal')
+        finally: self.app.connection=None
+
+    def test_tuning_absorbed_from_device_and_shown_live(self):
+        import recording as rec
+        payload=dict(device='PoolZoneCalibration',type='tuning',saved=True,valid=True,
+                     defaults={n:rec.DEFAULTS[k] for k,n in rec.JSON_KEYS.items()},
+                     **{n:rec.DEFAULTS[k] for k,n in rec.JSON_KEYS.items()})
+        payload['min_cutoff_hz']=0.25
+        self.app.handle(json.dumps(payload))
+        self.assertIsNotNone(self.app.tuning)
+        self.assertAlmostEqual(self.app.tuning['mincutoff'],0.25)
+        self.assertIn('saved to flash',self.app.tune_state.cget('text'))
+        self.app.handle(json.dumps(dict(device='PoolZoneCalibration',type='sample',sensor=True,
+                                        distance=129.25,raw_distance=140,index=12)))
+        # The label must reflect the board's live parameters, not a hardcoded constant.
+        self.assertIn('0.25',self.app.filter_label.cget('text'))
+
+    def test_tuning_apply_queues_verified_commands(self):
+        import recording as rec
+        self.app.tuning=dict(rec.DEFAULTS)
+        self.app.send_tuning(dict(rec.DEFAULTS,exit=0.6,release=200),save=True)
+        self.assertEqual(list(self.app.queue),['TUNE SET exit 0.6','TUNE SET release 200','TUNE SAVE'])
+        self.app.queue.clear()
+        # An invalid set is refused before anything reaches the device.
+        self.app.send_tuning(dict(rec.DEFAULTS,budget=5),save=False)
+        self.assertEqual(list(self.app.queue),[])
+
+    def test_guided_recording_schedule_and_analysis(self):
+        import recording as rec
+        self.app.ready=True
+        self.app.connection=object()
+        sent=[]
+        self.app.send=lambda cmd: sent.append(cmd) or True
+        try:
+            self.app.stride_var.set('4'); self.app.settle_var.set('0.05'); self.app.hold_var.set('0.05')
+            self.app.start_recording()
+            self.assertIn('RAW ON',sent)
+            self.assertEqual([s['tick'] for s in self.app.record_steps],[1,5,9,13,17,21,23])
+            ticks=[383-(383-43)*i/22 for i in range(23)]
+            now=time.monotonic(); stamp=0
+            guard=0
+            while self.app.record_state is not None and guard<200:
+                guard+=1
+                step=self.app.record_steps[self.app.record_step]
+                for _ in range(12):
+                    stamp+=20
+                    self.app.handle(json.dumps(dict(device='PoolZoneCalibration',type='raw',
+                                                    t=stamp,mm=round(ticks[step['tick']-1],2),st=0)))
+                now+=0.06
+                self.app.advance_recording(now)
+            self.assertIn('RAW OFF',sent)
+            self.assertIsNotNone(self.app.analysis)
+            self.assertIsNotNone(self.app.proposal)
+            self.assertEqual(len(self.app.result_table.get_children()),7)
+            # The proposal must be something the firmware will actually accept.
+            self.assertIsNone(rec.valid(self.app.proposal['tuning']))
+            self.app.apply_recording_calibration()
+            self.assertTrue(self.app.dirty)
+            self.assertEqual(len(self.app.ticks),23)
+        finally:
+            self.app.connection=None
+
+    def test_output_stability_counts_index_changes(self):
+        now=time.monotonic()
+        for i,index in enumerate([12,-1,12,-1,12]):
+            self.app.note_index(index,now-1+i*0.1)
+        self.assertIn('4 index changes',self.app.stability_text(now))
 
     def test_stale_snapshot_and_disarm(self):
         self.feed(override=True,tag=False,output=12)

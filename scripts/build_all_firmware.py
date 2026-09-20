@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 C3 = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'
 SUPERMINI = 'esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc,PartitionScheme=no_ota'
+XIAO = 'esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M'
 
 
 def load(name, path):
@@ -50,6 +51,7 @@ def main():
         ('Pool radio test', 'poolzone_test/firmware/PoolRadioTest', 'poolzone_test/build', SUPERMINI, ()),
         ('Pool central test', 'poolzone_test/firmware/PoolCentralTest', 'poolzone_test/build/central', C3, ()),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
+        ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:
         out = ROOT/output
         targets.append((name, out, lambda sketch=sketch, out=out, board=board, libraries=libraries:

@@ -79,7 +79,7 @@ def main():
         (directory / 'fixtures.h').write_text(fixtures())
         flags = ['c++', '-std=c++17', '-Wall', '-Wno-unused-function', '-g', '-fsanitize=address,undefined',
                  '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY)]
-        for test in ['test_library.cpp', 'test_OneEuroFilter.cpp'] + [f'test_{name}.cpp' for name in SKETCHES]:
+        for test in ['test_library.cpp', 'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] + [f'test_{name}.cpp' for name in SKETCHES]:
             binary = directory / test.replace('.cpp', '')
             subprocess.run(flags + [str(ROOT / 'tests' / test)] + sources + ['-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
