@@ -2,6 +2,70 @@ import unittest
 from unittest.mock import patch
 import firmware
 
+RADIOS = [dict(mac='AA:00:00:00:00:01', name='Pool Radio 1', point_id=1, firmware='pool-3.0.0', last_seen=''),
+          dict(mac='AA:00:00:00:00:03', name='Pool Radio 3', point_id=3, firmware='pool-3.0.0', last_seen=''),
+          dict(mac='AA:00:00:00:00:04', name='Pool Radio 3', point_id=3, firmware='pool-3.0.0', last_seen='')]
+
+
+class RadioIdChecks(unittest.TestCase):
+    def test_conflicts_ignore_the_board_being_edited(self):
+        # Re-assigning a board to the id it already has is not a clash with itself.
+        self.assertEqual(firmware.radio_id_conflicts('AA:00:00:00:00:01', 1, RADIOS), [])
+        self.assertEqual(firmware.radio_id_conflicts('aa:00:00:00:00:01', 1, RADIOS), [])
+        # Two other boards already sit on 3.
+        self.assertEqual(len(firmware.radio_id_conflicts('AA:00:00:00:00:09', 3, RADIOS)), 2)
+        # And one of that pair still clashes with the other.
+        self.assertEqual(len(firmware.radio_id_conflicts('AA:00:00:00:00:03', 3, RADIOS)), 1)
+
+    def test_suggestion_is_the_lowest_free_id(self):
+        self.assertEqual(firmware.suggest_radio_id('AA:00:00:00:00:09', RADIOS), 2)
+        # A board keeps its own id if nothing else uses it.
+        self.assertEqual(firmware.suggest_radio_id('AA:00:00:00:00:01', RADIOS), 1)
+        full = [dict(mac=f'BB:00:00:00:00:0{p}', name='', point_id=p, firmware='', last_seen='')
+                for p in firmware.POOL_POINTS]
+        self.assertIsNone(firmware.suggest_radio_id('AA:00:00:00:00:09', full))
+
+    def test_out_of_range_ids_are_refused_before_anything_is_written(self):
+        for bad in (0, 7, -1, 'x'):
+            with self.assertRaises(RuntimeError):
+                firmware.assign_radio_id('fake', bad, lambda *_: None)
+
+    def test_reassigning_the_same_id_is_a_no_op(self):
+        report = dict(firmware='pool-3.0.0', zone_type=3, mac='AA:00:00:00:00:01', point_id=4, name='Pool Radio 4')
+        with patch.object(firmware, 'ports', return_value=[dict(port='fake', candidate=True, key='k')]), \
+             patch.object(firmware, 'PortLock'), \
+             patch.object(firmware, 'snapshot', return_value=(report, None)), \
+             patch.object(firmware, 'FlashRunner'), \
+             patch.object(firmware.zone_build, 'parse_partitions',
+                          return_value={n: dict(offset=0, size=0x1000) for n in ('nvs', 'zcfg', 'zdb_a', 'zdb_b')}):
+            result = firmware.assign_radio_id('fake', 4, lambda *_: None)
+        self.assertTrue(result['skipped'])
+
+    def test_a_clash_refuses_to_write_unless_overridden(self):
+        report = dict(firmware='pool-3.0.0', zone_type=3, mac='AA:00:00:00:00:09', point_id=5, name='Pool Radio 5')
+        parts = {n: dict(offset=0, size=0x1000) for n in ('nvs', 'zcfg', 'zdb_a', 'zdb_b')}
+        with patch.object(firmware, 'ports', return_value=[dict(port='fake', candidate=True, key='k')]), \
+             patch.object(firmware, 'PortLock'), \
+             patch.object(firmware, 'snapshot', return_value=(report, None)), \
+             patch.object(firmware, 'FlashRunner'), \
+             patch.object(firmware, 'pool_radios', return_value=RADIOS), \
+             patch.object(firmware.zone_build, 'parse_partitions', return_value=parts):
+            with self.assertRaises(RuntimeError) as caught:
+                firmware.assign_radio_id('fake', 3, lambda *_: None)
+        # The message must name the board in the way, or the operator cannot act on it.
+        self.assertIn('AA:00:00:00:00:03', str(caught.exception))
+
+    def test_written_image_keeps_the_parameters_and_sets_the_new_identity(self):
+        # The zcfg sector carries the legacy calibration endpoints alongside the identity;
+        # rewriting the id must not discard them.
+        z = firmware.zonedb
+        image = z.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430])
+        self.assertEqual(z.parse_params(image), [3830, 430])
+        rewritten = z.zcfg_image(3, 5, 'Pool Radio 5', z.parse_params(image))
+        self.assertEqual(z.parse_config(rewritten), dict(zone_type=3, point_id=5, name='Pool Radio 5'))
+        self.assertEqual(z.parse_params(rewritten), [3830, 430])
+
+
 class FirmwareChecks(unittest.TestCase):
     def test_database_sync_uses_inactive_slot_and_preserves_active(self):
         z=firmware.zonedb

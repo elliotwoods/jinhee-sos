@@ -15,7 +15,11 @@ Run using the existing project Python environment:
 
 Or install `requirements.txt` into a Python environment with Tk and run `python app.py`. Connect the bridge, choose a USB port, and click Connect. Toggle member lights 1–23; up to six can be selected simultaneously. Sequential test cycles one light at a time. All Off / Escape stops testing and releases all six radio slots. Channel defaults to **2**, matching the central source; turn everything off before applying another channel.
 
-Power off other Poolzone radio transmitters during testing. The bridge emulates **all six radio IDs**, including release packets for unselected slots, so real radios using those IDs would compete with it. Brightness, colour and all-23-on are not supported by the existing central protocol. Members 1–16 map to PCA9685 0x40 channels 0–15; 17–23 map to 0x41 channels 0–6.
+Power off other Poolzone radio transmitters during testing. The bridge emulates **all six radio IDs**, including release packets for unselected slots, so real radios using those IDs would compete with it. Brightness, colour and all-23-on are not supported by the existing central protocol. PCA9685 output indices 1–16 are 0x40 channels 0–15 and 17–23 are 0x41 channels 0–6, but the outputs are **not** wired
+to the frames in order — the central applies `POOL_OUTPUT_FOR_MEMBER` — so the GUI's member numbers are frame numbers,
+not channel numbers. Those channels drive relays and are
+**active low** since the 2026-09-21 rewire, so a lit lamp reads as `FULL_OFF` in a register dump; the GUI and the
+central's telemetry both report the lamp, not the relay.
 
 The GUI displays requested/bridge-reported state, not measured light output. `queued` counts successful
 `esp_now_send` submissions. An ESP-NOW unicast acknowledgement proves MAC-layer delivery to the central's radio,

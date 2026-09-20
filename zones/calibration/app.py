@@ -80,6 +80,8 @@ class App:
         # unbounded: `samples` above is a short window for control-point capture.
         self.tuning = None
         self.tuning_defaults = None
+        self.radio_id_known = None      # point_id last read from the board
+        self.radio_id_conflicts = []
         self.tune_supported = None
         self.tune_attempts = 0
         self.tuning_saved = False
@@ -143,10 +145,10 @@ class App:
         self.range_note.pack(anchor='w')
         tabs = self.tabs = ttk.Notebook(body)
         tabs.pack(fill='both', expand=True, pady=8)
-        work = self.work_tab = tk.Frame(tabs, bg=BG)
-        tabs.add(work, text='Calibration')
         tune = self.tune_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
-        tabs.add(tune, text='Tuning & recording')
+        tabs.add(tune, text='Guided calibration')
+        work = self.work_tab = tk.Frame(tabs, bg=BG)
+        tabs.add(work, text='Calibration & control points')
         debug = tk.Frame(tabs, bg=BG, padx=18, pady=12)
         tabs.add(debug, text='NeoCube & output diagnostics')
         firmware_tab = self.firmware_tab = tk.Frame(tabs, bg=BG, padx=18, pady=12)
@@ -175,6 +177,32 @@ class App:
         self.database_check_button.pack(side='left')
         self.database_button = ttk.Button(db_row, text='Update cube database', command=self.start_database)
         self.database_button.pack(side='left', padx=8)
+        radio_id_panel = tk.Frame(firmware_tab, bg=PANEL, padx=14, pady=10)
+        radio_id_panel.pack(fill='x', pady=(0,10))
+        self.label(radio_id_panel, 'Radio ID  ·  which slider this board is', 15, FG).pack(anchor='w')
+        self.label(radio_id_panel, 'The pool central keeps one slot per radio ID. Two boards sharing an ID contradict '
+                   'each other about what that slot is doing, which reaches the lamps as flicker. '
+                   'Only the identity sector is rewritten: firmware, calibration and cube database are untouched.',
+                   11).pack(anchor='w', pady=4)
+        self.radio_id_label = self.label(radio_id_panel, 'Radio ID: connect to read board identity', 11, GOLD)
+        self.radio_id_label.configure(wraplength=900)
+        self.radio_id_label.pack(anchor='w')
+        self.radio_id_detail = self.label(radio_id_panel, 'Other pool boards: —', 11)
+        self.radio_id_detail.configure(wraplength=900)
+        self.radio_id_detail.pack(anchor='w', pady=(2,0))
+        radio_id_row = tk.Frame(radio_id_panel, bg=PANEL)
+        radio_id_row.pack(anchor='w', pady=6)
+        self.label(radio_id_row, 'Assign ID', 11).pack(side='left')
+        self.radio_id_choice = tk.StringVar(value='')
+        self.radio_id_menu = ttk.Combobox(radio_id_row, textvariable=self.radio_id_choice, width=4, state='readonly',
+                                       values=[str(p) for p in firmware.POOL_POINTS])
+        self.radio_id_menu.pack(side='left', padx=8)
+        self.radio_id_button = ttk.Button(radio_id_row, text='Assign radio ID', command=self.start_radio_id)
+        self.radio_id_button.pack(side='left')
+        self.radio_id_force = tk.BooleanVar(value=False)
+        self.radio_id_force_box = ttk.Checkbutton(radio_id_row, text='override clash', variable=self.radio_id_force,
+                                               command=self.draw)
+        self.radio_id_force_box.pack(side='left', padx=8)
         registry_panel = tk.Frame(firmware_tab, bg=PANEL, padx=14, pady=10)
         registry_panel.pack(fill='x', pady=(0,10))
         self.label(registry_panel, 'Zone status registry', 15, FG).pack(anchor='w')
@@ -214,13 +242,14 @@ class App:
         # ---- Tuning & recording tab ----
         self.label(tune, 'Guided recording and filter tuning', 20, FG).pack(anchor='w')
         self.label(tune, 'Records the slider at a series of positions, then measures the sensor noise and\n'
-                   'proposes filter and hysteresis settings that stop the output flickering.', 12).pack(anchor='w', pady=6)
+                   'proposes filter and hysteresis settings that stop the output flickering.\n'
+                   'On completion the measured control points replace the previous calibration, and both\n'
+                   'the calibration and the tuning are saved to flash.', 12).pack(anchor='w', pady=6)
         plan_row = tk.Frame(tune, bg=BG)
         plan_row.pack(anchor='w', pady=4)
         self.stride_var = tk.StringVar(value='4')
-        self.settle_var = tk.StringVar(value='3')
         self.hold_var = tk.StringVar(value='5')
-        for text, var, width in [('Every Nth tick', self.stride_var, 4), ('Move time (s)', self.settle_var, 4), ('Hold time (s)', self.hold_var, 4)]:
+        for text, var, width in [('Every Nth tick', self.stride_var, 4), ('Hold time (s)', self.hold_var, 4)]:
             self.label(plan_row, text+':', 11).pack(side='left', padx=(0,4))
             ttk.Entry(plan_row, textvariable=var, width=width).pack(side='left', padx=(0,12))
         self.record_button = ttk.Button(plan_row, text='Start guided recording', command=self.start_recording)
@@ -228,7 +257,12 @@ class App:
         self.record_abort = ttk.Button(plan_row, text='Abort', command=self.stop_recording)
         self.record_abort.pack(side='left', padx=8)
         self.record_prompt = self.label(tune, 'Endpoints plus every Nth tick. Both ends are always included.', 22, DIM)
-        self.record_prompt.pack(anchor='w', pady=10)
+        self.record_prompt.pack(anchor='w', pady=(10, 4))
+        confirm_row = tk.Frame(tune, bg=BG)
+        confirm_row.pack(anchor='w', pady=(0, 8))
+        self.confirm_button = ttk.Button(confirm_row, text='Reached this position  \u25b8', command=self.confirm_position)
+        self.confirm_button.pack(side='left')
+        self.label(confirm_row, 'Move the slider, then confirm. The hold is only recorded after you confirm.', 11).pack(side='left', padx=12)
         panes = tk.Frame(tune, bg=BG)
         panes.pack(fill='both', expand=True)
         left = tk.Frame(panes, bg=BG)
@@ -245,8 +279,8 @@ class App:
         self.result_note.pack(anchor='w')
         apply_row = tk.Frame(right, bg=BG)
         apply_row.pack(anchor='w', pady=8)
-        ttk.Button(apply_row, text='Use recording as calibration', command=self.apply_recording_calibration).pack(side='left')
-        ttk.Button(apply_row, text='Apply & save tuning', command=lambda: self.apply_recommended_tuning(True)).pack(side='left', padx=8)
+        ttk.Button(apply_row, text='Re-apply this recording', command=self.commit_recording).pack(side='left')
+        ttk.Button(apply_row, text='Apply & save tuning only', command=lambda: self.apply_recommended_tuning(True)).pack(side='left', padx=8)
         fields = tk.Frame(right, bg=PANEL, padx=12, pady=10)
         fields.pack(fill='x', pady=6)
         self.tune_state = self.label(fields, 'Device tuning · waiting for board', 13, GOLD)
@@ -284,7 +318,7 @@ class App:
         controls.pack(side='left', fill='both', expand=True)
         self.target = self.label(controls, 'Control point · tick 1', 18, FG)
         self.target.pack(anchor='w')
-        self.label(controls, 'Choose a tick, move the hardware there, then capture.\nTicks between control points are interpolated automatically.', 12).pack(anchor='w', pady=8)
+        self.label(controls, 'Choose a tick, move the hardware there, then capture.\nTicks between control points are interpolated automatically.\nGuided calibration fills this in; points can still be added or removed by hand.', 12).pack(anchor='w', pady=8)
         self.capture_button = ttk.Button(controls, text='Capture control point', command=self.capture)
         self.capture_button.pack(anchor='w')
         row = tk.Frame(controls, bg=BG)
@@ -393,14 +427,14 @@ class App:
         """Queue TUNE SET for each changed field, verified one reply at a time."""
         reason = rec.valid(values)
         if reason:
-            messagebox.showerror('Tuning', reason); return
+            self.tune_note.configure(text=reason, fg=GOLD); return
         current = self.tuning or {}
         queue = [f'TUNE SET {k} {self.format_field(k, v)}' for k, v in values.items()
                  if current.get(k) is None or abs(float(current[k]) - float(v)) > 1e-6]
         if not queue and not save:
             self.tune_note.configure(text='Tuning already matches the device.'); return
         if save: queue.append('TUNE SAVE')
-        self.queue.extend(queue)
+        self.queue.extend(queue)  # appended: a calibration save may already be queued
         self.tuning_dirty = True
         self.tune_note.configure(text=f'Applying {len(queue)} tuning command(s)…')
 
@@ -410,7 +444,8 @@ class App:
             text = var.get().strip()
             try: value = float(text)
             except ValueError:
-                messagebox.showerror('Tuning', f'{rec.FIELDS[key][0]}: "{text}" is not a number'); return None
+                self.tune_note.configure(text=f'{rec.FIELDS[key][0]}: "{text}" is not a number', fg=GOLD)
+                return None
             values[key] = int(round(value)) if rec.FIELDS[key][1] else value
         return values
 
@@ -432,17 +467,17 @@ class App:
 
     def start_recording(self):
         if not self.ready:
-            messagebox.showerror('Recording', 'Connect to a PoolZone first.'); return
+            self.record_prompt.configure(text='Connect to a PoolZone first.', fg=GOLD); return
         if self.tune_supported is False:
-            messagebox.showerror('Recording', 'This firmware has no tuning support. '
-                                 'Update the board to pool-2.8.0 or newer first.'); return
+            self.record_prompt.configure(text='This firmware has no tuning support. '
+                                              'Update the board to pool-2.8.0 or newer first.', fg=GOLD); return
         if self.dirty and not messagebox.askyesno('Recording', 'An unsaved calibration draft will be replaced by the recording. Continue?'):
             return
         try:
-            stride = int(self.stride_var.get()); settle = float(self.settle_var.get()); hold = float(self.hold_var.get())
-            self.record_steps = rec.plan_steps(stride, settle, hold)
+            stride = int(self.stride_var.get()); hold = float(self.hold_var.get())
+            self.record_steps = rec.plan_steps(stride, hold)
         except ValueError as exc:
-            messagebox.showerror('Recording', str(exc)); return
+            self.record_prompt.configure(text=str(exc), fg=GOLD); return
         self.recording = self.analysis = self.proposal = None
         self.record_buffer = []
         self.record_step = 0
@@ -452,6 +487,19 @@ class App:
         self.record_steps_data = []
         self.send('RAW ON')
         self.log_event(f'EVENT recording started · {len(self.record_steps)} positions')
+
+    def confirm_position(self):
+        """The operator says the slider has reached the prompted tick; start its hold.
+
+        Arrival is confirmed rather than assumed after a countdown, so a slow or fumbled
+        move cannot be recorded as a settled position.
+        """
+        if self.record_state != 'move': return
+        self.record_state = 'hold'
+        self.record_phase_at = time.monotonic()
+        # Discard everything captured during the move: only the hold is the measurement.
+        self.record_hold_from = self.record_buffer[-1]['t'] if self.record_buffer else 0
+        self.draw()
 
     def stop_recording(self, reason='Recording aborted.'):
         if self.record_state is None: return
@@ -474,18 +522,15 @@ class App:
         if not self.connection: self.stop_recording('Disconnected during recording.'); return
         step = self.record_steps[self.record_step]
         elapsed = now - self.record_phase_at
+        position = f"{self.record_step + 1} of {len(self.record_steps)}"
         if self.record_state == 'move':
-            remaining = step['settle'] - elapsed
+            # No deadline: wait for the operator to confirm arrival.
             self.record_prompt.configure(
-                text=f"MOVE TO {step['tick']}          {max(0.0, remaining):.1f} s", fg=GOLD)
-            if remaining <= 0:
-                self.record_state = 'hold'
-                self.record_phase_at = now
-                self.record_hold_from = self.record_buffer[-1]['t'] if self.record_buffer else 0
+                text=f"MOVE TO {step['tick']}          ({position})", fg=GOLD)
         else:
             remaining = step['hold'] - elapsed
             self.record_prompt.configure(
-                text=f"HOLD AT {step['tick']}          {max(0.0, remaining):.1f} s", fg=GREEN)
+                text=f"HOLD AT {step['tick']}          {max(0.0, remaining):.1f} s   ({position})", fg=GREEN)
             if remaining <= 0:
                 self.record_steps_data.append(dict(tick=step['tick'], hold_from=self.record_hold_from,
                                                    samples=self.record_buffer))
@@ -520,8 +565,39 @@ class App:
             self.log_event(f'EVENT recording saved {path.name}')
         except OSError as exc:
             self.log_event(f'EVENT recording not saved: {exc}')
-        self.record_prompt.configure(text='Recording complete. Review below, then apply.', fg=GREEN)
         self.draw_tuning_table()
+        self.commit_recording()
+
+    def commit_recording(self):
+        """Store the measured calibration and tuning, activate both, and hand over.
+
+        The recorded control points replace the previous set outright rather than merging
+        into it: a tick measured in an older session is not evidence about the slider as
+        it stands now, and silently keeping one would leave the curve part old, part new.
+        """
+        if not self.analysis or not self.proposal: return
+        try:
+            points = dict(self.analysis['points'])
+            ticks = validate(rec.interpolate_ticks(points))
+        except ValueError as exc:
+            self.record_prompt.configure(text=f'Recording produced an unusable calibration: {exc}', fg=GOLD)
+            return
+        self.points = points          # replaces every previous control point
+        self.ticks = ticks
+        self.dirty = True
+        # Calibration first so the ticks the tuning was derived from are the ones stored.
+        self.queue.extend([f'CAL SET {i+1} {v:.2f}' for i, v in enumerate(self.ticks)])
+        self.queue.append(f'CAL ANCHORS {sum(1 << (i-1) for i in self.points)}')
+        self.queue.append('CAL SAVE')
+        self.send_tuning(self.proposal['tuning'], save=True)
+        for key, var in self.tuning_vars.items():
+            var.set(self.format_field(key, self.proposal['tuning'][key]))
+        self.record_prompt.configure(
+            text=f"Recording complete · {len(points)} control points measured · saving to flash…", fg=GREEN)
+        self.note.configure(text='Calibration and filter tuning from the guided recording are being '
+                                 'saved to flash. Previous control points were replaced.')
+        self.tabs.select(self.work_tab)
+        self.draw()
 
     def draw_tuning_table(self):
         table = self.result_table
@@ -547,18 +623,6 @@ class App:
         lines += ['• ' + n for n in p['notes']]
         lines += ['⚠ ' + w for w in p['warnings']]
         self.result_note.configure(text='\n'.join(lines))
-
-    def apply_recording_calibration(self):
-        if not self.analysis: return
-        try:
-            self.points = dict(self.analysis['points'])
-            self.ticks = validate(rec.interpolate_ticks(self.points))
-        except ValueError as exc:
-            messagebox.showerror('Calibration', str(exc)); return
-        self.dirty = True
-        self.tabs.select(self.work_tab)
-        self.note.configure(text='Calibration drafted from the recording. Review, then Apply & save to flash.')
-        self.draw()
 
     def apply_recommended_tuning(self, save):
         if not self.proposal: return
@@ -687,6 +751,67 @@ class App:
             return
         self.start_flash(database_only=True)
 
+    def refresh_radio_id(self):
+        """Read this board's radio ID and flag any other board already using it."""
+        zone = self.monitor.zone
+        if not self.connection or not zone or not zone.get('mac'):
+            self.radio_id_known, self.radio_id_conflicts = None, []
+            self.radio_id_label.configure(text='Radio ID: connect to read board identity', fg=GOLD)
+            self.radio_id_detail.configure(text='Other pool boards: —')
+            return
+        point = zone.get('point_id')
+        try:
+            radios = firmware.pool_radios()
+            self.radio_id_conflicts = firmware.radio_id_conflicts(zone['mac'], point, radios)
+        except Exception as exc:
+            self.radio_id_conflicts = []
+            self.radio_id_detail.configure(text='Registry unavailable: '+str(exc))
+            radios = []
+        if self.radio_id_known != point:
+            self.radio_id_known = point
+            # Preselect a free ID when this one clashes, so the fix is one click away.
+            suggestion = firmware.suggest_radio_id(zone['mac'], radios) if self.radio_id_conflicts else point
+            self.radio_id_choice.set(str(suggestion if suggestion else point))
+        clash = ', '.join(f"{c['name'] or 'unnamed'} ({c['mac']})" for c in self.radio_id_conflicts)
+        self.radio_id_label.configure(
+            text=(f"Radio ID {point} · {zone.get('name','?')} · {zone['mac']}"
+                  + (f"  —  ALSO USED BY {clash}" if self.radio_id_conflicts else '  —  unique')),
+            fg='#f5b1a5' if self.radio_id_conflicts else GOLD)
+        if radios:
+            used = {}
+            for r in radios: used.setdefault(r['point_id'], []).append(r['mac'])
+            summary = '   '.join(f"{pid}:{len(macs)}" + ('!' if len(macs) > 1 else '') for pid, macs in sorted(used.items()))
+            free = [str(pt) for pt in firmware.POOL_POINTS if pt not in used]
+            self.radio_id_detail.configure(text=f"Registry — boards per ID: {summary}   ·   unused IDs: "
+                                             f"{', '.join(free) if free else 'none'}")
+
+    def start_radio_id(self):
+        """Rewrite only the zone identity sector, so the board becomes a different slider."""
+        if self.flashing or not self.connection: return
+        zone = self.monitor.zone
+        if not zone or not zone.get('mac'):
+            self.radio_id_label.configure(text='Wait for the board report before assigning an ID.'); return
+        try: wanted = int(self.radio_id_choice.get())
+        except (TypeError, ValueError):
+            self.radio_id_label.configure(text='Choose a radio ID first.'); return
+        if wanted == zone.get('point_id'):
+            self.radio_id_label.configure(text=f'This board is already radio ID {wanted}.'); return
+        if self.dirty or self.pending or self.queue:
+            self.radio_id_label.configure(text='Apply & save your draft calibration before changing the radio ID.'); return
+        port = self.connection.port
+        force = bool(self.radio_id_force.get())
+        self.flashing = True
+        self.disconnect('Assigning radio ID…')
+        self.tabs.select(self.firmware_tab)
+        self.flash_progress.start(15)
+        self.flash_status.configure(text=f'Assigning radio ID {wanted}…')
+        def worker():
+            try:
+                result = firmware.assign_radio_id(port, wanted, lambda kind, value: self.flash_events.put((kind, value)), force=force)
+                self.flash_events.put(('radio-id', result))
+            except Exception as exc: self.flash_events.put(('failed', str(exc)))
+        threading.Thread(target=worker, daemon=False).start()
+
     def update_registry(self):
         """Record this board in the shared zones table without flashing anything."""
         zone = self.monitor.zone
@@ -738,10 +863,19 @@ class App:
                 if int(self.flash_log.index('end-1c').split('.')[0])>300: self.flash_log.delete('1.0','50.0')
                 self.flash_log.see('end'); self.flash_log.configure(state='disabled')
             elif kind=='stage': self.flash_status.configure(text=value)
-            elif kind in ('done','failed'):
+            elif kind in ('done','failed','radio-id'):
                 self.flashing=False
                 self.flash_progress.stop()
-                if kind=='done':
+                if kind=='radio-id':
+                    self.radio_id_known=None
+                    self.flash_status.configure(
+                        text=(f"Already radio ID {value['point_id']}; nothing written." if value.get('skipped')
+                              else f"Radio ID {value['previous']} → {value['point_id']} ({value['name']}). "
+                                   f"Calibration and database preserved. Previous identity: {value['backup']}"))
+                    self.log_event('Radio ID: '+str(value))
+                    self.radio_id_force.set(False)
+                    self.connect()
+                elif kind=='done':
                     self.flash_status.configure(text='Already up to date; no flash needed.' if value.get('skipped') else f'Installed {value["version"]}. Device data preserved. Backup: {value["backup"]}')
                     self.log_event('Firmware: '+str(value))
                     self.port.set(value['port'])
@@ -922,10 +1056,22 @@ class App:
             state='normal' if idle and self.database_state=='update'
                               and self.firmware_state in ('current','update') else 'disabled')
         self.registry_button.configure(state='normal' if idle and self.monitor.zone else 'disabled')
+        self.refresh_radio_id()
+        zone = self.monitor.zone or {}
+        try: wanted = int(self.radio_id_choice.get())
+        except (TypeError, ValueError): wanted = None
+        # Assigning onto an ID another board already holds just moves the clash, so it
+        # needs an explicit override.
+        blocked = wanted is not None and firmware.radio_id_conflicts(zone.get('mac'), wanted) and not self.radio_id_force.get()
+        self.radio_id_menu.configure(state='readonly' if idle and zone.get('mac') else 'disabled')
+        self.radio_id_force_box.configure(state='normal' if idle and zone.get('mac') else 'disabled')
+        self.radio_id_button.configure(
+            state='normal' if idle and zone.get('mac') and wanted and wanted != zone.get('point_id') and not blocked else 'disabled')
         recording_now = self.record_state is not None
         can_tune = self.ready and self.tune_supported is not False
         self.record_button.configure(state='disabled' if recording_now or not can_tune or self.flashing else 'normal')
         self.record_abort.configure(state='normal' if recording_now else 'disabled')
+        self.confirm_button.configure(state='normal' if self.record_state == 'move' else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
         if self.record_state is not None and not self.connection: self.stop_recording('Disconnected during recording.')
         self.ports.configure(state='disabled' if self.flashing else 'normal')

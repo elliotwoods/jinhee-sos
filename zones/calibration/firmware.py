@@ -167,6 +167,120 @@ def record_zone_status(report, source='poolzone-calibration', detail=None):
     return report['mac']
 
 
+POOL_POINTS = zone_build.PROFILES['pool']['points']
+POOL_ZONE_TYPE = zone_build.PROFILES['pool']['zone_type']
+
+
+def pool_radios():
+    """Every pool board the registry knows, newest sighting first."""
+    db=Database(DEFAULT_DATABASE,recover_pending=False)
+    try:
+        rows=ZoneStore(db).conn.execute(
+            'SELECT mac,name,point_id,firmware,last_seen FROM zones WHERE zone_type=? ORDER BY point_id,mac',
+            (POOL_ZONE_TYPE,)).fetchall()
+    finally: db.close()
+    return [dict(mac=r[0],name=r[1],point_id=r[2],firmware=r[3],last_seen=r[4]) for r in rows]
+
+
+def radio_id_conflicts(mac, point_id, radios=None):
+    """Other boards already using this radio id.
+
+    Two sliders sharing an id land in the same slot at the central and contradict each
+    other about what that id is doing, which reaches the lamps as unexplained flicker.
+    """
+    radios=pool_radios() if radios is None else radios
+    return [r for r in radios if r['point_id']==point_id and (r['mac'] or '').upper()!=(mac or '').upper()]
+
+
+def suggest_radio_id(mac, radios=None):
+    """Lowest id no other board is using, or None when all six are taken."""
+    radios=pool_radios() if radios is None else radios
+    return next((p for p in POOL_POINTS if not radio_id_conflicts(mac,p,radios)),None)
+
+
+def assign_radio_id(port_name, new_id, emit, force=False):
+    """Rewrite just this board's zcfg identity, preserving firmware, calibration and database.
+
+    Only the 4 KiB zcfg sector is written. NVS (where the slider calibration and tuning
+    live) and both database slots are read before and after and must be byte-identical.
+    """
+    if new_id not in POOL_POINTS:
+        raise RuntimeError(f'Radio ID must be one of {", ".join(str(p) for p in POOL_POINTS)}.')
+    folder=Path(__file__).parent/'build'/'radio-id-runs'/uuid.uuid4().hex
+    folder.mkdir(parents=True)
+    runner=FlashRunner(emit,folder/'assign.log')
+    selected=next((p for p in ports() if p['port']==port_name),None)
+    if not selected or not selected['candidate']: raise RuntimeError('Select a connected ESP32 PoolZone board.')
+    partitions=zone_build.parse_partitions(ROOT/'firmware/PoolZone/partitions.csv')
+    zcfg,zdb_a,zdb_b=partitions['zcfg'],partitions['zdb_a'],partitions['zdb_b']
+    nvs=partitions['nvs']
+    with PortLock(port_name):
+        emit('stage','Checking PoolZone identity…')
+        before,_=snapshot(port_name,require_calibration=False)
+        check_identity(before,before['mac'])
+        if before.get('point_id')==new_id:
+            return dict(mac=before['mac'],point_id=new_id,name=before.get('name'),skipped=True,log=str(folder/'assign.log'))
+        conflicts=radio_id_conflicts(before['mac'],new_id)
+        if conflicts and not force:
+            who=', '.join(f"{c['name'] or 'unnamed'} ({c['mac']})" for c in conflicts)
+            raise RuntimeError(f'Radio ID {new_id} is already used by {who}. Give that board a different ID first, '
+                               'or re-run with override if it has been retired.')
+        name=zone_build.PROFILES['pool']['name'].format(point=new_id)
+        connected=False
+        def tool(*args,after='no-reset-stub',timeout=90):
+            nonlocal connected
+            current=next((p for p in ports() if p['port']==port_name),None)
+            if not current or current['key']!=selected['key']: raise RuntimeError('USB board disconnected or changed; nothing written.')
+            result=runner(tool_command()+['--chip','esp32c3','--port',port_name,'--baud','460800','--before',
+                         'no-reset' if connected else 'default-reset','--after',after,*args],timeout)
+            connected=True
+            return result
+        try:
+            identity=tool('read-mac')
+            match=MAC_RE.search(identity)
+            if not match: raise RuntimeError('Bootloader did not report board identity.')
+            check_identity(before,match[1])
+            emit('stage','Reading current identity and protected regions…')
+            current_path=folder/'zcfg-before.bin'
+            tool('read-flash',hex(zcfg['offset']),hex(zcfg['size']),current_path)
+            current=current_path.read_bytes()
+            parsed=zonedb.parse_config(current)
+            # Proves we are reading the identity sector and not some other part of flash.
+            if not parsed or parsed['zone_type']!=POOL_ZONE_TYPE or parsed['point_id']!=before.get('point_id'):
+                raise RuntimeError('Zone identity sector does not match the board report; nothing written. '
+                                   'Use the Zone Flasher for initial setup or migration.')
+            params=zonedb.parse_params(current)
+            protected={}
+            for label,part in (('nvs',nvs),('zdb_a',zdb_a),('zdb_b',zdb_b)):
+                path=folder/f'{label}-before.bin'
+                tool('read-flash',hex(part['offset']),hex(part['size']),path)
+                protected[label]=(part,path.read_bytes())
+            image=zonedb.zcfg_image(POOL_ZONE_TYPE,new_id,name,params).ljust(zcfg['size'],b'\xff')
+            target=folder/'zcfg-after.bin'; target.write_bytes(image)
+            emit('stage',f'Assigning radio ID {new_id} ({name})…')
+            tool('write-flash',hex(zcfg['offset']),target)
+            tool('verify-flash',hex(zcfg['offset']),target)
+            emit('stage','Verifying calibration and database were untouched…')
+            for label,(part,expected) in protected.items():
+                path=folder/f'{label}-after.bin'
+                tool('read-flash',hex(part['offset']),hex(part['size']),path)
+                if path.read_bytes()!=expected:
+                    raise RuntimeError(f'{label} changed unexpectedly; previous identity kept at {current_path}')
+        finally:
+            if connected:
+                try: tool('read-mac',after='watchdog-reset' if selected.get('native_usb') else 'hard-reset',timeout=15)
+                except Exception as exc: runner.line('Reset: '+str(exc))
+        emit('stage','Checking reboot and new identity…')
+        report=ZoneFlasher(folder/'unused.sqlite3',emit).boot_report(selected,runner)
+        expected={k:before[k] for k in ('mac','channel','zone_type','firmware','db_version','db_count','db_crc')}
+        expected.update(point_id=new_id,name=name)
+        if not report or any(report.get(k)!=v for k,v in expected.items()):
+            raise RuntimeError('Identity written, but boot verification failed. See '+str(folder/'assign.log'))
+    record_zone_status(report,source='poolzone-radio-id')
+    return dict(mac=report['mac'],point_id=new_id,name=name,previous=before.get('point_id'),
+                backup=str(current_path),log=str(folder/'assign.log'),skipped=False)
+
+
 def flash(port_name, emit, database_only=False):
     folder=Path(__file__).parent/'build'/'firmware-runs'/uuid.uuid4().hex
     folder.mkdir(parents=True)

@@ -10,6 +10,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 C3 = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'
+# Kept for a board that cannot read its flash reliably at the default 80 MHz. One pool
+# central did exactly that: it boot-looped on `esp_image: Checksum failed` with the
+# bootloader computing a DIFFERENT checksum on every boot, while the flash contents were
+# provably byte-identical to the build. If that reappears, switch the pool central target
+# to this and flash bootloader and app together - the speed lives in the bootloader header.
+C3_SLOW_FLASH = 'esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashFreq=40'
 SUPERMINI = 'esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc,PartitionScheme=no_ota'
 XIAO = 'esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M'
 

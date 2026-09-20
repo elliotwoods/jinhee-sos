@@ -32,6 +32,10 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
   replacing the archived `live files/PoolZone_Central_Controiler`. It is **not** a zone board and **not** a zone-flasher
   target: no PN532, no `zcfg`/`zdb` partitions, and a different board profile (`esp32:esp32:esp32c3`, not the SuperMini).
   Build it with `scripts/build_all_firmware.py` or the `arduino-cli` commands in its README.
+- **Pool outputs are active low** since the 2026-09-21 relay rewire: a lit lamp drives its PCA9685 channel LOW,
+  energising the relay. `POOL_OUTPUT_ACTIVE_LOW` in `firmware/PoolCentral/PoolOutput.h` is the only switch, and
+  logs and telemetry stay in terms of the lamp. Note the boards power up with outputs low, so the frames light
+  until the controller boots and darkens them.
 - **The radios and the central are a matched set.** They must be reflashed together. Flash the central first: it still
   accepts the old 15-byte packet, so the existing sliders keep working while they are updated one at a time.
 
@@ -50,6 +54,8 @@ broadcast had neither, and losing frames under six-slider load is what made the 
 one broadcast copy going every 450 ms, free because the central de-duplicates on sequence, which rescues a radio that
 latched a stale address.
 
+The central tracks one slot per **sender MAC**, not per configured radio ID, so two boards set to the same ID
+simply get a slot each and both work; the ID is a label the central reports but never routes on.
 A member frame is lit while **any** radio holds it. Each `PoolState` carries a lease (clamped 600-2000 ms, default 800),
 a per-boot identity and a sequence number, so a late frame cannot re-assert an old member and a rebooted radio is still
 accepted at once. Changes are sent as a short burst and releases are repeated for a second, because a lost release

@@ -31,6 +31,7 @@ inline int digitalRead(int pin) { if (heldLow.count(pin) && heldLow[pin] != 0) r
 // Single-threaded on the host, but the depth counter lets tests assert the discipline
 // that matters: no Serial and no I2C work may happen inside a critical section, and the
 // ESP-NOW receive callback must do nothing but hand the frame over.
+inline int i2cTransactions = 0;  // counted here so the Wi-Fi stub can record boot ordering
 inline int criticalDepth = 0;
 struct portMUX_TYPE { int unused = 0; };
 #define portMUX_INITIALIZER_UNLOCKED {}
@@ -86,8 +87,9 @@ inline int radioChannel = 1;
 // Modem sleep duty-cycles the receiver and silently drops broadcasts; the live central
 // never turned it off. Recorded so a test can assert setSleep(false) actually happened.
 inline bool wifiSleep = true, wifiPersistent = true, wifiAutoReconnect = true;
+inline int i2cAtWifiMode = -1;  // i2cTransactions when the radio was first brought up
 struct WiFiStub {
-  bool mode(int) { return true; }
+  bool mode(int) { if (i2cAtWifiMode < 0) i2cAtWifiMode = i2cTransactions; return true; }
   bool disconnect() { return true; }
   bool setSleep(bool on) { wifiSleep = on; return true; }
   void persistent(bool on) { wifiPersistent = on; }
@@ -224,15 +226,18 @@ struct FakePca {
     memset(reg, 0, sizeof(reg));
     reg[0] = 0x11;  // MODE1: SLEEP set, auto-increment clear, as after a real reset
     reg[1] = 0x04;  // MODE2
-    // ALL_LED_ON/OFF come up non-zero so firmware that never clears them is caught.
-    reg[0xFA] = 0x00; reg[0xFB] = 0x10; reg[0xFC] = 0x00; reg[0xFD] = 0x00;
+    // Every LEDn powers up FULL_OFF (bit 4 of LEDn_OFF_H), which drives the channel LOW.
+    // That is not a neutral state: with active-low relays a LOW channel energises the coil,
+    // so at power-on the hardware is asking for every lamp to be ON until firmware says
+    // otherwise. Modelled faithfully so a test can catch a boot that leaves it that way.
+    for (uint8_t c = 0; c < 16; ++c) reg[9 + 4 * c] = 0x10;  // LEDn_OFF_H bit 4 = FULL_OFF
+    reg[0xFA] = 0x00; reg[0xFB] = 0x00; reg[0xFC] = 0x00; reg[0xFD] = 0x10;
   }
   FakePca() { powerOn(); }
   bool autoIncrement() const { return reg[0] & 0x20; }
 };
 inline FakePca pcaBoards[2];
 inline bool i2cBusStuck = false;
-inline int i2cTransactions = 0;
 
 inline void resetPcaBoards() {
   pcaBoards[0] = FakePca(); pcaBoards[0].address = 0x40;

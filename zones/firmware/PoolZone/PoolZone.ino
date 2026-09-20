@@ -3,7 +3,10 @@
 //
 // ESP32-C3 SuperMini + PN532 + VL53L4CD slider (I2C SDA GPIO4 / SCL GPIO3) + 12 V LED strip MOSFET on GPIO5.
 // NeoCube tag (700 ms removal timeout) or explicitly armed USB override activates output.
-// RadioPacket heartbeat 150 ms; registered NeoCubes receive POOL via the shared tag core.
+// PoolState to the pool central: unicast to the beacon-latched address for ESP-NOW
+// acknowledgement and retries, a burst on every change, a repeated release, a periodic
+// broadcast copy, and idle heartbeats so silence means a fault. See NctPoolProtocol.h.
+// Registered NeoCubes receive POOL via the shared tag core.
 // CAL commands edit 23 ticks; outputs pause during unsaved calibration uploads.
 // CAL SAVE persists to NVS. Legacy endpoints seed an unsaved initial calibration.
 // TUNE commands edit filter/decision parameters live; TUNE SAVE persists them.

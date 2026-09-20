@@ -53,7 +53,7 @@ def main():
             send('HOST ARM'); read_for(.3); send('HOST DISARM')
             rows=read_for(.4)
             assert not [d for d in rows if d.get('type')=='interaction'][-1]['override']
-            assert any(line.startswith('FW: pool-2.') for line in evidence)
+            assert any(line.startswith('FW: pool-') for line in evidence)
             print('PASS saved calibration, NFC/radio ready, tagless default OFF, armed light command + heartbeat, watchdog expiry, late-ping refusal, explicit disarm')
         finally:
             send('HOST DISARM')

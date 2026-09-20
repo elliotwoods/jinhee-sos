@@ -36,7 +36,7 @@ class Rig:
                     except ValueError:
                         if name=='RX': self.events.append(line)
                         continue
-                    if name=='RX' and data.get('device')=='PoolCentral': self.status=data
+                    if name=='RX' and data.get('device')=='PoolCentral' and data.get('type')=='status': self.status=data
                     elif name=='TX' and data.get('device')=='PoolRadioTest': self.sender=data
             time.sleep(.005)
     def wait(self, predicate, timeout=4):

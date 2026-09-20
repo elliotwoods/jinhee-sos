@@ -70,6 +70,57 @@ class InterfaceTests(unittest.TestCase):
             self.assertEqual(str(self.app.flash_button['state']),'disabled')
         finally: self.app.connection=None
 
+    def test_radio_id_editor_flags_a_clash_and_offers_a_free_id(self):
+        # Two boards on one radio ID contradict each other in the central's single slot
+        # for that ID, which is what shows up as flicker at the lamps.
+        others = [dict(mac='AA:00:00:00:00:02', name='Pool Radio 2', point_id=2, firmware='pool-3.0.0', last_seen=''),
+                  dict(mac='AA:00:00:00:00:04', name='Pool Radio 4', point_id=4, firmware='pool-3.0.0', last_seen='')]
+        self.app.connection = object()
+        try:
+            self.app.monitor.zone = dict(firmware='pool-3.0.0', zone_type=3, mac='AA:00:00:00:00:09',
+                                         point_id=4, name='Pool Radio 4')
+            with patch.object(firmware, 'pool_radios', return_value=others + [
+                    dict(mac='AA:00:00:00:00:09', name='Pool Radio 4', point_id=4, firmware='pool-3.0.0', last_seen='')]):
+                self.app.draw()
+                self.assertIn('ALSO USED BY', self.app.radio_id_label.cget('text'))
+                self.assertIn('AA:00:00:00:00:04', self.app.radio_id_label.cget('text'))
+                # A free ID is preselected so the fix is one click away, and enabled.
+                self.assertEqual(self.app.radio_id_choice.get(), '1')
+                self.assertEqual(str(self.app.radio_id_button['state']), 'normal')
+                # Choosing an ID another board holds just moves the clash: blocked ...
+                self.app.radio_id_choice.set('2')
+                self.app.draw()
+                self.assertEqual(str(self.app.radio_id_button['state']), 'disabled')
+                # ... unless explicitly overridden.
+                self.app.radio_id_force.set(True)
+                self.app.draw()
+                self.assertEqual(str(self.app.radio_id_button['state']), 'normal')
+                # Reassigning a board to the ID it already has is refused, not a no-op write.
+                self.app.radio_id_force.set(False)
+                self.app.radio_id_choice.set('4')
+                self.app.draw()
+                self.assertEqual(str(self.app.radio_id_button['state']), 'disabled')
+        finally: self.app.connection = None
+
+    def test_radio_id_editor_is_quiet_when_the_id_is_unique(self):
+        self.app.connection = object()
+        try:
+            self.app.monitor.zone = dict(firmware='pool-3.0.0', zone_type=3, mac='AA:00:00:00:00:05',
+                                         point_id=5, name='Pool Radio 5')
+            with patch.object(firmware, 'pool_radios', return_value=[
+                    dict(mac='AA:00:00:00:00:05', name='Pool Radio 5', point_id=5, firmware='pool-3.0.0', last_seen='')]):
+                self.app.draw()
+                self.assertIn('unique', self.app.radio_id_label.cget('text'))
+                self.assertIn('unused IDs', self.app.radio_id_detail.cget('text'))
+        finally: self.app.connection = None
+
+    def test_radio_id_editor_needs_a_connected_board(self):
+        self.app.connection = None
+        self.app.monitor.zone = None
+        self.app.draw()
+        self.assertIn('connect', self.app.radio_id_label.cget('text').lower())
+        self.assertEqual(str(self.app.radio_id_button['state']), 'disabled')
+
     def test_database_and_registry_controls_are_visible(self):
         self.app.connection=object()
         try:
@@ -122,7 +173,7 @@ class InterfaceTests(unittest.TestCase):
         sent=[]
         self.app.send=lambda cmd: sent.append(cmd) or True
         try:
-            self.app.stride_var.set('4'); self.app.settle_var.set('0.05'); self.app.hold_var.set('0.05')
+            self.app.stride_var.set('4'); self.app.hold_var.set('0.05')
             self.app.start_recording()
             self.assertIn('RAW ON',sent)
             self.assertEqual([s['tick'] for s in self.app.record_steps],[1,5,9,13,17,21,23])
@@ -132,6 +183,12 @@ class InterfaceTests(unittest.TestCase):
             while self.app.record_state is not None and guard<200:
                 guard+=1
                 step=self.app.record_steps[self.app.record_step]
+                # A move has no deadline: it ends only when the operator confirms arrival.
+                if self.app.record_state=='move':
+                    now+=5.0
+                    self.app.advance_recording(now)
+                    self.assertEqual(self.app.record_state,'move')  # still waiting on the click
+                    self.app.confirm_position()
                 for _ in range(12):
                     stamp+=20
                     self.app.handle(json.dumps(dict(device='PoolZoneCalibration',type='raw',
@@ -144,9 +201,16 @@ class InterfaceTests(unittest.TestCase):
             self.assertEqual(len(self.app.result_table.get_children()),7)
             # The proposal must be something the firmware will actually accept.
             self.assertIsNone(rec.valid(self.app.proposal['tuning']))
-            self.app.apply_recording_calibration()
+            # Completion stores the calibration and tuning and hands over automatically.
             self.assertTrue(self.app.dirty)
             self.assertEqual(len(self.app.ticks),23)
+            self.assertEqual(sorted(self.app.points),[1,5,9,13,17,21,23])
+            self.assertEqual(str(self.app.tabs.select()),str(self.app.work_tab))
+            queued=list(self.app.queue)
+            self.assertEqual(queued.count('CAL SAVE'),1)
+            self.assertEqual(queued.count('TUNE SAVE'),1)
+            self.assertLess(queued.index('CAL SAVE'),queued.index('TUNE SAVE'))
+            self.assertTrue(any(c.startswith('CAL ANCHORS') for c in queued))
         finally:
             self.app.connection=None
 

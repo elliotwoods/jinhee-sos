@@ -48,6 +48,28 @@ Checks: `pairing_station/.venv/bin/python zones/tests/run_firmware_tests.py` and
 
 GUI tests: `pairing_station/.venv/bin/python zones/calibration/gui_check.py`. Hardware test (briefly commands real lights): `pairing_station/.venv/bin/python zones/calibration/hardware_check.py /dev/cu.usbmodem101`.
 
+## Radio ID
+
+**Firmware tab → Radio ID.** The pool central keeps one slot per radio ID (1-6). Two boards
+sharing an ID land in the same slot and contradict each other about what it is doing, which
+reaches the lamps as flicker with no other symptom — so every pool board needs its own.
+
+The panel shows this board's ID, names any other board in the registry already using it, and
+lists how many boards sit on each ID plus which IDs are unused. When the current ID clashes it
+preselects the lowest free one, so the fix is one click. Assigning onto an ID another board
+already holds only moves the clash, so it needs the explicit **override clash** tick — use it
+when the other board has been retired.
+
+Only the 4 KiB zone identity sector is rewritten. Firmware is untouched, and NVS (the slider
+calibration and tuning) and both cube-database slots are read before and after and must come
+back byte-identical or the operation fails with the previous identity retained. The board is
+then rebooted and must report the new ID, name and unchanged MAC, firmware and database before
+it is recorded in the shared registry.
+
+The registry is only as good as what has connected: a board that has never been seen by the
+flasher or this app will not appear as a clash. The central's own `rx_duplicate_id` counter and
+`DUPLICATE RADIO ID` log are the authoritative check.
+
 ## Position smoothing
 
 An isolated median (default 3 samples) rejects single wild readings, then the
@@ -96,13 +118,38 @@ dropped the member to 0 and released the relay. `release`, `dropout` and `exit` 
 those three causes directly; `mincutoff`, `median` and `budget` address the underlying
 noise.
 
-## Tuning & recording tab
+## Guided calibration tab
 
-**Start guided recording** walks the operator through a series of positions — both
-endpoints plus every Nth tick, default every 4th, so 1, 5, 9, 13, 17, 21, 23 in about a
-minute. For each it prompts `MOVE TO n`, allows a settle time, then `HOLD` while it
-records. The board streams every sensor sample (`RAW ON`, ~50 Hz) for the duration; the
-10 Hz telemetry is too slow to tune a filter against.
+This is the first tab and the normal way to calibrate. **Start guided recording** walks
+the operator through a series of positions — both endpoints plus every Nth tick, default
+every 4th, so 1, 5, 9, 13, 17, 21, 23.
+
+For each tick it prompts `MOVE TO n` and then **waits**. There is no move countdown: the
+operator moves the slider and clicks **Reached this position**, and only then does the
+timed `HOLD` begin and get recorded. A fixed deadline would silently record a
+half-finished move as though it were a settled position, which is precisely the data that
+poisons a calibration. Samples captured during the move are discarded.
+
+The board streams every sensor sample (`RAW ON`, ~50 Hz) for the duration; the 10 Hz
+telemetry is too slow to tune a filter against.
+
+### What happens when the sequence finishes
+
+The recording is applied automatically — there is no separate apply step:
+
+1. The measured control points **replace the previous set outright**. Earlier control
+   points are removed, not merged: a tick measured in an older session is not evidence
+   about the slider as it stands now, and keeping one would leave the curve part old and
+   part new. Ticks between the measured points are interpolated as usual.
+2. The calibration is written and verified to flash (`CAL SET` ×23, `CAL ANCHORS`,
+   `CAL SAVE`), then the tuning (`TUNE SET` …, `TUNE SAVE`). Calibration goes first so
+   the tuning is stored against the ticks it was derived from.
+3. The app switches to **Calibration & control points**, where the new points are shown
+   as the current control points.
+
+From there the slider can still be calibrated by hand exactly as before: select a tick,
+capture or type a distance, add or remove individual control points, and apply. The
+guided run is a starting point, not a lock.
 
 From one recording the app derives **both** the calibration and the tuning:
 

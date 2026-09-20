@@ -58,24 +58,29 @@ def valid(tuning):
     return None
 
 
-def plan_steps(stride=4, settle=3.0, hold=5.0, ticks=TICKS):
+def plan_steps(stride=4, hold=5.0, ticks=TICKS):
     """Ticks to visit: both endpoints plus every `stride`th between them.
 
     Endpoints bound the whole slider, so they are always included even when the stride
     does not land on the last tick.
+
+    There is no move deadline: the operator confirms arrival at each tick, and only the
+    hold is timed. A fixed countdown would silently record a half-finished move as if it
+    were a settled position, which is exactly the data that poisons a calibration.
     """
     if stride < 1 or ticks < 2:
         raise ValueError('Stride must be at least 1.')
-    if settle <= 0 or hold <= 0:
-        raise ValueError('Settle and hold times must be positive.')
+    if hold <= 0:
+        raise ValueError('Hold time must be positive.')
     visited = list(range(1, ticks + 1, stride))
     if visited[-1] != ticks:
         visited.append(ticks)
-    return [dict(tick=t, settle=float(settle), hold=float(hold)) for t in visited]
+    return [dict(tick=t, hold=float(hold)) for t in visited]
 
 
-def plan_duration(steps):
-    return sum(s['settle'] + s['hold'] for s in steps)
+def plan_duration(steps, move_estimate=3.0):
+    """Rough wall-clock estimate. The move time is operator-paced, so it is a guess."""
+    return sum(s['hold'] + move_estimate for s in steps)
 
 
 # ---------------------------------------------------------------- analysis
@@ -161,7 +166,7 @@ def analyse(recording):
     period = _sample_period(every)
     dropout_runs = [n * period for n in _runs([s.get('mm') is None for s in every])]
 
-    # Peak speed during the settle phases: how fast the operator actually moves.
+    # Peak speed before each confirmed hold: how fast the operator actually moves.
     speeds = []
     for step in recording['steps']:
         moving = [s for s in step['samples'] if s.get('mm') is not None and s['t'] < step['hold_from']]

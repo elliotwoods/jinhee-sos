@@ -11,15 +11,16 @@ import recording
 
 def synthetic(noise=1.0, spikes=0.0, dropouts=0, period=20, ticks=None,
               stride=4, settle=3.0, hold=5.0, seed=1):
+    """`settle` models the operator-paced move that precedes each confirmed hold."""
     """A recording of a slider parked at each planned tick, with known noise."""
     rng = random.Random(seed)
     ticks = ticks or [383 - (383-43)*i/22 for i in range(23)]
     steps, now = [], 0.0
     previous = ticks[0]
-    for step in recording.plan_steps(stride, settle, hold):
+    for step in recording.plan_steps(stride, hold):
         target = ticks[step['tick']-1]
         samples = []
-        settle_end = now + step['settle']*1000
+        settle_end = now + settle*1000
         hold_end = settle_end + step['hold']*1000
         t = now
         while t < hold_end:
@@ -47,11 +48,19 @@ class PlanTest(unittest.TestCase):
         self.assertEqual([s['tick'] for s in recording.plan_steps(1)], list(range(1, 24)))
         self.assertEqual([s['tick'] for s in recording.plan_steps(11)], [1, 12, 23])
 
-    def test_duration_and_rejection(self):
+    def test_duration_is_an_estimate_since_moves_are_operator_paced(self):
         self.assertEqual(recording.plan_duration(recording.plan_steps(4)), 56.0)
-        for bad in (dict(stride=0), dict(settle=0), dict(hold=-1)):
+        self.assertEqual(recording.plan_duration(recording.plan_steps(4), move_estimate=0), 35.0)
+
+    def test_rejects_an_impossible_plan(self):
+        for bad in (dict(stride=0), dict(hold=-1), dict(hold=0)):
             with self.assertRaises(ValueError):
                 recording.plan_steps(**bad)
+
+    def test_steps_carry_no_move_deadline(self):
+        # Arrival is confirmed by the operator, so nothing in the plan may time the move.
+        for step in recording.plan_steps(4):
+            self.assertNotIn('settle', step)
 
 
 class ValidationTest(unittest.TestCase):

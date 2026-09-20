@@ -28,8 +28,20 @@ static PoolState makeState(uint8_t radioId, bool active, uint8_t member, uint16_
   return p;
 }
 
+// Deliver as if from the board that normally carries this radio id.
 static void deliver(const PoolState &p) {
   radioFrom(RADIO_MAC[p.radioId - 1], (const uint8_t *)&p, sizeof(p), false);
+}
+
+// Deliver the same frame from a DIFFERENT board - the duplicate-id case.
+static void deliverFrom(const uint8_t *mac, const PoolState &p) {
+  radioFrom(mac, (const uint8_t *)&p, sizeof(p), false);
+}
+
+// The slot the central has assigned to a given sender, or nullptr if it has none.
+static RadioSlot *slotOf(const uint8_t *mac) {
+  for (RadioSlot &s : radios) if (s.valid && sameMac(s.mac, mac)) return &s;
+  return nullptr;
 }
 
 // Normal traffic: a radio sends with a strictly increasing sequence.
@@ -51,12 +63,17 @@ static void sendLegacy(uint8_t radioId, bool active, uint8_t member) {
 }
 
 // Read the driver register a member maps to, straight out of the fake PCA9685.
-static bool lit(uint8_t member) {
-  uint8_t b = member > 16, channel = uint8_t(member - (b ? 17 : 1));
+// Read a physical driver output, in output-index space (1-23), knowing nothing about the
+// wiring map - so a mistake in the map cannot hide itself here.
+static bool litOutput(uint8_t out) {
+  uint8_t b = out > 16, channel = uint8_t(out - (b ? 17 : 1));
   uint8_t expected[4];
-  encodeOutput(true, expected);
+  encodeOutputFor(out, true, expected);
   return !memcmp(pcaBoards[b].reg + 6 + 4 * channel, expected, 4);
 }
+
+// Frame `member` is lit when the output the map sends it to is lit.
+static bool lit(uint8_t member) { return litOutput(outputForMember(member)); }
 
 static bool onlyLit(std::vector<uint8_t> members) {
   for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) {
@@ -90,6 +107,8 @@ struct SimRadio {
   bool active;
   uint8_t member;
   uint32_t nextChange, nextBeat, releaseUntil;
+  uint8_t expectMember;   // what a perfectly-delivered link would be showing, including
+  uint32_t expectUntil;   // the deliberate POOL_RELEASE_HOLD_MS damping
 };
 
 static void simSend(uint8_t radioId, bool active, uint8_t member, bool modern, int loss) {
@@ -146,8 +165,15 @@ static uint32_t simulate(bool modern, uint32_t durationMs, int loss) {
     }
     run(10);
 
-    uint32_t truth = 0;
-    for (auto &r : sim) if (r.active) truth |= memberBit(r.member);
+    // Expected output is the specification, not the raw intent: a release is damped by
+    // POOL_RELEASE_HOLD_MS on purpose, so counting that as disagreement would measure the
+    // feature rather than the link.
+    uint32_t truth = 0, tick = millis();
+    for (auto &r : sim) {
+      if (r.active) { r.expectMember = r.member; r.expectUntil = tick + POOL_RELEASE_HOLD_MS; }
+      if (r.active) truth |= memberBit(r.member);
+      else if (r.expectMember && int32_t(r.expectUntil - tick) > 0) truth |= memberBit(r.expectMember);
+    }
     if (verified == truth) lastAgree = millis();
     else if (millis() - lastAgree > worst) worst = millis() - lastAgree;
   }
@@ -161,16 +187,61 @@ int main() {
   assert((boardMask(0) | boardMask(1)) == 0x7fffff && !(boardMask(0) & boardMask(1)));
   assert(validMode(0x20, 4) && validMode(0xa0, 4));           // RESTART bit is not a fault
   assert(!validMode(0x10, 4) && !validMode(0x21, 4) && !validMode(0x60, 4) && !validMode(0x20, 0x14));
+  // Relay polarity is expressed per OUTPUT, though every relay is currently wired the same
+  // way round: lamp ON drives the channel low.
   uint8_t encoded[4], fullOn[] = {0, 0x10, 0, 0}, fullOff[] = {0, 0, 0, 0x10};
-  encodeOutput(true, encoded); assert(!memcmp(encoded, fullOn, 4));
-  encodeOutput(false, encoded); assert(!memcmp(encoded, fullOff, 4));
+  for (uint8_t out = 1; out <= POOL_MEMBER_COUNT; ++out) assert(outputActiveLow(out) && "all relays are active-low");
+  encodeOutputFor(17, true, encoded); assert(!memcmp(encoded, fullOff, 4) && "active-low: lit drives low");
+  encodeOutputFor(17, false, encoded); assert(!memcmp(encoded, fullOn, 4) && "active-low: dark drives high");
+  encodeOutputFor(1, true, encoded); assert(!memcmp(encoded, fullOff, 4) && "and the same on the other board");
+  // Whatever the polarity, the two states must differ and be full-on/full-off only, and a
+  // frame must encode for the output the wiring map sends it to.
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) {
+    uint8_t a[4], b[4], viaOutput[4];
+    encodeOutput(m, true, a); encodeOutput(m, false, b);
+    assert(memcmp(a, b, 4) && a[0] == 0 && a[2] == 0 && b[0] == 0 && b[2] == 0);
+    assert((a[1] | a[3]) == 0x10 && (b[1] | b[3]) == 0x10);
+    encodeOutputFor(outputForMember(m), true, viaOutput);
+    assert(!memcmp(a, viaOutput, 4) && "a frame encodes for its mapped output");
+  }
+  // Each board is uniform, which is what makes the ALL_LED shortcut legitimate.
+  bool low40 = false, low41 = false;
+  assert(boardPolarityUniform(0, &low40) && low40);
+  assert(boardPolarityUniform(1, &low41) && low41);
+
+  // ---- Wiring map, checked against the raw measurements rather than the derived table ----
+  // Exactly as recorded on the installation: driving output index i lit frame OBSERVED[i-1].
+  static const uint8_t OBSERVED[23] = {1, 15, 20, 16, 5, 7, 23, 21, 12, 18, 6, 13, 8,
+                                       22, 3, 17, 14, 10, 2, 11, 19, 4, 9};
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) {
+    uint8_t out = outputForMember(m);
+    assert(out >= 1 && out <= POOL_MEMBER_COUNT);
+    assert(OBSERVED[out - 1] == m && "frame m must be driven by the output observed to light it");
+  }
+  // Nothing outside 1..23 resolves to an output, and the boards partition the frames.
+  assert(outputForMember(0) == 0 && outputForMember(POOL_MEMBER_COUNT + 1) == 0);
+  assert((boardMask(0) | boardMask(1)) == 0x7FFFFFu && !(boardMask(0) & boardMask(1)));
+  uint32_t onBoard0 = 0;
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) if (outputForMember(m) <= 16) onBoard0 |= memberBit(m);
+  assert(boardMask(0) == onBoard0 && "boardMask must follow the wiring, not a contiguous range");
 
   stubSclPin = SCL_PIN;  // the pool central is on SDA 8 / SCL 9, not the zone pins
   resetPcaBoards();
-  // Both drivers come up asleep with ALL_LED set, as after a real power cycle.
-  assert(pcaBoards[0].reg[0xFB] == 0x10);
+  i2cAtWifiMode = -1;
+  // A real power cycle leaves both drivers asleep, ALL_LED set, and every channel FULL_OFF
+  // - which drives it LOW and, with active-low relays, asks for every lamp to be ON.
+  assert(pcaBoards[0].reg[0] == 0x11 && pcaBoards[0].reg[0xFD] == 0x10);
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m)
+    assert(lit(m) && "the hardware really does power up asking for every lamp");
 
   setup();
+
+  // ---- Boot must leave every lamp off, before anything slow runs ----
+  // Checked immediately after setup(), with no loop() passes: a boot that relies on the
+  // main loop to tidy up has already had the relays energised for hundreds of milliseconds.
+  assert(onlyLit({}) && "every lamp must be out by the end of setup()");
+  assert(known == 0x7FFFFFu && verified == 0 && "and proved by readback, not assumed");
+  assert(i2cAtWifiMode > 0 && "outputs must be darkened BEFORE the radio is brought up");
   run(50);
 
   // ---- Init ----
@@ -179,8 +250,42 @@ int main() {
   assert(!wifiPersistent && !wifiAutoReconnect);
   assert(boards[0].online && boards[1].online);
   assert(boards[0].mode1 == 0x20 && boards[0].mode2 == 0x04);
-  // ALL_LED cleared despite powering up non-zero; the legacy init never did this.
-  for (auto &b : pcaBoards) assert(b.reg[0xFA] == 0 && b.reg[0xFB] == 0 && b.reg[0xFC] == 0 && b.reg[0xFD] == 0x10);
+  // ALL_LED cleared despite powering up non-zero; the legacy init never did this. It must
+  // be cleared to the DARK encoding, not a hardcoded FULL_OFF: under active-low relays that
+  // would light all 23 frames on every board initialisation and recovery.
+  // ALL_LED must be cleared to each board's OWN dark state: the boards have opposite
+  // polarity, so one value for both would light every frame on one of them.
+  for (uint8_t bi = 0; bi < 2; ++bi) {
+    uint8_t boardDark[4];
+    encodeOutputFor(bi ? 17 : 1, false, boardDark);
+    assert(!memcmp(pcaBoards[bi].reg + 0xFA, boardDark, 4) && "ALL_LED cleared to that board's dark state");
+  }
+  // Every physical output is dark, checked without reference to the wiring map.
+  for (uint8_t out = 1; out <= POOL_MEMBER_COUNT; ++out) assert(!litOutput(out));
+  // A board that only answers on the second attempt must still boot dark.
+  resetPcaBoards(); i2cAtWifiMode = -1;
+  pcaBoards[1].nackWrites = 3;  // a few glitched transactions during boot
+  setup();
+  assert(onlyLit({}) && known == 0x7FFFFFu && "a flaky board must not boot with lamps lit");
+  // And one that never answers must not stall the boot or leave the healthy board lit.
+  resetPcaBoards(); i2cAtWifiMode = -1;
+  pcaBoards[1].present = false;
+  setup();
+  assert(!boards[1].online && "the missing board is reported, not waited on");
+  // In output space: 0x40 carries outputs 1-16, whichever frames those happen to be.
+  for (uint8_t out = 1; out <= 16; ++out) assert(!litOutput(out) && "the healthy board still boots dark");
+  resetPcaBoards(); i2cAtWifiMode = -1;
+  setup();
+  run(50);
+  assert(onlyLit({}) && boards[0].online && boards[1].online);
+  // Nothing is lit until a radio asks for it, and every member register really holds the
+  // dark encoding rather than merely "not the lit one".
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) {
+    uint8_t memberDark[4];
+    encodeOutput(m, false, memberDark);   // that frame's mapped output, with its polarity
+    assert(!memcmp(pcaBoards[memberBoard(m)].reg + 6 + 4 * memberChannel(m), memberDark, 4));
+  }
+  assert(onlyLit({}) && desired == 0);
   assert(epoch != 0);
   run(POOL_BEACON_MS + 100);
   auto first = beacons();
@@ -190,9 +295,9 @@ int main() {
   // ---- Pure OR arbitration: any radio holding a member lights it ----
   send(1, true, 7); send(4, true, 7); run(60);
   assert(lit(7) && onlyLit({7}));
-  send(1, false, 0); run(60);
+  send(1, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(lit(7) && "a member stays lit while another radio still holds it");
-  send(4, false, 0); run(60);
+  send(4, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // Six radios, six members, spanning the 0x40/0x41 board boundary.
@@ -204,11 +309,19 @@ int main() {
   auto withRadios = beacons(sentFrames.size() - 1);
   run(POOL_BEACON_MS + 60);
   assert(beacons().back().radioMask == 0x3F && "the beacon tells each radio the central sees it");
-  // Member 16 is board 0x40 channel 15; member 17 is board 0x41 channel 0.
-  assert(pcaBoards[0].reg[6 + 4 * 15] == 0 && pcaBoards[0].reg[7 + 4 * 15] == 0x10);
-  assert(pcaBoards[1].reg[6] == 0 && pcaBoards[1].reg[7] == 0x10);
+  // The 0x40/0x41 boundary sits between output 16 and output 17, which the wiring map sends
+  // to frames 17 and 14 respectively - not to frames 16 and 17.
+  assert(outputForMember(17) == 16 && memberBoard(17) == 0 && memberChannel(17) == 15);
+  assert(outputForMember(14) == 17 && memberBoard(14) == 1 && memberChannel(14) == 0);
+  uint8_t on40[4], on41[4];
+  encodeOutputFor(16, true, on40);
+  encodeOutputFor(17, true, on41);
+  assert(!memcmp(pcaBoards[0].reg + 6 + 4 * 15, on40, 4) && "frame 17 is the last channel of 0x40");
+  send(1, true, 14); run(60);
+  assert(!memcmp(pcaBoards[1].reg + 6, on41, 4) && "frame 14 is the first channel of 0x41");
+  send(1, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   for (uint8_t i = 0; i < POOL_RADIO_COUNT; ++i) send(uint8_t(i + 1), false, 0);
-  run(60);
+  run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // Every member reachable.
@@ -216,7 +329,7 @@ int main() {
     send(2, true, m); run(40);
     assert(onlyLit({m}));
   }
-  send(2, false, 0); run(60);
+  send(2, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
 
   // ---- Sequence filtering ----
   // A frame overtaken by a newer one must not re-assert the member it carried.
@@ -230,28 +343,95 @@ int main() {
   deliver(makeState(2, true, 5, SEQ[1]));
   run(40);
   assert(rejected == before + 1 && onlyLit({5}));
-  send(2, false, 0); run(60);
+  send(2, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
 
   // Wraparound across 65535. The sequence cannot simply be teleported forward: a jump of
   // 65505 is indistinguishable from going backwards by 31, and is correctly rejected.
+  // The radio must be currently live, or the staleness escape would let anything in.
+  send(4, true, 20); run(40);
+  assert(onlyLit({20}));
   deliver(makeState(4, true, 21, uint16_t(SEQ[3] + 40000)));
   run(40);
-  assert(!lit(21) && "a far-forward sequence jump reads as stale, not as progress");
-  // Arrive on a fresh boot near the rollover, then walk across it.
+  assert(!lit(21) && onlyLit({20}) && "a far-forward sequence jump reads as stale, not as progress");
+  // Arrive on a fresh boot near the rollover, then walk across it. The slot is only handed
+  // to a different bootId once the previous board's lease has lapsed, so let it.
   BOOT_ID[3] = 0x3004; SEQ[3] = 65533;
-  send(4, true, 9); run(40); assert(onlyLit({9}));     // seq 65534, accepted via bootId reset
+  run(POOL_LEASE_DEFAULT_MS + POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
+  send(4, true, 9); run(40); assert(onlyLit({9}));     // seq 65534, accepted after the lapse
   send(4, true, 10); run(40); assert(onlyLit({10}));   // seq 65535
   send(4, true, 11); run(40); assert(onlyLit({11}));   // seq 0 - the rollover
   send(4, true, 12); run(40); assert(onlyLit({12}));   // seq 1
-  send(4, false, 0); run(60);
+  send(4, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
 
-  // A rebooted radio restarts at seq 0 with a new bootId. Without that escape the slot's
-  // high sequence would reject the radio forever.
+  // A rebooted radio restarts at seq 0 with a new bootId. Without a bootId escape the
+  // slot's high sequence would reject the radio forever; the slot is handed over once the
+  // previous board's lease has lapsed, which a real reboot takes far longer than.
   send(5, true, 3); run(40); assert(onlyLit({3}));
   BOOT_ID[4] = 0x2005; SEQ[4] = 0;
+  run(POOL_LEASE_DEFAULT_MS + 50);            // the old board is gone and its lease lapses
   send(5, true, 8); run(40);
-  assert(onlyLit({8}) && "a rebooted radio must be accepted immediately");
-  send(5, false, 0); run(60);
+  assert(onlyLit({8}) && "a rebooted radio takes the slot back once the old lease lapsed");
+  send(5, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
+
+  // ---- Two boards configured with the SAME radio id ----
+  // Slots are keyed by the sender's address, so a shared id is no longer a conflict: both
+  // boards get their own slot and both work. Previously they landed in one slot and flipped
+  // it between them at their combined heartbeat rate, which reached the lamps as flicker
+  // with no other symptom.
+  static const uint8_t TWIN[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x99};
+  const uint32_t TWIN_BOOT = 0xDEADBEEF;
+  uint16_t twinSeq = 0;
+  send(6, true, 4); run(60);
+  assert(onlyLit({4}));
+  for (int beat = 0; beat < 6; ++beat) {
+    // The twin claims radio id 6 as well, and is idle - exactly a second slider sitting
+    // untouched. Its "nothing selected" must not speak for the board that is holding 4.
+    deliverFrom(TWIN, makeState(6, false, 0, ++twinSeq, POOL_LEASE_DEFAULT_MS, TWIN_BOOT));
+    run(POOL_IDLE_HEARTBEAT_MS / 2);
+    send(6, true, 4);                          // the real holder keeps heartbeating
+    run(POOL_IDLE_HEARTBEAT_MS / 2);
+    assert(onlyLit({4}) && "a board sharing an id must not speak for another");
+  }
+  // Two separate slots, one per address, each with its own boot identity and sequence.
+  assert(slotOf(RADIO_MAC[5]) && slotOf(TWIN) && slotOf(RADIO_MAC[5]) != slotOf(TWIN));
+  assert(slotOf(RADIO_MAC[5])->bootId == BOOT_ID[5] && slotOf(TWIN)->bootId == TWIN_BOOT);
+  assert(slotOf(RADIO_MAC[5])->radioId == 6 && slotOf(TWIN)->radioId == 6);
+  // Reported, because the labels now lie even though nothing misbehaves.
+  assert(claimedIdClashes(radios, millis()) == 2);
+  // And the twin lights its own member at the same time, independently.
+  deliverFrom(TWIN, makeState(6, true, 19, ++twinSeq, POOL_LEASE_DEFAULT_MS, TWIN_BOOT));
+  run(60);
+  assert(onlyLit({4, 19}) && "both boards drive their own member");
+  deliverFrom(TWIN, makeState(6, false, 0, ++twinSeq, POOL_LEASE_DEFAULT_MS, TWIN_BOOT));
+  send(6, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
+
+  // ---- Slot capacity ----
+  // More senders than slots: live boards are never evicted, and the newcomer is counted.
+  // Let every slot from the earlier tests fall out of its lease first, so the table really
+  // is reclaimable and this measures capacity rather than leftovers.
+  run(POOL_LEASE_DEFAULT_MS + POOL_RELEASE_HOLD_MS + 200);
+  uint32_t droppedBefore = noSlot;
+  uint8_t crowd[POOL_SLOT_COUNT + 2][6];
+  for (uint8_t i = 0; i < POOL_SLOT_COUNT + 2; ++i) {
+    memcpy(crowd[i], TWIN, 6);
+    crowd[i][3] = uint8_t(0xC0 + i);
+    deliverFrom(crowd[i], makeState(1, true, uint8_t(1 + i), 1, POOL_LEASE_DEFAULT_MS, 0x7000u + i));
+    run(30);
+  }
+  assert(noSlot > droppedBefore && "a full slot table refuses newcomers rather than evicting");
+  for (uint8_t i = 0; i < POOL_SLOT_COUNT; ++i)
+    assert(slotOf(crowd[i]) && lit(uint8_t(1 + i)) && "boards that got a slot keep it while live");
+  // Once they fall quiet the slots are reclaimed and a new board is admitted.
+  run(POOL_LEASE_MAX_MS + POOL_RELEASE_HOLD_MS + 200);
+  assert(onlyLit({}));
+  deliverFrom(crowd[POOL_SLOT_COUNT + 1], makeState(1, true, 12, 2, POOL_LEASE_DEFAULT_MS, 0x7100u));
+  run(60);
+  assert(onlyLit({12}) && slotOf(crowd[POOL_SLOT_COUNT + 1]) && "a stale slot is reclaimed");
+  deliverFrom(crowd[POOL_SLOT_COUNT + 1], makeState(1, false, 0, 3, POOL_LEASE_DEFAULT_MS, 0x7100u));
+  run(POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
 
   // A radio silent for longer than any lease returns with a low sequence and same bootId.
   send(6, true, 2); run(40); assert(onlyLit({2}));
@@ -260,47 +440,111 @@ int main() {
   SEQ[5] = 1;
   send(6, true, 4); run(40);
   assert(onlyLit({4}) && "a long-silent radio must not be locked out by its old sequence");
-  send(6, false, 0); run(60);
+  send(6, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
 
   // ---- Lease ----
   send(1, true, 6, 0); run(40);
-  assert(radios[0].leaseMs == POOL_LEASE_MIN_MS && "a zero lease is clamped up");
+  assert(slotOf(RADIO_MAC[0])->leaseMs == POOL_LEASE_MIN_MS && "a zero lease is clamped up");
   send(1, true, 6, 60000); run(40);
-  assert(radios[0].leaseMs == POOL_LEASE_MAX_MS && "an absurd lease is clamped down");
+  assert(slotOf(RADIO_MAC[0])->leaseMs == POOL_LEASE_MAX_MS && "an absurd lease is clamped down");
   send(1, true, 6); run(40);
-  assert(radios[0].leaseMs == POOL_LEASE_DEFAULT_MS);
+  assert(slotOf(RADIO_MAC[0])->leaseMs == POOL_LEASE_DEFAULT_MS);
   // One radio going silent releases only its own member.
   send(3, true, 14); run(40);
   assert(onlyLit({6, 14}));
-  hold(1, 6, POOL_LEASE_DEFAULT_MS + 100);
+  // Radio 3 goes quiet. Its member survives its lease and then the release hold before
+  // going dark, and radio 1's member is untouched throughout.
+  hold(1, 6, POOL_LEASE_DEFAULT_MS - 100);
+  assert(onlyLit({6, 14}) && "still inside radio 3's lease");
+  hold(1, 6, POOL_RELEASE_HOLD_MS + 200);
   assert(onlyLit({6}) && "radio 3 expired on its own; radio 1 kept heartbeating");
-  send(1, false, 0); run(60);
+  send(1, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
+
+  // ---- Flicker: a momentary gap in a radio's reporting must not reach the lamps ----
+  // Reproduces the reported symptom: the slider says "nothing selected" for a frame or two,
+  // roughly twice a second, while the lamp is meant to be steadily on.
+  send(2, true, 9); run(60);
+  assert(onlyLit({9}));
+  for (int blip = 0; blip < 6; ++blip) {
+    send(2, false, 0);            // a dropped sample / settling filter
+    run(80);
+    assert(onlyLit({9}) && "a brief gap must not switch the lamp off");
+    send(2, true, 9);
+    run(420);
+    assert(onlyLit({9}));
+  }
+  // A sustained release still turns the lamp off, just POOL_RELEASE_HOLD_MS later.
+  send(2, false, 0); run(POOL_RELEASE_HOLD_MS / 2);
+  assert(onlyLit({9}) && "still held inside the release window");
+  run(POOL_RELEASE_HOLD_MS);
+  assert(onlyLit({}) && "a real release still reaches the lamp");
+  // Losing several frames outright is covered too: the lease plus the hold ride it out.
+  send(3, true, 15); run(60);
+  assert(onlyLit({15}));
+  run(POOL_LEASE_DEFAULT_MS - 100);          // silence, just inside the lease
+  assert(onlyLit({15}));
+  run(200);                                   // lease has now lapsed, hold carries it
+  assert(onlyLit({15}) && "the hold covers a lapsed lease");
+  send(3, true, 15); run(60);
+  assert(onlyLit({15}) && "and the radio coming back is seamless");
+  send(3, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
+  // Moving directly between members is NOT damped - no ghost lamp trailing the slider.
+  send(4, true, 6); run(60); assert(onlyLit({6}));
+  send(4, true, 7); run(60);
+  assert(onlyLit({7}) && "a deliberate move drops the old member at once");
+
+  // Two radios on one member: one letting go leaves the other holding, with no blink.
+  send(5, true, 7); run(60);
+  assert(onlyLit({7}));
+  send(4, false, 0); run(60);
+  assert(onlyLit({7}));
+  send(5, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // ---- I2C faults ----
   // A NACKed write must not be cached as applied. The legacy controller discarded the
   // return code and updated its shadow cache anyway, so one glitch stuck a light forever.
-  uint32_t errorsBefore = i2cErrors;
-  pcaBoards[0].nackWrites = 3;
+  // Which driver a frame lives on is the wiring map's business, so derive it rather than
+  // assuming frame 10 is on 0x40 - it is not.
+  const uint8_t faultBoard = memberBoard(10);
+  uint8_t neighbour = 0;
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m)
+    if (m != 10 && memberBoard(m) == faultBoard) { neighbour = m; break; }
+  assert(neighbour && "the fault board must carry more than one frame");
+  uint32_t errorsBefore = i2cErrors, recoveriesBefore = recoveries;
+  pcaBoards[faultBoard].nackWrites = 1;
   send(1, true, 10);
   loop();  // a single pass, so the failure is observed before any retry can mask it
   assert(i2cErrors > errorsBefore);
-  assert(!lit(10) && "the write was refused, so the register really is unset");
   assert(!(known & memberBit(10)) && "a refused write must never be cached as applied");
-  pcaBoards[0].nackWrites = 0;
+  // One glitched transaction must NOT take the board down. Recovery bit-bangs the bus and
+  // rewrites ALL_LED, darkening every lamp on the board for long enough for a relay to
+  // drop out - which is precisely the flicker this must not cause.
+  assert(boards[faultBoard].online && "a single NACK must not take the board offline");
+  assert(recoveries == recoveriesBefore && "and must not trigger a bus recovery");
+  assert((known & memberBit(neighbour)) && "other frames on that board keep their verified state");
+  pcaBoards[faultBoard].nackWrites = 0;
   hold(1, 10, RECOVERY_MS + 500);
   assert(lit(10) && (verified & memberBit(10)) && "a refused write must be retried, not forgotten");
 
   // A driver that silently resets (brownout, glitch) loses MODE1 auto-increment and its
   // outputs. The audit must notice with no bus fault at all, and restore only live leases.
-  send(3, true, 20); run(60);
-  assert(lit(20));
-  send(3, false, 0); run(60);        // radio 3 releases member 20 ...
-  pcaBoards[1].powerOn();            // ... and only then does 0x41 reset
+  // Frame 10 is held throughout and lives on `faultBoard`; pick an expiring frame on the
+  // same board so the reset really does wipe both.
+  uint8_t expiring = 0;
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m)
+    if (m != 10 && m != neighbour && memberBoard(m) == faultBoard) { expiring = m; break; }
+  assert(expiring);
+  send(3, true, expiring); run(60);
+  assert(lit(expiring));
+  send(3, false, 0); run(POOL_RELEASE_HOLD_MS + 100);   // radio 3 lets go of it ...
+  pcaBoards[faultBoard].powerOn();                      // ... and only then does the driver reset
   hold(1, 10, HEALTH_MS + RECOVERY_MS + 400);
-  assert(boards[1].online && boards[1].mode1 == 0x20 && "the reset driver is reinitialised");
-  assert(!lit(20) && "an expired selection must not be restored by recovery");
-  assert(lit(10) && "a live selection survives the other board's recovery");
+  assert(boards[faultBoard].online && boards[faultBoard].mode1 == 0x20 && "the reset driver is reinitialised");
+  assert(!lit(expiring) && "an expired selection must not be restored by recovery");
+  assert(lit(10) && "a still-held selection is restored after the reset");
 
   // A held-low SDA is cleared with the NXP nine-clock sequence, open-drain only.
   int pulsesBefore = sclPulses;
@@ -314,7 +558,7 @@ int main() {
   heldLow.clear();
   hold(1, 10, RECOVERY_MS + 400);
   assert(boards[0].online && boards[1].online);
-  send(1, false, 0); run(60);
+  send(1, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // ---- Concurrency discipline ----
@@ -333,22 +577,58 @@ int main() {
   for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) { send(2, true, m); run(40); assert(onlyLit({m})); }
   assert(logDrops > dropsBefore && "log lines are dropped rather than blocking");
   serialTxSpace = 4096;
-  send(2, false, 0); run(60);
+  send(2, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // ---- Legacy receive shim ----
   // A slider missed during a rollout keeps working instead of going dark.
   run(POOL_LEASE_MAX_MS + 100);
   sendLegacy(5, true, 18); run(60);
-  assert(onlyLit({18}) && radios[4].legacy);
-  sendLegacy(5, false, 0); run(60);
+  assert(onlyLit({18}) && slotOf(RADIO_MAC[4])->legacy);
+  sendLegacy(5, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
   // But a legacy frame must never displace a radio already on the current protocol.
   send(5, true, 21); run(40);
-  assert(onlyLit({21}) && !radios[4].legacy);
+  assert(onlyLit({21}) && !slotOf(RADIO_MAC[4])->legacy);
   sendLegacy(5, true, 2); run(40);
-  assert(onlyLit({21}) && !radios[4].legacy && "a stray legacy frame cannot pre-empt a live lease");
-  send(5, false, 0); run(60);
+  assert(onlyLit({21}) && !slotOf(RADIO_MAC[4])->legacy && "a stray legacy frame cannot pre-empt a live lease");
+  send(5, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
+  assert(onlyLit({}));
+
+  // ---- Armed output test ----
+  // Needed to answer a wiring question without a slider, so it must drive the lamps
+  // exactly and then give them back on its own.
+  send(1, true, 6); run(60);
+  assert(onlyLit({6}));
+  assert(has(serial("OUT 6 OFF"), "OUT ARM") && "a test command without arming is refused");
+  assert(onlyLit({6}) && "and changes nothing");
+  serial("OUT ARM");
+  run(40);
+  assert(onlyLit({}) && "arming takes the lamps off the radios and puts them out");
+  serial("OUT 9 ON"); run(40);
+  assert(onlyLit({9}));
+  serial("OUT ALL ON"); run(60);
+  for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) assert(lit(m));
+  serial("OUT ALL OFF"); run(60);
+  assert(onlyLit({}));
+  // Bad input is refused without disturbing what is already on.
+  serial("OUT 9 ON"); run(40);
+  assert(has(serial("OUT 99 ON"), "ERR OUT") && has(serial("OUT 9 SIDEWAYS"), "ERR OUT"));
+  run(40);
+  assert(onlyLit({9}) && "a rejected command leaves the test state alone");
+  // A radio holding a member is ignored while the test is armed ...
+  hold(1, 6, POOL_HEARTBEAT_MS * 3);
+  assert(onlyLit({9}) && "an armed test is not overridden by the radios");
+  // ... and released explicitly.
+  serial("OUT DISARM"); run(60);
+  assert(onlyLit({6}) && "disarming hands the lamps straight back to the radios");
+  // The lease expires on its own, so a forgotten arm cannot hold the show.
+  serial("OUT ARM"); serial("OUT 15 ON"); run(60);
+  assert(onlyLit({15}));
+  hold(1, 6, OUTPUT_TEST_MS + 200);
+  assert(onlyLit({6}) && "the armed test times out and the radios resume");
+  assert(!testArmed() && testUntil == 0);
+  send(1, false, 0); run(POOL_RELEASE_HOLD_MS + 100);
   assert(onlyLit({}));
 
   // ---- Six radios at once, with RF loss: the reported failure ----
@@ -357,9 +637,11 @@ int main() {
   uint32_t improved = simulate(true, 15000, 20);
   printf("six-radio load, 20%% loss: worst disagreement %u ms now, %u ms with bursts+repeated release\n",
          current, improved);
-  // The current sender loses a release outright and the member stays lit for a whole
-  // lease; that is the stuck/blinking light the installation shows.
-  assert(current >= POOL_LEASE_DEFAULT_MS && "the current sender should show a lease-long stuck light");
+  // The single-shot sender still loses a release or a change outright, and the member is
+  // then wrong for far longer than the deliberate release damping can account for - i.e.
+  // genuine divergence, not the hold. (The central-side hold does absorb part of it, which
+  // is why this is well under a full lease now.)
+  assert(current > POOL_RELEASE_HOLD_MS && "the single-shot sender still diverges beyond the hold");
   // The new sender bursts changes and repeats releases, so a single loss is invisible.
   assert(improved < POOL_HEARTBEAT_MS * 2 && "bursts and repeated releases must absorb a lost frame");
   assert(improved * 3 < current);
@@ -368,6 +650,9 @@ int main() {
   assert(simulate(true, 4000, 0) < POOL_HEARTBEAT_MS * 2);
 
   puts("PASS: PoolCentral init/ALL_LED/modem-sleep, beacon, OR arbitration, seq+bootId filtering, lease "
-       "clamp/expiry, verified I2C retry, driver-reset and bus recovery, callback discipline, legacy shim, "
-       "six-radio lossy load");
+       "clamp/expiry, release-hold de-glitch, transient-I2C tolerance, verified I2C retry, "
+       "driver-reset and bus recovery, callback discipline, legacy shim, per-MAC slots (shared "
+       "ids independent, capacity and reclaim), frame->output wiring map, "
+       "leased output test, boot-dark before radio "
+       "bring-up (flaky and missing boards), six-radio lossy load");
 }
