@@ -51,8 +51,8 @@ def ensure_build(runner,emit):
     return manifest
 
 
-def snapshot(port, timeout=4):
-    text=''; calibration=None
+def snapshot(port, timeout=4, require_calibration=True):
+    text=''; calibration=None; report=None
     with serial.Serial(port,115200,timeout=.1,write_timeout=.3,exclusive=True) as conn:
         conn.write(b'HOST DISARM\n?\nCAL GET\n')
         end=time.monotonic()+timeout
@@ -64,7 +64,14 @@ def snapshot(port, timeout=4):
             if isinstance(data,dict) and data.get('device')=='PoolZoneCalibration' and data.get('type')=='calibration': calibration=data
             report=parse_report(text)
             if report and calibration is not None: return report, calibration
+    if report and not require_calibration:
+        return report, calibration
     raise RuntimeError('No PoolZone report/calibration response. Connect to a configured PoolZone first.')
+
+
+def verify_calibration(before, after):
+    if before is not None and any(after.get(k)!=before.get(k) for k in ('ticks','anchors')):
+        raise RuntimeError('Firmware booted but calibration verification failed; backup retained.')
 
 
 def check_identity(report, bootloader_mac):
@@ -151,8 +158,10 @@ def flash(port_name, emit):
     if not selected or not selected['candidate']: raise RuntimeError('Select a connected ESP32 PoolZone board.')
     with PortLock(port_name):
         emit('stage','Checking PoolZone identity and calibration…')
-        before,calibration=snapshot(port_name)
+        before,calibration=snapshot(port_name,require_calibration=False)
         check_identity(before,before['mac'])
+        if calibration is None:
+            emit('log','Legacy firmware has no calibration response. Full flash will be backed up; NVS remains unchanged and cube database updates are verified before reboot.')
         state, detail = status(before,calibration)
         emit('stage',detail)
         publication=local_database(publish=True)
@@ -229,12 +238,11 @@ def flash(port_name, emit):
         _,after=snapshot(current['port'])
         if after.get('build_id') != 'h'+manifest['source_hash']:
             raise RuntimeError('Firmware booted but build fingerprint does not match.')
-        if any(after.get(k)!=calibration.get(k) for k in ('ticks','anchors')):
-            raise RuntimeError('Firmware booted but calibration verification failed; backup retained.')
+        verify_calibration(calibration,after)
     db=Database(DEFAULT_DATABASE,recover_pending=False)
     try: ZoneStore(db).seen(report['mac'],report,source='poolzone-flash')
     finally: db.close()
     result=dict(port=current['port'],version=manifest['version'],db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
     (folder/'result.json').write_text(json.dumps(result,indent=2))
-    emit('stage','Firmware and cube database verified · calibration preserved · reconnecting…')
+    emit('stage','Firmware and cube database verified · NVS preserved · reconnecting…')
     return result

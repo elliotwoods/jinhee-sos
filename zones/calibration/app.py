@@ -256,6 +256,7 @@ class App:
         self.pending = None
         self.connect_button.configure(text='Connect')
         self.status.configure(text=reason)
+        self.flash_status.configure(text='Connect to a configured PoolZone to enable firmware updates, including legacy firmware without calibration.')
         self.draw()
 
     def send(self, command):
@@ -276,6 +277,8 @@ class App:
     def update_firmware_status(self):
         if self.flashing: return
         self.firmware_state, detail = firmware.status(self.monitor.zone,self.firmware_calibration)
+        if self.firmware_state == 'update' and not self.ready:
+            detail += ' · Calibration unavailable; legacy update supported. Existing NVS will be preserved.'
         self.flash_status.configure(text=detail if self.connection else 'Connect to detect firmware and database versions.')
         try:
             publication=firmware.local_database()
@@ -287,7 +290,7 @@ class App:
         self.draw()
 
     def start_flash(self):
-        if self.flashing or not self.ready or not self.connection: return
+        if self.flashing or self.firmware_state not in ('current','update') or not self.connection: return
         if self.database_state in ('ahead','unknown'):
             self.flash_status.configure(text='Resolve the database status below before updating.')
             return
@@ -323,7 +326,7 @@ class App:
                 self.flashing=False
                 self.flash_progress.stop()
                 if kind=='done':
-                    self.flash_status.configure(text='Already up to date; no flash needed.' if value.get('skipped') else f'Installed {value["version"]}. Calibration preserved. Backup: {value["backup"]}')
+                    self.flash_status.configure(text='Already up to date; no flash needed.' if value.get('skipped') else f'Installed {value["version"]}. Device data preserved. Backup: {value["backup"]}')
                     self.log_event('Firmware: '+str(value))
                     self.port.set(value['port'])
                     self.connect()
@@ -420,7 +423,10 @@ class App:
     def handle(self, line):
         if line.startswith(('EVT ', 'NFC:', 'FW:', 'MAC:', 'CHANNEL:', 'ZONE:', 'DB:', 'STATS:', 'POOL:', 'READY')):
             try:
-                if self.monitor.feed(line) and line=='READY': self.update_firmware_status()
+                if self.monitor.feed(line) and line=='READY':
+                    self.last_rx = time.monotonic()
+                    if not self.ready: self.status.configure(text='Connected · firmware identified · waiting for calibration')
+                    self.update_firmware_status()
             except (ValueError, KeyError): pass
         if line.startswith(('EVT ', 'EVENT ', 'PN532 ', 'ERR')): self.log_event(line)
         if line.startswith('ERR'):
@@ -485,7 +491,7 @@ class App:
         self.draw()
 
     def draw(self):
-        self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.ready and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
+        self.flash_button.configure(text='Firmware & database up to date' if self.firmware_state=='current' and self.database_state=='current' else 'Update firmware & database', state='normal' if self.connection and not self.flashing and self.firmware_state in ('current','update') and self.database_state in ('current','update') and (self.firmware_state=='update' or self.database_state=='update') else 'disabled')
         self.check_firmware_button.configure(state='normal' if self.connection and not self.flashing else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
         self.ports.configure(state='disabled' if self.flashing else 'normal')
@@ -547,7 +553,7 @@ class App:
             except (OSError,serial.SerialException) as exc: self.disconnect(str(exc))
             if self.connection and now-self.last_rx>4: self.disconnect('No calibration telemetry — check firmware / USB')
             elif self.connection and not self.ready and now-self.last_query>1:
-                self.last_query=now; self.send('CAL GET')
+                self.last_query=now; self.send('CAL GET'); self.send('?')
             if self.pending and now-self.pending[1]>2:
                 self.pending=None; self.queue.clear()
                 self.note.configure(text='Command timed out. Save is unconfirmed; reconnect to inspect device state.')

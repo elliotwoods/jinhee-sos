@@ -29,6 +29,25 @@ class FirmwareChecks(unittest.TestCase):
         self.assertEqual(firmware.database_status(report,p)[0],'current')
         self.assertEqual(firmware.database_status(dict(report,db_crc=12),p)[0],'update')
         self.assertEqual(firmware.database_status(dict(report,db_version=3),p)[0],'ahead')
+    def test_legacy_snapshot_allows_missing_calibration_only_before_update(self):
+        report=dict(firmware='pool-2.2.0',zone_type=3,mac='02:11:22:33:44:55')
+        with patch.object(firmware.serial,'Serial') as serial_open, patch.object(firmware,'parse_report',return_value=report), patch.object(firmware.time,'monotonic',side_effect=[0,0,5]):
+            serial_open.return_value.__enter__.return_value.readline.return_value=b'READY\n'
+            self.assertEqual(firmware.snapshot('fake',require_calibration=False),(report,None))
+        with patch.object(firmware.serial,'Serial') as serial_open, patch.object(firmware,'parse_report',return_value=report), patch.object(firmware.time,'monotonic',side_effect=[0,0,5]):
+            serial_open.return_value.__enter__.return_value.readline.return_value=b'READY\n'
+            with self.assertRaises(RuntimeError): firmware.snapshot('fake')
+
+    def test_legacy_snapshot_still_requires_identification(self):
+        with patch.object(firmware.serial,'Serial') as serial_open, patch.object(firmware,'parse_report',return_value=None), patch.object(firmware.time,'monotonic',side_effect=[0,0,5]):
+            serial_open.return_value.__enter__.return_value.readline.return_value=b'READY\n'
+            with self.assertRaises(RuntimeError): firmware.snapshot('fake',require_calibration=False)
+
+    def test_calibration_comparison_skipped_only_when_old_response_missing(self):
+        after=dict(ticks=[20]*23,anchors=4194305)
+        firmware.verify_calibration(None,after)
+        firmware.verify_calibration(after,after)
+        with self.assertRaises(RuntimeError): firmware.verify_calibration(dict(after,anchors=0),after)
 
     def test_cached_build_is_reused(self):
         manifest={'version':'pool-test'}

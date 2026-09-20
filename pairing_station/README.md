@@ -38,6 +38,19 @@ A radio `delivered` result alone does not confirm registration or visible LEDs. 
 
 ## Connection and recovery
 
+Current replacement station installed on 2026-09-19: ESP32-C3 MAC
+**30:ED:A0:5B:6D:D8**, running `nct-pairing-1.6-zones`. The GUI records it as
+excluded from cube operations. USB connection, radio channel 2, PN532
+initialization and a fresh PN532 firmware response were verified. NFC polling is
+active; an actual tag read on this board remains unverified. Its private
+full-flash backup and upload receipt are under
+`data/station-30EDA05B6DD8-20260919-065531/`.
+
+The earlier replacement **AC:27:6E:80:37:18** had PN532 initialization failures
+with I²C status 5, including after power cycling and bus recovery with both lines
+high. Its private backup and receipt remain under
+`data/station-AC276E803718-20260919-060325/`.
+
 The native Station menu exposes the primary controls; Escape stops the active operation. Only one operation runs at a time, and only one GUI may open a given database. Close Arduino Serial Monitor before connecting; it otherwise holds the USB port. USB port names can change after reconnecting, so use Refresh ports. Stop before disconnecting; the GUI also sends Stop on disconnect/close. Serial connection uses Espressif’s no-reset DTR/RTS sequence so reconnecting does not reset the ESP32 mid-I²C transaction. If the app stops responding, the station attempts to restore the selected cube after five seconds without a heartbeat. A station power loss cannot send that cleanup packet; reconnect and use Flash selected, then Stop.
 
 Startup first checks SDA/SCL with pull-ups and attempts the standard nine-clock I²C bus clear if SDA is held low while SCL is high. It reports the before/after line levels as `nfc_bus`. If a line remains low it leaves NFC disabled, allowing radio operations to continue. The startup log includes `nfc_i2c_status`: 0 is an I²C acknowledgment, 2 is an address NACK, and 5 is a bus timeout. If the NFC reader is unavailable, bulk registration and light controls can still be used. Check the PN532 wiring, I2C mode, power, and reboot the station before interactive pairing. Discovery finds compatible protocol responders, not arbitrary nearby ESP32s. Multiple rounds reduce missed replies; devices must be powered, in range, and on channel 2.

@@ -5,9 +5,13 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 from app import App
+import firmware
 
 class InterfaceTests(unittest.TestCase):
     def setUp(self):
+        publication=patch.object(firmware,'local_database',return_value=firmware.zonedb.Publication(1,[]))
+        publication.start()
+        self.addCleanup(publication.stop)
         self.root=tk.Tk(); self.root.withdraw()
         self.app=App(self.root)
         self.sent=[]
@@ -37,9 +41,18 @@ class InterfaceTests(unittest.TestCase):
 
     def test_firmware_status_and_unsaved_draft_guard(self):
         self.app.monitor.zone=dict(firmware='pool-old',zone_type=3)
+        self.app.ready=False
+        self.app.connection=object()
         self.app.update_firmware_status()
         self.assertEqual(self.app.firmware_state,'update')
         self.assertIn('Update available',self.app.flash_status.cget('text'))
+        self.assertIn('legacy update supported',self.app.flash_status.cget('text'))
+        self.assertEqual(str(self.app.flash_button['state']),'normal')
+        self.app.database_state='ahead'
+        self.app.draw()
+        self.assertEqual(str(self.app.flash_button['state']),'disabled')
+        self.app.database_state='update'
+        self.app.ready=True
         self.app.connection=object()
         self.app.dirty=True
         try:
@@ -47,6 +60,27 @@ class InterfaceTests(unittest.TestCase):
             self.assertFalse(self.app.flashing)
             self.assertIn('draft',self.app.flash_status.cget('text'))
         finally: self.app.connection=None
+
+    def test_legacy_report_keeps_connection_alive_without_enabling_calibration(self):
+        self.app.ready=False
+        self.app.connection=object()
+        self.app.last_rx=0
+        try:
+            with patch.object(self.app.monitor,'feed',return_value=True):
+                self.app.monitor.zone=dict(firmware='pool-2.2.0',zone_type=3)
+                self.app.handle('READY')
+            self.assertGreater(self.app.last_rx,0)
+            self.assertEqual(str(self.app.flash_button['state']),'normal')
+            self.assertEqual(str(self.app.apply_button['state']),'disabled')
+            self.assertFalse(self.app.ready)
+        finally: self.app.connection=None
+
+    def test_disconnect_clears_stale_firmware_offer(self):
+        self.app.flash_status.configure(text='Update available · installed pool-old')
+        self.app.firmware_state='update'
+        self.app.disconnect('No calibration telemetry')
+        self.assertEqual(self.app.firmware_state,'unknown')
+        self.assertIn('Connect to a configured PoolZone',self.app.flash_status.cget('text'))
 
     def test_stale_snapshot_and_disarm(self):
         self.feed(override=True,tag=False,output=12)
