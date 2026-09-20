@@ -258,13 +258,17 @@ def flash(port_name, emit, database_only=False):
             raise RuntimeError('Flash verified, but boot/identity verification failed. See '+str(folder/'upload.log'))
         current=next((p for p in ports() if p['key']==selected['key']),None)
         if not current: raise RuntimeError('Firmware written but USB port did not return.')
-        _,after=snapshot(current['port'])
+        # A database-only update leaves the original firmware running, so a legacy board
+        # still will not answer CAL GET afterwards; only require what we expect to get.
+        _,after=snapshot(current['port'],require_calibration=True if not database_only else calibration is not None)
         if not database_only and after.get('build_id') != 'h'+manifest['source_hash']:
             raise RuntimeError('Firmware booted but build fingerprint does not match.')
         # A legacy board has no calibration to compare; verify_calibration tolerates None.
         verify_calibration(calibration,after)
     record_zone_status(report,source='poolzone-database' if database_only else 'poolzone-flash')
-    result=dict(port=current['port'],version=manifest['version'],db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
+    # A database-only update does not change the application; report what is running.
+    result=dict(port=current['port'],version=before['firmware'] if database_only else manifest['version'],
+                db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
     (folder/'result.json').write_text(json.dumps(result,indent=2))
     emit('stage',('Cube database verified · firmware and calibration untouched · reconnecting…'
                   if database_only else

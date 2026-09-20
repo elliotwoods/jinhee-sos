@@ -48,8 +48,9 @@ def main():
     for name, sketch, output, board, libraries in [
         ('Pairing station', 'pairing_station/firmware/pairing_station', 'pairing_station/build', C3,
          ('pairing_station/.arduino/libraries', 'zones/firmware/libraries')),
-        ('Pool radio test', 'poolzone_test/firmware/PoolRadioTest', 'poolzone_test/build', SUPERMINI, ()),
-        ('Pool central test', 'poolzone_test/firmware/PoolCentralTest', 'poolzone_test/build/central', C3, ()),
+        ('Pool radio test', 'poolzone_test/firmware/PoolRadioTest', 'poolzone_test/build', SUPERMINI,
+         ('zones/firmware/libraries',)),
+        ('Pool central', 'zones/firmware/PoolCentral', 'zones/build/PoolCentral', C3, ('zones/firmware/libraries',)),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
         ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:

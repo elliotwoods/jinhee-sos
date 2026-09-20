@@ -150,6 +150,39 @@ class InterfaceTests(unittest.TestCase):
         finally:
             self.app.connection=None
 
+    def test_legacy_board_can_still_update_its_database(self):
+        # A legacy board never answers CAL GET, so `ready` stays False; the cube
+        # database update must not be gated on calibration readiness.
+        self.app.connection=object()
+        try:
+            self.app.ready=False
+            self.app.firmware_state='update'
+            self.app.database_state='update'
+            self.app.draw()
+            self.assertEqual(str(self.app.database_button['state']),'normal')
+            started=[]
+            self.app.start_flash=lambda database_only=False: started.append(database_only)
+            self.app.start_database()
+            self.assertEqual(started,[True])
+        finally: self.app.connection=None
+
+    def test_firmware_without_tune_support_is_reported_once(self):
+        # Firmware before pool-2.8.0 answers CAL GET but has no TUNE command.
+        self.app.connection=object()
+        try:
+            self.app.ready=True
+            sent=[]
+            self.app.send=lambda cmd: sent.append(cmd) or True
+            for _ in range(8):
+                self.app.last_query=0
+                self.app.poll_tune_probe()
+            self.assertLessEqual(sent.count('TUNE GET'),3)
+            self.assertIs(self.app.tune_supported,False)
+            self.assertIn('not supported',self.app.tune_state.cget('text'))
+            self.app.draw()
+            self.assertEqual(str(self.app.record_button['state']),'disabled')
+        finally: self.app.connection=None
+
     def test_output_stability_counts_index_changes(self):
         now=time.monotonic()
         for i,index in enumerate([12,-1,12,-1,12]):

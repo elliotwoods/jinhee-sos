@@ -94,12 +94,11 @@ void logLine(const char *format, ...) {
   if (count < 0) return;
   size_t length = min(size_t(count), sizeof(line) - 2);
   line[length++] = '\n';
-  // Deliberately not gated on `if (Serial)`. The USB CDC connected flag can latch
-  // false after a host toggles DTR/RTS, and a board that is happily running the
-  // radio while reporting nothing over USB is the worst possible state for a
-  // diagnostic tool. The capacity check plus setTxTimeoutMs(0) already guarantee
-  // this never blocks, so write regardless and count what does not fit.
-  if (Serial.availableForWrite() >= int(length)) {
+  // The `if (Serial)` guard is load-bearing, not defensive noise: writing to the
+  // USB CDC before a host has opened the port wedges the peripheral, and the
+  // board then stays silent for good while the radio carries on happily. Dropping
+  // this check was tried and reproducibly killed serial output on both boards.
+  if (Serial && Serial.availableForWrite() >= int(length)) {
     Serial.write((uint8_t *)line, length);
   } else {
     ++logDrops;

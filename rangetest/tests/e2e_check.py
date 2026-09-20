@@ -15,6 +15,9 @@ from pathlib import Path
 
 import serial
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from serial_open import open_serial  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 LOG = ROOT / 'build' / 'e2e-latest.log'
 
@@ -26,7 +29,7 @@ class Board:
     def __init__(self, port, tag, log):
         self.tag = tag
         self.log = log
-        self.serial = serial.Serial(port, 115200, timeout=0, exclusive=True)
+        self.serial = open_serial(port, write_timeout=1)
         self.buffer = b''
         self.lines = []
         time.sleep(0.4)

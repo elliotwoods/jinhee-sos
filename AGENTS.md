@@ -17,9 +17,10 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Cube USB flasher | `flashing_station/app.py` | Identity checks, builds/uploads, NVS preservation, flash receipts |
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone}/` | NFC-driven show zones; PoolZone also has slider calibration |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
+| Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
 | Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
-| Pool light diagnostics | `poolzone_test/` | Radio test bridge, central-controller test firmware, light-test GUI |
+| Pool light diagnostics | `poolzone_test/` | USB bridge emulating all six pool radios on the current protocol, light-test GUI. The central test firmware moved to `zones/firmware/PoolCentral/` |
 | ESP-NOW range test | `rangetest/` | Dual-role TX/RX link survey firmware, RSSI capture, survey GUI |
 | Original registration utility | `registration_console/` | Screenless replay of original mappings; not the modern GUI station |
 | Historical references | `live files/`, root `ForKimchi.ino`, `m5core2_controlloer.ino` | Existing installation behavior and protocol compatibility |
@@ -113,10 +114,19 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
 
 - Modern cubes, pairing station, and zones use ESP-NOW channel **2**. Check legacy
   sources individually; archived settings may differ.
-- Cube protocol uses the legacy **24-byte** C struct ABI. Its alignment/padding and
-  field offsets are intentional. Never replace it with a packed struct without
-  explicitly migrating both ends. Zone/database and pool-radio packets have their
-  own layouts; they are not interchangeable.
+- Three protocols share channel 2 and are **not** interchangeable: the cube `Packet`
+  (legacy **24-byte** C struct ABI, alignment/padding and field offsets intentional,
+  never to be packed without migrating both ends), zone management
+  (`NctZoneProtocol.h`) and the pool light link (`NctPoolProtocol.h`). The preshow
+  media bridge additionally claims every 2-byte frame.
+- Pool frames carry the `NZ` header but are deliberately **absent** from
+  `NctZoneProtocol.h::frameType()`: `ZoneLink::receive()` queues everything that
+  function accepts and `ZoneLink::handle()` drops what it does not know, so routing
+  them there would swallow them. They reach the sketch through `TagPlate::onFrame`,
+  which runs on the Wi-Fi task and may only hand the frame over.
+- The pool radios and the pool central are a **matched set**; reflash them together.
+  The central still accepts the legacy 15-byte packet so a partial rollout does not go
+  dark, but that shim is insurance, not a supported configuration.
 - Pairing station: ESP32-C3, PN532 I²C **SDA=4, SCL=3**; installed red PN532 board is
   powered from station **5V/GND**. Station and reader power-cycle together.
 - Known original station MAC: **3C:0F:02:AD:83:24**. Keep flasher protections and

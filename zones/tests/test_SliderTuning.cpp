@@ -116,6 +116,19 @@ int main() {
   laserStatus=4; std::string bad = serial("HOST STATUS", 120);
   assert(has(bad, "\"mm\":null") && has(bad, "\"f\":null"));  // honest about a bad read
   laserStatus=0;
+  // A host that stops draining the USB CDC port must not stall the sample loop: the
+  // same failure that froze the Wi-Fi task in the live pool central.
+  serial("RAW ON");
+  int before = serialWrites;
+  serialTxSpace = 0;
+  laserDistance = 213; run(300);
+  assert(rawDropped > 0);                 // lines were dropped, not blocked on
+  assert(serialWrites - before < 40);     // and the loop kept running
+  serialTxSpace = 4096;
+  run(200); assert(rawStream);
+  // A disconnected port stops the stream outright rather than retrying every sample.
+  serialConnected = false; run(100); assert(!rawStream);
+  serialConnected = true;
   assert(has(serial("RAW OFF"), "OK RAW OFF") && !rawStream);
   assert(has(serial("RAW MAYBE"), "ERR RAW"));
   setup(); assert(!rawStream);

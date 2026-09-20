@@ -260,7 +260,7 @@ class App:
                     except ValueError:
                         if line.startswith(('I2C ERROR', 'I2C MODE', 'I2C READY', 'RADIO TIMEOUT')): self.record(line)
                         continue
-                    if isinstance(data, dict) and data.get('device')=='PoolCentralTest':
+                    if isinstance(data, dict) and data.get('device')=='PoolCentral':
                         self.central_status=data
                         self.last_central=now
             except (serial.SerialException, OSError) as exc:

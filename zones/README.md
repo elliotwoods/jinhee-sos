@@ -22,13 +22,42 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
 | Preshow exit / safety plate | `TagPlateZone` | `preshow_enter`, `Tag_Plate` | cube → PRESHOW |
 | Mainshow entrance plate | `TagPlateZone` | `mainshow_enter`, `Mainshow_Tagplate` | cube → MAINSHOW |
 | Desert plate | `DesertZone` | `desert_zone_tagplate(_OTA)` | light panel MOSFET on GPIO1; cube → DESERT; `MSG_TAG_STATE` 1/0 |
-| Pool radio | `PoolZone` | `laser_sensor` | VL53L4CD slider → member 1-23, LED strip on GPIO5, `RadioPacket` + 150 ms heartbeat to the pool central controller; cube → POOL |
+| Pool radio | `PoolZone` | `laser_sensor` | VL53L4CD slider → member 1-23, LED strip on GPIO5, `PoolState` unicast to the pool central controller with a 150 ms heartbeat; cube → POOL |
 
 - **No router dependency.** No zone joins the Wi-Fi router any more; the channel is fixed at 2.
 - **Desert OTA is gone.** The cube table now updates over ESP-NOW, so OTA is no longer needed.
 - **Pool calibration and diagnostics.** PoolZone restores NeoCube-gated pool light output and provides an explicitly armed, watchdog-protected Python override. Use [`calibration/Launch.command`](calibration/README.md) for live hardware tracking, control-point interpolation across 23 ticks, ±33% acceptance windows and persistent flash calibration.
 - **Legacy Pool radio settings.** The radio ID (1-6) is the zone point. The slider calibration (mm at member 1 and member 23) is entered in the flasher and stored in flash. Serial `dist` streams the measured distance so you can read the two values off.
-- **Pool central controller must be reflashed.** `PoolZone_Central_Controiler` is now on channel 2 (one-line change) and needs reflashing, the same as the SerialDAT bridge.
+- **Pool central controller is maintained here.** It lives at [`firmware/PoolCentral`](firmware/PoolCentral/README.md),
+  replacing the archived `live files/PoolZone_Central_Controiler`. It is **not** a zone board and **not** a zone-flasher
+  target: no PN532, no `zcfg`/`zdb` partitions, and a different board profile (`esp32:esp32:esp32c3`, not the SuperMini).
+  Build it with `scripts/build_all_firmware.py` or the `arduino-cli` commands in its README.
+- **The radios and the central are a matched set.** They must be reflashed together. Flash the central first: it still
+  accepts the old 15-byte packet, so the existing sliders keep working while they are updated one at a time.
+
+### Pool link protocol
+
+Defined once in [`libraries/NctZone/src/NctPoolProtocol.h`](firmware/libraries/NctZone/src/NctPoolProtocol.h).
+
+```
+PoolZone x6 ──PoolState (unicast, ESP-NOW ACK + retries)──▶ PoolCentral ──I2C──▶ 2x PCA9685
+        ◀──────────── PoolBeacon (broadcast, 500 ms) ──────────┘
+```
+
+The central broadcasts a beacon, because it cannot know a radio's MAC until it has heard from it. Each radio latches
+that address as a pinned peer and unicasts its state back, which is what provides acknowledgement and retries; plain
+broadcast had neither, and losing frames under six-slider load is what made the lights unstable. Each radio also keeps
+one broadcast copy going every 450 ms, free because the central de-duplicates on sequence, which rescues a radio that
+latched a stale address.
+
+A member frame is lit while **any** radio holds it. Each `PoolState` carries a lease (clamped 600-2000 ms, default 800),
+a per-boot identity and a sequence number, so a late frame cannot re-assert an old member and a rebooted radio is still
+accepted at once. Changes are sent as a short burst and releases are repeated for a second, because a lost release
+leaves a light stuck on for a whole lease. Idle radios keep heartbeating, so `RADIO TIMEOUT` at the central now means a
+real fault, and the beacon's `radioMask` lets each radio report `central_sees_me` on its own USB console.
+
+Pool frames share the `NZ` header but are deliberately **not** routed by `NctZoneProtocol.h::frameType()`; they reach
+the sketch through `TagPlate::onFrame`. See the comment at the top of `NctPoolProtocol.h` for why.
 
 ## Flash zones (zones/flasher/Launch.command)
 
@@ -106,8 +135,9 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 
 | Path | Contents |
 |---|---|
-| `firmware/libraries/NctZone/` | Shared Arduino library: `NctTagPlate.h` (tag-plate application core), `NctCubeProtocol.h` (cube Packet), `NctZoneProtocol.h` (zone wire format), `NctZoneDb` (slots/config/params), `NctZoneLink` (ESP-NOW updates, status, log, peers), `NctZonePartition.h` |
+| `firmware/libraries/NctZone/` | Shared Arduino library: `NctTagPlate.h` (tag-plate application core), `NctCubeProtocol.h` (cube Packet), `NctZoneProtocol.h` (zone wire format), `NctPoolProtocol.h` (pool wire format), `NctZoneDb` (slots/config/params), `NctZoneLink` (ESP-NOW updates, status, log, peers), `NctZonePartition.h` |
 | `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone` sketches, each with the same `partitions.csv` |
+| `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `tools/zonedb.py` | Python definition of every image/frame (used by the pairing app, flasher and tests) |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
 | `tests/` | Host-compiled firmware tests and Python tests |

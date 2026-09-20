@@ -14,6 +14,12 @@ import zonedb  # noqa: E402
 
 LIBRARY = ROOT / 'firmware/libraries/NctZone/src'
 SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone']
+# Sketches that are not zone boards (no zcfg/zdb partitions, not a zone-flasher target)
+# but are still compiled for the host against the same stubs.
+EXTRA_SKETCHES = ['PoolCentral']
+# Packet definitions a sketch may never re-declare: the pool packet used to be copied into
+# five sketches with nothing cross-checking them.
+PRIVATE_STRUCTS = ['Packet', 'PoolState', 'PoolBeacon', 'RadioPacket']
 SHIMS = ['Arduino.h', 'WiFi.h', 'esp_now.h', 'esp_wifi.h', 'Wire.h', 'Adafruit_PN532.h', 'esp_partition.h', 'VL53L4CD.h', 'Preferences.h',
          'freertos/FreeRTOS.h', 'freertos/queue.h']
 
@@ -67,8 +73,15 @@ def fixtures():
 def main():
     cube = packet_text((WORKSPACE / 'ForKimchi.ino').read_text())
     assert packet_text((LIBRARY / 'NctCubeProtocol.h').read_text()) == cube, 'NctCubeProtocol.h Packet differs from ForKimchi.ino'
-    for name in SKETCHES:  # sketches must use the shared definition, not a private copy
-        assert 'struct Packet' not in (ROOT / 'firmware' / name / f'{name}.ino').read_text(), name
+    # Sketches must use the shared definitions, never a private copy. The pool packet was
+    # duplicated across five sketches with nothing cross-checking them; that is what let the
+    # live central and the radios drift apart. Match through any attribute, so that a
+    # `struct __attribute__((packed)) RadioPacket` cannot slip past a plain substring test.
+    for name in SKETCHES + EXTRA_SKETCHES:
+        source = (ROOT / 'firmware' / name / f'{name}.ino').read_text()
+        for private in PRIVATE_STRUCTS:
+            assert not re.search(rf'struct\s+(?:__attribute__\s*\(\(.*?\)\)\s+)?{private}\b', source), \
+                f'{name} declares its own {private}; include the shared header instead'
     sources = [str(p) for p in sorted(LIBRARY.glob('*.cpp'))]
     with tempfile.TemporaryDirectory(prefix='zone-fw-tests-') as directory:
         directory = pathlib.Path(directory)
@@ -79,7 +92,9 @@ def main():
         (directory / 'fixtures.h').write_text(fixtures())
         flags = ['c++', '-std=c++17', '-Wall', '-Wno-unused-function', '-g', '-fsanitize=address,undefined',
                  '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY)]
-        for test in ['test_library.cpp', 'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] + [f'test_{name}.cpp' for name in SKETCHES]:
+        tests = (['test_library.cpp', 'test_PoolProtocol.cpp', 'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] +
+                 [f'test_{name}.cpp' for name in SKETCHES + EXTRA_SKETCHES])
+        for test in tests:
             binary = directory / test.replace('.cpp', '')
             subprocess.run(flags + [str(ROOT / 'tests' / test)] + sources + ['-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True)

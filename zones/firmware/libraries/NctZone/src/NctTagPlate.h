@@ -36,6 +36,10 @@ class TagPlate {
   void (*onTagLeave)(const uint8_t *uid, uint8_t length, const Record *cube) = nullptr;
   bool (*onSerial)(const char *line) = nullptr;
   void (*onReport)() = nullptr;  // extra lines for the "?" report, printed before READY
+  // Frames the zone-management protocol does not claim, for sketches that speak a second
+  // protocol on the same radio (the pool link). RUNS ON THE WI-FI TASK: hand the frame
+  // over and return. No Serial, no I2C, no peer changes, nothing that can block.
+  void (*onFrame)(const uint8_t *src, const uint8_t *data, int len) = nullptr;
 
   ZoneDb db;
   ZoneLink link;
@@ -125,6 +129,15 @@ class TagPlate {
     return ok;
   }
 
+  // Send a frame without per-frame delivery tracking. For a high-rate link such as the
+  // pool state stream, which would otherwise churn the four `pending_` slots and
+  // misattribute a cube's acknowledgement, and would print a line for every lost frame.
+  // The ESP-NOW MAC-layer acknowledgement and retries still apply to a unicast.
+  bool sendUntracked(const uint8_t *mac, const uint8_t *data, size_t length, bool pinned) {
+    if (!radioOk || !link.ensurePeer(mac, pinned)) return false;
+    return esp_now_send(mac, data, length) == ESP_OK;
+  }
+
   // Send any frame (media bridge, pool central controller). Pinned peers are never evicted.
   bool sendFrame(const uint8_t *mac, const uint8_t *data, size_t length, bool pinned, uint32_t handle = 0,
                  uint32_t cubeID = 0, uint8_t type = 0, uint8_t value = 0) {
@@ -162,7 +175,10 @@ class TagPlate {
   static TagPlate *&instance() { static TagPlate *plate = nullptr; return plate; }
 
   static void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-    if (instance()) instance()->link.receive(info->src_addr, info->des_addr, data, len);
+    TagPlate *self = instance();
+    if (!self) return;
+    if (self->link.receive(info->src_addr, info->des_addr, data, len)) return;
+    if (self->onFrame) self->onFrame(info->src_addr, data, len);
   }
   static void sentCallback(const esp_now_send_info_t *info, esp_now_send_status_t status) {
     TagPlate *self = instance();

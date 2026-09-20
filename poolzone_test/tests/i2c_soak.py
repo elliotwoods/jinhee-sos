@@ -36,7 +36,7 @@ class Rig:
                     except ValueError:
                         if name=='RX': self.events.append(line)
                         continue
-                    if name=='RX' and data.get('device')=='PoolCentralTest': self.status=data
+                    if name=='RX' and data.get('device')=='PoolCentral': self.status=data
                     elif name=='TX' and data.get('device')=='PoolRadioTest': self.sender=data
             time.sleep(.005)
     def wait(self, predicate, timeout=4):
@@ -47,7 +47,7 @@ class Rig:
         raise AssertionError(f'Timed out; receiver state: {self.status}')
     def current(self):
         self.status={}; self.rx.write(b'STATUS\n')
-        return self.wait(lambda s:s.get('version')==2)
+        return self.wait(lambda s:s.get('version')==3)
     def check(self,members,timeout=3):
         mask=sum(1<<(m-1) for m in set(members) if m)
         self.status={}

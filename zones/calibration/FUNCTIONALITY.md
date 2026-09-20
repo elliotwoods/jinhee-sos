@@ -9,7 +9,7 @@ Baseline: `live files/laser_sensor/laser_sensor.ino` (v1.2.0, the NFC-enabled ra
 | NeoCube/NFC activation | Restored; no tag means no light command unless Python override is explicitly armed. |
 | NFC timing | Same 30 ms polling interval, 80 ms read timeout, 700 ms tag-removal grace. |
 | GPIO5 strip | ON while activated, OFF after deactivation; independent of whether an index is selected, as before. |
-| Slider filter / settling | One Euro adaptive smoothing now replaces the two-sample average; same 20 ms polling interval and 50 ms position settling; valid distances 10–1000 mm. |
+| Slider filter / settling | Median + One Euro adaptive smoothing replaces the two-sample average; same 20 ms sensor budget and 50 ms position settling by default; valid distances 10–1000 mm. All filter and decision parameters are now tunable and stored in flash. |
 | Central packets | Same packed 15-byte packet, magic `0x4E435450`, radio ID 1–6, active/member/UID fields. Immediate state-change packets and 150 ms active heartbeat. |
 | Central fail-safe | Existing receiver retains its 800 ms radio timeout; no receiver changes needed for this packet format. |
 | Cube command | Registered UID → database lookup → unicast `MSG_SET_ZONE=6`, `success=ZONE_POOL=3`, compatible 24-byte cube Packet. |
@@ -20,9 +20,11 @@ Baseline: `live files/laser_sensor/laser_sensor.ino` (v1.2.0, the NFC-enabled ra
 
 ## Intentional differences / additions
 
-- One Euro filtering is shared by display, index/light selection and captured control points. Raw distance is diagnostic only; min cutoff 0.8 Hz, beta 0.03 per mm/s, derivative cutoff 1 Hz.
-- Piecewise control-point calibration in flash replaces two hard-coded endpoints. ±33% windows have unselected gaps; invalid/stale readings release the central member instead of retaining the old selection.
-- Non-blocking laser reads with a 20 ms sensor budget, 100 ms initialization timeout (legacy used 250 ms), and a 400 ms freshness limit. Scheduling remains cooperative: NFC calls can extend the time between reads/heartbeats, as in the original design.
+- Median + One Euro filtering is shared by display, index/light selection and captured control points. Raw distance is diagnostic only. Defaults keep the previous filter (min cutoff 0.8 Hz, beta 0.03 per mm/s, derivative cutoff 1 Hz) with a 3-sample median added; every value is tunable at runtime and persisted in the `tune-v1` NVS blob.
+- Piecewise control-point calibration in flash replaces two hard-coded endpoints. Acceptance windows have unselected gaps between them.
+- **Selection is now debounced in both directions.** `pool-2.7.0` released a member on a single disagreeing sample and on a single invalid sensor reading, while entry required 50 ms of stability; that asymmetry is what made the output relays flicker. A selected member now keeps a wider window than it needed to enter (`exit` 0.45 vs `enter` 0.33), requires `release` ms (120) of sustained disagreement to leave, and survives `dropout` ms (400) of invalid readings. A held member is always releasable: its window never reaches the neighbouring tick's centre.
+- A guided recording procedure measures each tick and the sensor noise in one pass, then proposes filter and hysteresis values, replaying the recording through a mirror of the firmware pipeline to predict flicker and settling latency for the current and proposed settings. It optimises flicker subject to a settling budget rather than minimising noise, and reports when no setting satisfies both.
+- Non-blocking laser reads with a tunable sensor budget (default 20 ms), polled at half the sensor period to avoid aliasing the sample interval, 100 ms initialization timeout (legacy used 250 ms), and a freshness limit derived from `dropout`. A saved sensor timing the part rejects falls back to the defaults rather than leaving the slider dead at every boot. Scheduling remains cooperative: NFC calls can extend the time between reads/heartbeats, as in the original design.
 - Python override: explicit ARM, 350 ms keepalive, 1500 ms device watchdog, explicit disarm on disconnect. A real tag remains authoritative after disarming. Restart/reconnect never auto-arms.
 - Central member output pauses during a calibration upload until SAVE or LOAD succeeds. This avoids transmitting partially applied tick data.
 - Channel **2**, matching current NeoCube/zone firmware and the repository's central controller. The archived laser/radio sketches used channel 6. Any receiver/cube still running channel-6 firmware must be updated to the current channel-2 build.

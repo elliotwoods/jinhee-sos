@@ -80,6 +80,8 @@ class App:
         # unbounded: `samples` above is a short window for control-point capture.
         self.tuning = None
         self.tuning_defaults = None
+        self.tune_supported = None
+        self.tune_attempts = 0
         self.tuning_saved = False
         self.tuning_dirty = False
         self.tuning_vars = {}
@@ -322,6 +324,28 @@ class App:
         held = now - self.index_changes[-1][0]
         return f'Output stability · {changes} index changes in the last 10 s · steady for {held:.1f} s'
 
+    def poll_tune_probe(self):
+        """Ask for tuning a bounded number of times.
+
+        Firmware before pool-2.8.0 answers CAL GET but has no TUNE command, so an
+        unbounded retry would send a command every second for the whole session.
+        """
+        if self.tuning is not None or self.tune_supported is not None: return
+        self.tune_attempts += 1
+        if self.tune_attempts > 3: self.set_tuning_unsupported()
+        else: self.send('TUNE GET')
+
+    def set_tuning_unsupported(self):
+        """This firmware predates the TUNE commands; say so instead of failing quietly."""
+        self.tune_supported = False
+        self.tuning = None
+        self.tune_state.configure(text='Device tuning · not supported by this firmware', fg=GOLD)
+        self.tune_note.configure(
+            text='This board runs firmware without tuning support. Update it to pool-2.8.0 or '
+                 'newer on the Firmware tab to enable guided recording and filter tuning.')
+        self.record_prompt.configure(text='Tuning requires pool-2.8.0 or newer on the board.', fg=GOLD)
+        self.draw()
+
     def absorb_tuning(self, data):
         values = {}
         for key, name in rec.JSON_KEYS.items():
@@ -329,6 +353,7 @@ class App:
             if type(value) in (int, float) and math.isfinite(value):
                 values[key] = int(value) if rec.FIELDS[key][1] else float(value)
         if len(values) != len(rec.JSON_KEYS): return
+        self.tune_supported = True
         self.tuning = values
         self.tuning_saved = bool(data.get('saved'))
         defaults = data.get('defaults')
@@ -408,6 +433,9 @@ class App:
     def start_recording(self):
         if not self.ready:
             messagebox.showerror('Recording', 'Connect to a PoolZone first.'); return
+        if self.tune_supported is False:
+            messagebox.showerror('Recording', 'This firmware has no tuning support. '
+                                 'Update the board to pool-2.8.0 or newer first.'); return
         if self.dirty and not messagebox.askyesno('Recording', 'An unsaved calibration draft will be replaced by the recording. Continue?'):
             return
         try:
@@ -575,6 +603,8 @@ class App:
         self.firmware_calibration = None
         self.firmware_state = self.database_state = 'unknown'
         self.tuning = None
+        self.tune_supported = None
+        self.tune_attempts = 0
         self.index_changes.clear()
         if self.record_state is not None: self.stop_recording('Disconnected during recording.')
         if not self.flashing: self.flash_status.configure(text='Connect to a configured PoolZone to enable firmware updates, including legacy firmware without calibration.')
@@ -640,8 +670,15 @@ class App:
         self.draw()
 
     def start_database(self):
-        """Update only the board's cube database, leaving a current application alone."""
-        if self.flashing or not self.ready or not self.connection: return
+        """Update only the board's cube database, leaving a current application alone.
+
+        Deliberately does not require calibration readiness: a legacy board never
+        answers CAL GET, and its cube database is exactly what needs updating.
+        """
+        if self.flashing or not self.connection: return
+        if self.firmware_state not in ('current','update'):
+            self.flash_status.configure(text='Identify the board firmware before updating the database.')
+            return
         if self.database_state == 'ahead':
             self.flash_status.configure(text='The board database is newer than the local master; resolve that first.')
             return
@@ -882,10 +919,12 @@ class App:
         self.database_check_button.configure(state='normal' if idle else 'disabled')
         self.database_button.configure(
             text='Cube database up to date' if self.database_state=='current' else 'Update cube database',
-            state='normal' if idle and self.ready and self.database_state=='update' else 'disabled')
+            state='normal' if idle and self.database_state=='update'
+                              and self.firmware_state in ('current','update') else 'disabled')
         self.registry_button.configure(state='normal' if idle and self.monitor.zone else 'disabled')
         recording_now = self.record_state is not None
-        self.record_button.configure(state='disabled' if recording_now or not self.ready or self.flashing else 'normal')
+        can_tune = self.ready and self.tune_supported is not False
+        self.record_button.configure(state='disabled' if recording_now or not can_tune or self.flashing else 'normal')
         self.record_abort.configure(state='normal' if recording_now else 'disabled')
         self.connect_button.configure(state='disabled' if self.flashing else 'normal')
         if self.record_state is not None and not self.connection: self.stop_recording('Disconnected during recording.')
@@ -959,8 +998,10 @@ class App:
             if self.connection and now-self.last_rx>4: self.disconnect('No calibration telemetry — check firmware / USB')
             elif self.connection and not self.ready and now-self.last_query>1:
                 self.last_query=now; self.send('CAL GET'); self.send('?')
-            elif self.connection and self.ready and self.tuning is None and now-self.last_query>1:
-                self.last_query=now; self.send('TUNE GET')
+            elif (self.connection and self.ready and self.tuning is None
+                  and self.tune_supported is None and now-self.last_query>1):
+                self.last_query=now
+                self.poll_tune_probe()
             if self.pending and now-self.pending[1]>2:
                 self.pending=None; self.queue.clear()
                 self.note.configure(text='Command timed out. Save is unconfirmed; reconnect to inspect device state.')

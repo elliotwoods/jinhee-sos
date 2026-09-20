@@ -78,9 +78,20 @@ pairing_station/.venv/bin/python flashing_station/tests/gui_smoke.py
 
 GUI tests require a desktop session and use simulated devices.
 
-## Poolzone central light test
+## Pool central controller
 
-[Poolzone test console](poolzone_test/README.md) provides a USB ESP32-C3 bridge and Python GUI for the legacy central controller on ESP-NOW channel 2. Run `./poolzone_test/Launch.command` for member toggles, sequential testing, and All Off.
+[Pool central](zones/firmware/PoolCentral/README.md) is the ESP32-C3 that listens to the six PoolZone slider radios and
+drives the 23 member frame lights through two PCA9685 boards. A frame is lit while **any** radio holds that member. It
+replaces the archived `live files/PoolZone_Central_Controiler`.
+
+The radios and the central are a **matched set** and must be reflashed together; flash the central first, since it still
+accepts the old packet while the sliders are updated one at a time. Their link is defined once in
+[`NctPoolProtocol.h`](zones/firmware/libraries/NctZone/src/NctPoolProtocol.h) — see
+[zones/README.md](zones/README.md) for how it works.
+
+[Poolzone test console](poolzone_test/README.md) provides a USB ESP32-C3 bridge and Python GUI that emulates all six
+radios, for exercising the lights without sliders. Run `./poolzone_test/Launch.command` for member toggles, sequential
+testing, and All Off.
 
 ## ESP-NOW range test
 

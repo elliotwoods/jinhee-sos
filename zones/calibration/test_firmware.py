@@ -62,6 +62,45 @@ class FirmwareChecks(unittest.TestCase):
     def test_terminal_codes_are_removed(self):
         self.assertEqual(firmware.clean_output('\x1b[31mError: failed\x1b[0m\r'), 'Error: failed')
         self.assertEqual(firmware.clean_output('Progress \x00 50%'), 'Progress  50%')
+    def test_database_only_reports_the_running_firmware_not_the_build(self):
+        # A database-only update leaves the application alone, so the result must not
+        # claim the newly built version was installed.
+        import inspect
+        source = inspect.getsource(firmware.flash)
+        self.assertIn("before['firmware'] if database_only else manifest['version']", source)
+
+    def test_database_only_does_not_demand_calibration_from_legacy_firmware(self):
+        # After a database-only update the board still runs its original firmware; a
+        # legacy board never answers CAL GET, and that must not fail a successful update.
+        import inspect
+        source = inspect.getsource(firmware.flash)
+        self.assertIn('require_calibration=True if not database_only else calibration is not None', source)
+
+    def test_record_zone_status_writes_the_shared_registry(self):
+        import sqlite3, tempfile
+        from pathlib import Path
+        report = dict(mac='02:11:22:33:44:55', name='Pool Radio 4', zone_type=3, point_id=4,
+                      firmware='pool-2.8.0', db_version=2, db_count=32, db_crc=7, channel=2)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'devices.sqlite3'
+            with patch.object(firmware, 'DEFAULT_DATABASE', path):
+                db = firmware.Database(path, recover_pending=False)
+                try:
+                    self.assertEqual(firmware.record_zone_status(report, detail='tuning saved: exit=0.45'),
+                                     report['mac'])
+                finally:
+                    db.close()
+                with sqlite3.connect(path) as check:
+                    rows = check.execute('SELECT mac, firmware, source, detail FROM zones').fetchall()
+                check.close()
+        self.assertEqual(rows[0][0], report['mac'])
+        self.assertEqual(rows[0][1], 'pool-2.8.0')
+        self.assertEqual(rows[0][2], 'poolzone-calibration')
+        self.assertIn('exit=0.45', rows[0][3])
+
+    def test_record_zone_status_refuses_a_report_without_a_mac(self):
+        with self.assertRaises(RuntimeError): firmware.record_zone_status(dict(firmware='pool-2.8.0'))
+
     def test_identity_refuses_non_pool_and_swapped_board(self):
         report=dict(firmware='pool-2.7.0',zone_type=3,mac='02:11:22:33:44:55')
         firmware.check_identity(report,report['mac'])

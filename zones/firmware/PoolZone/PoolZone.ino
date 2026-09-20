@@ -13,6 +13,7 @@
 #include <Adafruit_PN532.h>
 #include <VL53L4CD.h>
 #include <NctTagPlate.h>
+#include <NctPoolProtocol.h>
 #include <Preferences.h>
 #include "SliderCalibration.h"
 #include "SliderTuning.h"
@@ -20,7 +21,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "pool-2.8.0";
+constexpr const char *FIRMWARE_VERSION = "pool-3.0.0";
 // Embedded by the zone builder for exact-source update detection.
 #ifndef POOL_BUILD_ID
 #define POOL_BUILD_ID unknown
@@ -30,22 +31,10 @@ constexpr const char *FIRMWARE_VERSION = "pool-2.8.0";
 constexpr const char *FIRMWARE_BUILD_ID = POOL_STRINGIFY(POOL_BUILD_ID);
 
 #define STRIP_LED_PIN 5
-#define MEMBER_COUNT 23
-#define HEARTBEAT_MS 150
-#define PACKET_MAGIC 0x4E435450
+#define MEMBER_COUNT POOL_MEMBER_COUNT
+#define HEARTBEAT_MS POOL_HEARTBEAT_MS
 
 uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-// Must match the pool central controller.
-struct __attribute__((packed)) RadioPacket {
-  uint32_t magic;
-  uint8_t radioId;
-  uint8_t active;
-  uint8_t member;
-  uint8_t uidLength;
-  uint8_t uid[7];
-};
-static_assert(sizeof(RadioPacket) == 15, "Pool central ABI changed");
 
 TagPlate plate;
 VL53L4CD laser;
@@ -55,6 +44,7 @@ SliderCalibration calibration;
 SliderTuning tuning;
 bool calibrationSaved = false, tuningSaved = false, sampleValid = false;
 bool rawStream = false;
+uint32_t rawDropped = 0;
 uint8_t rangeStatus = 0;
 uint16_t sampleIntervalMs = 10;
 constexpr uint32_t OVERRIDE_TIMEOUT_MS = 1500;
@@ -132,6 +122,28 @@ MedianFilter medianFilter;
 float rawDistance = 0, filteredDistance = 0;
 int candidatePosition = -1, confirmedPosition = -1;
 uint32_t candidateSince = 0, lastRangeRead = 0, lastHeartbeat = 0, lastStream = 0;
+
+// ---- Pool link ----
+// The central broadcasts a beacon; we latch its address and unicast our state back, so
+// the radio gets MAC-layer acknowledgement and hardware retries instead of shouting into
+// a shared channel. One broadcast copy still goes out periodically, which costs nothing
+// (the central de-duplicates on sequence) and covers a stale or wrong latched address.
+uint32_t poolBootId = 0;
+uint16_t poolSeq = 0;
+uint8_t centralMac[6] = {};
+bool centralKnown = false, centralSeesMe = false;
+uint32_t centralSeen = 0, centralEpoch = 0;
+uint32_t lastBroadcastCopy = 0, releaseUntil = 0, nextBurstAt = 0;
+uint8_t burstRemaining = 0;
+bool centralPeerPending = false;
+
+// Beacon mailbox. poolFrame() runs on the Wi-Fi task and may only hand the frame over.
+portMUX_TYPE poolMux = portMUX_INITIALIZER_UNLOCKED;
+bool beaconPending = false;
+uint8_t beaconMac[6] = {};
+PoolBeacon beaconFrame = {};
+
+bool centralFresh() { return centralKnown && millis() - centralSeen < POOL_BEACON_STALE_MS; }
 // 0 means "not currently in a run"; millis() 0 is stored as 1 so the sentinel holds.
 uint32_t releaseSince = 0;
 
@@ -164,10 +176,13 @@ void applyTuning(const SliderTuning &previous, bool retime) {
 bool radioValid() { return plate.configOk && plate.config.pointId >= 1 && plate.config.pointId <= 6; }
 bool calibrationValid() { return calibration.valid(); }
 
-void sendCentralState(bool active) {
+void sendCentralState(bool active, bool forceBroadcast = false) {
   if (!radioValid() || !plate.radioOk) return;
-  RadioPacket packet = {};
-  packet.magic = PACKET_MAGIC;
+  PoolState packet = {};
+  fillHeader(packet.h, POOL_STATE);
+  packet.bootId = poolBootId;
+  packet.seq = ++poolSeq;
+  packet.leaseMs = POOL_LEASE_DEFAULT_MS;
   packet.radioId = plate.config.pointId;
   if (active && confirmedPosition >= 1 && confirmedPosition <= MEMBER_COUNT) {
     packet.active = 1;
@@ -177,8 +192,54 @@ void sendCentralState(bool active) {
     packet.uidLength = plate.currentUidLength();
     memcpy(packet.uid, plate.currentUid(), packet.uidLength);
   }
-  if (plate.sendFrame(BROADCAST_MAC, (const uint8_t *)&packet, sizeof(packet), true)) ++centralQueued;
+  bool unicast = !forceBroadcast && centralFresh();
+  const uint8_t *destination = unicast ? centralMac : BROADCAST_MAC;
+  // Untracked on purpose: at this rate the tag plate's four delivery slots would churn
+  // and misattribute a cube's acknowledgement. The beacon's radioMask is the real
+  // application-level confirmation that the central is hearing this radio.
+  if (plate.sendUntracked(destination, (const uint8_t *)&packet, sizeof(packet), true)) ++centralQueued;
   else ++centralErrors;
+}
+
+// Re-assert the current state immediately and a couple more times in quick succession.
+// A lost heartbeat costs at most one lease of blink; a lost change or release is visible
+// for a whole lease, so changes are the ones worth repeating.
+void startBurst() { burstRemaining = POOL_BURST_COUNT; nextBurstAt = 0; }
+
+// Runs on the Wi-Fi task: copy the frame out and return. No Serial, no I2C, no peers.
+void poolFrame(const uint8_t *src, const uint8_t *data, int len) {
+  if (poolFrameType(data, len) != POOL_BEACON) return;
+  portENTER_CRITICAL(&poolMux);
+  memcpy(beaconMac, src, 6);
+  memcpy(&beaconFrame, data, sizeof(beaconFrame));
+  beaconPending = true;
+  portEXIT_CRITICAL(&poolMux);
+}
+
+void pollBeacon() {
+  PoolBeacon beacon;
+  uint8_t mac[6];
+  bool pending;
+  portENTER_CRITICAL(&poolMux);
+  pending = beaconPending;
+  beaconPending = false;
+  if (pending) { memcpy(mac, beaconMac, 6); beacon = beaconFrame; }
+  portEXIT_CRITICAL(&poolMux);
+  if (pending) {
+    bool moved = !centralKnown || memcmp(centralMac, mac, 6) != 0;
+    uint32_t previousEpoch = centralEpoch;
+    memcpy(centralMac, mac, 6);
+    centralKnown = true;
+    centralSeen = millis();
+    centralEpoch = beacon.epoch;
+    centralSeesMe = radioValid() && (beacon.radioMask & (1 << (plate.config.pointId - 1)));
+    if (moved) centralPeerPending = true;
+    // A changed epoch means the central restarted and has forgotten every lease, so
+    // re-assert at once rather than waiting for the next slider movement.
+    if (moved || beacon.epoch != previousEpoch) startBurst();
+  }
+  // Peers are added here, on the loop task, never from the receive callback.
+  if (centralPeerPending && plate.radioOk && plate.link.ensurePeer(centralMac, true)) centralPeerPending = false;
 }
 
 bool overrideActive() { return hostArmed && millis() - lastHost < OVERRIDE_TIMEOUT_MS; }
@@ -194,18 +255,44 @@ void updateInteraction() {
     Serial.println("EVENT override expired");
   }
   digitalWrite(STRIP_LED_PIN, interactionActive() ? HIGH : LOW);
+  pollBeacon();
   int output = outputMember();
-  if (output != lastOutput || (interactionActive() && now-lastHeartbeat >= HEARTBEAT_MS)) {
-    sendCentralState(output > 0);
+  if (output != lastOutput) {
+    // Keep re-asserting a release for a while: a lost release leaves a light stuck on for
+    // a whole lease, which is far more visible than a lost heartbeat.
+    if (output == 0) releaseUntil = now + POOL_RELEASE_REPEAT_MS;
     lastOutput = output;
+    startBurst();
+  }
+  bool releasing = output == 0 && int32_t(releaseUntil - now) > 0;
+  uint32_t interval = (interactionActive() || releasing) ? HEARTBEAT_MS : POOL_IDLE_HEARTBEAT_MS;
+  if (burstRemaining && int32_t(now - nextBurstAt) >= 0) {
+    --burstRemaining;
+    nextBurstAt = now + POOL_BURST_GAP_MS;
+    sendCentralState(output > 0);
     lastHeartbeat = millis();
+  } else if (now - lastHeartbeat >= interval) {
+    // Idle heartbeats never stop. They cost almost nothing and turn a silent radio into a
+    // reportable fault instead of something indistinguishable from an idle slider.
+    sendCentralState(output > 0);
+    lastHeartbeat = millis();
+  }
+  // One broadcast copy periodically, whatever the unicast link is doing. This is what
+  // rescues a radio that latched a stale central address.
+  if (centralFresh() && now - lastBroadcastCopy >= POOL_BROADCAST_COPY_MS) {
+    lastBroadcastCopy = now;
+    sendCentralState(output > 0, true);
   }
 }
 
 void interactionReport() {
-  Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"interaction\",\"override\":%s,\"active\":%s,\"output\":%d,\"tag\":%s,\"nfc\":%s,\"radio\":%s,\"radio_id\":%u,\"queued\":%lu,\"send_errors\":%lu,\"cube\":%lu,\"delivery\":%d,\"uid\":\"",
+  Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"interaction\",\"override\":%s,\"active\":%s,\"output\":%d,\"tag\":%s,\"nfc\":%s,\"radio\":%s,\"radio_id\":%u,\"queued\":%lu,\"send_errors\":%lu,\"cube\":%lu,\"delivery\":%d,\"seq\":%u,\"unicast\":%s,\"central_sees_me\":%s,\"central_seen_ms\":%lu,\"central_mac\":\"",
     overrideActive() ? "true" : "false", interactionActive() ? "true" : "false", outputMember(), plate.tagPresent() ? "true" : "false", plate.nfcOk ? "true" : "false", plate.radioOk && radioValid() ? "true" : "false", plate.config.pointId,
-    (unsigned long)centralQueued, (unsigned long)centralErrors, (unsigned long)(plate.tagPresent() ? plate.currentCube().cubeID : 0), plate.currentDelivery());
+    (unsigned long)centralQueued, (unsigned long)centralErrors, (unsigned long)(plate.tagPresent() ? plate.currentCube().cubeID : 0), plate.currentDelivery(),
+    poolSeq, centralFresh() ? "true" : "false", centralSeesMe ? "true" : "false",
+    (unsigned long)(centralKnown ? millis() - centralSeen : 0));
+  if (centralKnown) for (uint8_t i=0; i<6; ++i) Serial.printf(i ? ":%02X" : "%02X", centralMac[i]);
+  Serial.print("\",\"uid\":\"");
   if (plate.tagPresent()) for (uint8_t i=0; i<plate.currentUidLength(); ++i) Serial.printf(i ? ":%02X" : "%02X", plate.currentUid()[i]);
   Serial.print("\",\"mac\":\"");
   if (plate.tagPresent() && plate.currentCube().cubeID) for (uint8_t i=0; i<6; ++i) Serial.printf(i ? ":%02X" : "%02X", plate.currentCube().mac[i]);
@@ -218,6 +305,11 @@ int distanceToMember(float distance) {
 
 void rawReport(uint32_t now) {
   if (!rawStream) return;
+  // USB CDC write() blocks when the host stops draining the port, which would stall the
+  // sample cadence and the central heartbeat. Drop this line rather than block, and stop
+  // streaming entirely if the port goes away.
+  if (!Serial) { rawStream = false; return; }
+  if (Serial.availableForWrite() < 160) { ++rawDropped; return; }
   Serial.printf("{\"device\":\"PoolZoneCalibration\",\"type\":\"raw\",\"t\":%lu,\"mm\":", (unsigned long)now);
   if (sampleValid) Serial.printf("%.0f", rawDistance); else Serial.print("null");
   // A tolerated dropout does not advance the filter, so there is no fresh filtered
@@ -381,10 +473,10 @@ bool serialCommand(const char *line) {
   if (!strncmp(line, "RAW ", 4)) {
     // Never persisted and off at boot: USB CDC writes block when the host stops
   // reading, which would wreck the sample cadence and the 150 ms heartbeat.
-  if (!strcmp(line + 4, "ON")) rawStream = true;
+  if (!strcmp(line + 4, "ON")) { rawStream = true; rawDropped = 0; }
     else if (!strcmp(line + 4, "OFF")) rawStream = false;
     else { Serial.println("ERR RAW: expected ON or OFF"); return true; }
-    Serial.printf("OK RAW %s\n", rawStream ? "ON" : "OFF");
+    Serial.printf("OK RAW %s dropped=%lu\n", rawStream ? "ON" : "OFF", (unsigned long)rawDropped);
     return true;
   }
   if (!strcmp(line, "HOST ARM")) {
@@ -447,6 +539,7 @@ void report() {
 
 void setup() {
   hostArmed = calibrationEditing = rawStream = false;
+  rawDropped = 0;
   lastOutput = -1;
   calPos1 = calPos23 = 0;
   calibration = SliderCalibration();
@@ -468,6 +561,15 @@ void setup() {
   plate.onTagLeave = tagLeave;
   plate.onSerial = serialCommand;
   plate.onReport = report;
+  plate.onFrame = poolFrame;
+  // A fresh boot identity, so the central accepts this radio's sequence starting again
+  // from zero instead of rejecting it as stale for the rest of the show.
+  poolBootId = esp_random();
+  if (!poolBootId) poolBootId = 1;
+  poolSeq = 0;
+  centralKnown = centralSeesMe = centralPeerPending = false;
+  centralSeen = centralEpoch = releaseUntil = nextBurstAt = lastBroadcastCopy = 0;
+  burstRemaining = 0;
   plate.begin(options);  // starts I2C
   if (plate.paramsOk && plate.params.count >= 2) {
     calPos1 = plate.params.values[0] / 10.0f;

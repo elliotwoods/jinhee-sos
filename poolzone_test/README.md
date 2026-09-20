@@ -1,6 +1,11 @@
 # Poolzone light test
 
-USB-connected ESP32-C3 test bridge + Python/Tk GUI for the existing Poolzone central controller. Based on `live files/Poolzone_Radio_Control/Poolzone_Radio_Control.ino`; central firmware needs no changes.
+USB-connected ESP32-C3 test bridge + Python/Tk GUI for the pool central controller, which is maintained at
+[`zones/firmware/PoolCentral`](../zones/firmware/PoolCentral/README.md). The bridge emulates all six slider
+radios so the lights can be exercised without sliders.
+
+**The bridge speaks the current pool protocol and will not drive a legacy central.** Flash
+`zones/firmware/PoolCentral` first.
 
 Run using the existing project Python environment:
 
@@ -12,7 +17,10 @@ Or install `requirements.txt` into a Python environment with Tk and run `python 
 
 Power off other Poolzone radio transmitters during testing. The bridge emulates **all six radio IDs**, including release packets for unselected slots, so real radios using those IDs would compete with it. Brightness, colour and all-23-on are not supported by the existing central protocol. Members 1–16 map to PCA9685 0x40 channels 0–15; 17–23 map to 0x41 channels 0–6.
 
-The GUI displays requested/bridge-reported state, not measured light output. `queued` counts successful `esp_now_send` submissions, not receiver acknowledgements. The central sends no response. ESP-NOW requires matching channels ([Espressif reference](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/network/esp_now.html)). Check central power, channel and PCA9685 wiring if packets are queued but lights do not change.
+The GUI displays requested/bridge-reported state, not measured light output. `queued` counts successful
+`esp_now_send` submissions. An ESP-NOW unicast acknowledgement proves MAC-layer delivery to the central's radio,
+not that its loop processed the frame; the per-radio `seq`/`seen_ms` in the central's telemetry, and the
+`radio_mask` echoed in its beacon, are the application-level confirmation. ESP-NOW requires matching channels ([Espressif reference](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/network/esp_now.html)). Check central power, channel and PCA9685 wiring if packets are queued but lights do not change.
 
 ## Firmware
 
@@ -33,18 +41,21 @@ Serial at 115200 baud, newline terminated:
 - `OFF`: clear every slot.
 - `CHANNEL n`: channel 1–13; requires all slots off.
 
-Packets match the packed 15-byte original: little-endian magic 0x4E435450, radioId, active, member, uidLength=0, seven zero UID bytes. Broadcast destination FF:FF:FF:FF:FF:FF. One slot sent every 25 ms, giving each radio a 150 ms heartbeat. Central timeout is 800 ms. USB loss clears slots in 1500 ms, followed by releases over the next 150 ms; if RF also fails the central timeout applies. Startup is all off. A full original flash backup for USB device `3c:0f:02:af:2c:20` is kept locally in ignored `build/backup-3c0f02af2c20.bin`.
+Frames are `PoolState` from [`NctPoolProtocol.h`](../zones/firmware/libraries/NctZone/src/NctPoolProtocol.h), the same
+definition the real radios and the central use. The bridge listens for the central's `PoolBeacon`, then unicasts
+to it (gaining ESP-NOW acknowledgement and retries) while still sending a periodic broadcast copy; with no beacon
+it broadcasts only. Each emulated radio has its own boot identity and sequence. One slot is sent every 25 ms,
+giving each radio a 150 ms heartbeat. The central's lease is 800 ms. USB loss clears slots in 1500 ms, followed by releases over the next 150 ms; if RF also fails the central timeout applies. Startup is all off. A full original flash backup for USB device `3c:0f:02:af:2c:20` is kept locally in ignored `build/backup-3c0f02af2c20.bin`.
 
 ## Receiver diagnostics and E2E test
 
-`firmware/PoolCentralTest` v2 keeps the legacy channel 2, packet format, PCA9685 pins and frame mapping, with the reliability fixes described below. The attached receiver `48:f6:ee:15:8e:e0` initially contained `POOL ESP-NOW SNIFFER v0.1` with `CDCOnBoot=default`, rather than the central controller. Its full original flash is backed up locally at `build/backup-central-48f6ee158ee0.bin`.
+The receiver firmware is no longer kept here. It is the production sketch,
+[`zones/firmware/PoolCentral`](../zones/firmware/PoolCentral/README.md), which carries the same `STATUS`, `RECOVER` and
+`TEST_SLEEP` diagnostics; see that README for build and upload commands. Keeping a second implementation of the same
+protocol is what let the radios and the central drift apart in the first place.
 
-Build/upload receiver (ESP32-C3):
-
-```sh
-arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --output-dir poolzone_test/build/central poolzone_test/firmware/PoolCentralTest
-arduino-cli upload --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --port /dev/cu.usbmodem2101 --input-dir poolzone_test/build/central poolzone_test/firmware/PoolCentralTest
-```
+The attached receiver `48:f6:ee:15:8e:e0` initially contained `POOL ESP-NOW SNIFFER v0.1` with `CDCOnBoot=default`,
+rather than the central controller. Its full original flash is backed up locally at `build/backup-central-48f6ee158ee0.bin`.
 
 Close the GUI to release the sender port before running:
 
@@ -55,11 +66,11 @@ pairing_station/.venv/bin/python poolzone_test/tests/e2e_check.py /dev/cu.usbmod
 The test checks receiver-side `RADIO` and `FRAME` logs for all 23 ON/OFF selections, six simultaneous radio slots, sustained heartbeats, All Off, and host watchdog release. It leaves all slots off and writes timestamped evidence to `build/e2e-latest.log`. An RF/handler pass does not prove physical illumination. I2C write errors are reported separately; `FRAME ON` in the original controller means an output write was attempted, even if its LED driver did not acknowledge.
 
 
-## Receiver v2 reliability fix
+## Receiver reliability fixes (history)
 
 An intermittent failure was reproduced in the first receiver build: `FRAME 23 ON` at 10.507 seconds was followed by `RADIO TIMEOUT: 1` and `FRAME 23 OFF` at 10.659 seconds, just 152 ms later despite an 800 ms timeout and continuing heartbeats. The original receive callback shared state unsafely with the loop and printed to USB from the high-priority Wi-Fi task. The old code also cached failed I2C writes as successful, preventing a retry until a later state change.
 
-The v2 receiver:
+These fixes now live in `zones/firmware/PoolCentral`. The receiver:
 
 - Copies latest packets into a protected mailbox, and processes radio leases and output state only in the main loop. No serial or I2C calls run in the receive callback.
 - Uses non-blocking, capacity-checked USB logging. Losing a log line is counted, and never delays light control.

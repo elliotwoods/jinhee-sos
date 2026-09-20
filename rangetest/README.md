@@ -4,9 +4,9 @@ Measures how reliably ESP-NOW reaches the back room from the exhibition space, o
 channel **2**, using two boards identical to the Neocore cubes (XIAO ESP32-C3 +
 external antenna + battery + eight WS2812s on `D10`).
 
-**TX** (blue) is carried around the space on battery; its LEDs show link quality
-live. **RX** (red) stays in the back room and answers every ping with an ACK
-carrying the RSSI it measured. A Tk GUI on the RX captures the survey to CSV.
+**TX** (blue) is carried around the space on battery and shows link quality on its
+own LEDs. **RX** (red) stays in the back room and answers every ping with an ACK
+carrying the RSSI it measured. A Tk console on the RX shows the link live.
 
 | MAC | Role | Port at time of writing |
 |---|---|---|
@@ -22,46 +22,52 @@ the MAC in their USB serial descriptor, never by port order.
 Attach the external antennas. The XIAO's antenna is selected in hardware; nothing
 in firmware can compensate for a missing one.
 
-## Reading the TX LEDs
+## Reading the LEDs
 
-Pixels 0–6 are a rolling history of the last seven pings, newest at pixel 0,
-scrolling at the ping rate (5 Hz by default, so about 1.4 seconds of history).
+Both boards run the **same display**, and differ only in hue: the TX is **blue**,
+the RX is **red**. All eight pixels carry packet information — no pixel is spent
+on a role marker, because the colour already says which board you are holding.
 
-- **white** — ping has just left, waiting for its ACK
-- **green → yellow** — ACKed; green above −65 dBm, yellow at −80 dBm and below.
-  The ramp stops at yellow and never reaches orange, so it can never be confused
-  with red.
-- **red** — no ACK inside the 150 ms window
+One dot lights for each packet and then fades, so a comet travels once round the
+ring every eight packets. Read it as:
 
-Pixel 7 is the role marker: dim **blue** on TX, dim **red** on RX, flashing
-bright on every ping sent or received. It is the proof-of-life heartbeat — if it
-stops ticking the board has crashed or browned out, which otherwise looks exactly
-like an all-red 100 %-loss ring.
+- **speed** — the packet rate, 5 Hz by default
+- **brightness** — signal strength: full above −65 dBm, down to a quarter at
+  −85 dBm and below
+- **gaps** — a lost packet leaves its dot dark, so loss reads as a stutter in the
+  flow
+- **frozen** — the board has crashed or browned out
 
-Every five seconds the ring blanks briefly and then shows a whole-ring success
-bar for that window (green pixels out of eight) for 400 ms, before returning to
-the scrolling history.
+On the TX a dot only brightens once the RX's **ACK** comes back, at the strength
+the RX measured, so the TX really is displaying acknowledgements rather than its
+own transmissions. It advances the comet on every ping it *sends*, though: a dim
+but still-moving comet means "board alive, link dead", while a frozen one means
+the board itself has stopped. Collapsing those two states would hide the worse
+fault.
 
-The RX shows the same history built from received packets, inserting red pixels
-for sequence gaps. When it has heard nothing for two seconds it breathes: **blue**
-if it has heard nothing at all since boot, **red** if it was hearing and lost the
-link.
+The RX can genuinely fall silent, so when it has heard nothing for two seconds it
+breathes instead: **red** if it was hearing the TX and lost it, **amber** if it
+has heard nothing at all since boot.
 
 ## Running a survey
 
 ```sh
-./rangetest/Launch.command --rx /dev/cu.usbmodem101
+./rangetest/Launch.command --port /dev/cu.usbmodem101
 ```
 
-The RX connection alone captures the whole survey: per-packet uplink RSSI, noise
-floor and sequence-gap loss, with host timestamps. Connect the TX too (`--tx`)
-when it is on the bench to also see downlink RSSI, ACK loss and round-trip time —
-during a real walk the TX is untethered and only its LEDs report.
+The console watches the **receiver** only — during a real walk the transmitter is
+untethered on battery and reports through its LEDs, so the back-room end is where
+the measurement actually lands. It connects on its own and stays connected,
+reconnecting if the board is unplugged; there is nothing to start or stop.
 
-Use **Mark position** to stamp a label (`doorway`, `back room rack`) into both the
-log and the boards' own serial output. That is what turns a stream of packets into
-a survey you can read afterwards. **Start capture** writes
-`rangetest/build/rangetest-<timestamp>.csv`.
+It shows packet loss, signal, signal-to-noise and packet rate; signal and loss
+over the **last minute** (every packet) and the **last 30 minutes** (one-second
+averages); and a live mirror of the receiver's eight LEDs, driven by the board's
+own `LEDS` frames rather than by a reimplementation of the animation, with a
+legend for reading them.
+
+Everything is held in memory and drawn on screen. **Nothing is written to disk**,
+so close the window and the history is gone.
 
 Walk the path, then swap the two boards physically and repeat, and separately swap
 roles with `ROLE` without moving anything. Three datasets separate path loss from
@@ -104,6 +110,7 @@ they previously contained is not recorded anywhere.
 | `SLEEP ON\|OFF` | Wi-Fi power save; `ON` is `WIFI_PS_MIN_MODEM`, the cube default |
 | `VERBOSE ON\|OFF` | Per-packet lines; `OFF` leaves only the 1 Hz `STAT` line |
 | `MUTE ON\|OFF` | RX keeps receiving and counting but stops answering |
+| `LEDS ON\|OFF` | Mirror the eight pixels over USB for the console |
 | `MARK <label>` | Stamp a label into the log |
 | `REBOOT` | Restart, for exercising TX-restart detection |
 
@@ -111,6 +118,20 @@ Output is `PKT` per packet and `STAT` once per second, both as `key=value` pairs
 Writes are non-blocking and capacity-checked: a log line is dropped (and counted
 in `log_drops`) rather than delaying the radio. `VERBOSE OFF` is for a board left
 plugged in with nothing reading it.
+
+Logging is deliberately **not** gated on `if (Serial)`. The USB CDC connected flag
+can latch false after a host toggles DTR/RTS, and a board that is happily running
+the radio while reporting nothing over USB is the worst possible state for a
+diagnostic tool.
+
+Open these boards with `serial_open.open_serial()`, which follows the same
+no-reset sequence as `pairing_station/transport.py`: assert DTR and RTS *before*
+opening, then release RTS before DTR. Opening a native USB-JTAG ESP32-C3 with both
+deasserted, or toggling them afterwards, resets the chip and can wedge its USB
+serial peripheral. A wedged board keeps running the radio — the other end still
+sees its packets — but goes completely silent on USB, and an `esptool` reset does
+not clear it because that restarts the CPU, not the USB peripheral. **Unplug and
+replug it.**
 
 ### Wire format
 
@@ -166,7 +187,7 @@ and the TX reports both `rtt_us` and `air_us`.
 
 ```sh
 pairing_station/.venv/bin/python rangetest/tests/e2e_check.py /dev/cu.usbmodem1101 /dev/cu.usbmodem101
-pairing_station/.venv/bin/python rangetest/tests/gui_check.py /dev/cu.usbmodem1101 /dev/cu.usbmodem101
+pairing_station/.venv/bin/python rangetest/tests/gui_check.py /dev/cu.usbmodem101
 ```
 
 Close the GUI first; both tests hold the ports exclusively.
@@ -182,8 +203,10 @@ responder turnaround, that the driver-reported channel is 2 on every frame,
 TX-restart detection via `bootId`, and that the radio is unaffected by USB
 logging.
 
-`gui_check.py` drives the real Tk app against both boards, captures, stamps a
-mark, and checks the CSV holds data from both ends.
+`gui_check.py` drives the real Tk console against the receiver: it checks the app
+connects by itself, parses identity, statistics and per-packet RSSI, that the LED
+mirror is live and actually moving with no colour but red, and that nothing is
+written to disk.
 
 ## Limits
 

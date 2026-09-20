@@ -19,6 +19,11 @@ enum MessageType : uint8_t {
   ZONE_LOG      = 0x22,
   ZONE_IDENTIFY = 0x23,
   ZONE_REBOOT   = 0x24,
+  // 0x30 POOL_STATE and 0x31 POOL_BEACON are reserved by NctPoolProtocol.h and are
+  // deliberately NOT handled by frameType() below: ZoneLink::receive() queues every
+  // frame frameType() accepts and ZoneLink::handle() drops what it does not know, so
+  // routing them here would swallow them before the pool sketch ever sees them. They
+  // reach the sketch through TagPlate::onFrame instead. Do not reuse these values.
 };
 
 // Matches the neocube ZoneType enum (value sent in Packet.success of MSG_SET_ZONE).

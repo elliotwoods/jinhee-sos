@@ -53,13 +53,22 @@ def main():
         check(bool(receiver.samples), 'One-second history populated',
               f'{len(receiver.samples)} samples')
 
+        # Every pixel carries packet information now: there is no role marker, so
+        # the receiver must be pure red and the comet must actually be moving.
+        frames = [tuple(receiver.pixels)]
+        for _ in range(6):
+            pump(root, 0.35)
+            if tuple(receiver.pixels) != frames[-1]:
+                frames.append(tuple(receiver.pixels))
         lit = [p for p in receiver.pixels if p != '000000']
         check(len(receiver.pixels) == 8, 'LED mirror has eight pixels')
         check(bool(lit), 'LED mirror is receiving live frames', ','.join(receiver.pixels))
-        check(receiver.pixels[7].endswith('0000') and receiver.pixels[7] != '000000',
-              'Pixel 7 is the red role marker', receiver.pixels[7])
-        check(all(p == '000000' or p.endswith('0000') for p in receiver.pixels),
-              'Receiver shows no green at all', ','.join(receiver.pixels))
+        check(len(frames) > 1, 'Comet is moving', f'{len(frames)} distinct frames')
+        red_only = all(p == '000000' or p.endswith('0000') for f in frames for p in f)
+        check(red_only, 'Receiver uses red only, on every pixel', ','.join(receiver.pixels))
+        check(any(f[7] != '000000' for f in frames),
+              'Pixel 7 carries packet data, not a role marker',
+              ' '.join(f[7] for f in frames))
 
         check(application.headline.get() == 'LINK GOOD', 'Headline reflects a good link',
               application.headline.get())

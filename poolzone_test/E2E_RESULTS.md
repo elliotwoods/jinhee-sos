@@ -1,3 +1,9 @@
+> **Superseded.** This file records hardware evidence for the v2 central when the radios
+> still broadcast the 15-byte packet with no acknowledgement. The I2C and concurrency
+> findings below still hold and are carried into `zones/firmware/PoolCentral`, but the
+> radio link has since been replaced (beacon, unicast, sequence numbers, bursts, repeated
+> releases). **Equivalent hardware evidence for the new link has not yet been collected.**
+
 # Receiver v2 reliability fix — verified on hardware
 
 After the initial test, an intermittent failure was reproduced: the original receiver timed out member 23 **152 ms** after receiving it despite its 800 ms radio lease. Shared callback/loop state was unsynchronized, and USB writes were made inside the Wi-Fi callback. Original I2C writes also updated the frame cache even on failure.

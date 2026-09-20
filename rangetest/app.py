@@ -11,6 +11,8 @@ from tkinter import ttk
 import serial
 from serial.tools import list_ports
 
+from serial_open import open_serial
+
 BG, CARD, TEXT, MUTED = '#101720', '#1b2633', '#e9f0f7', '#a5b5c8'
 GREEN, AMBER, BLUE, RED, LINE = '#54d6a0', '#ffc16b', '#82b8fa', '#ff647d', '#2a3849'
 PLOT = '#151e2a'
@@ -20,18 +22,21 @@ MINUTE, HALF_HOUR = 60, 1800
 LED_SCALE = 255 / 100               # firmware caps every channel at 100
 
 LEGEND = [
-    ('Pixels 0-6', RED,
-     'One pixel lights fully for each ping received, then fades. The comet’s speed is '
-     'the packet rate; its brightness is the signal strength. A stutter in the flow is a lost packet.'),
-    ('Pixel 7', RED,
-     'Steady red identifies this as the receiver, and pulses on every ping. If it stops '
-     'ticking the board has crashed or browned out — which otherwise looks like a quiet link.'),
-    ('Whole ring breathing', AMBER,
+    ('One dot per packet', RED,
+     'A dot lights for each ping the receiver hears, then fades, so the comet travels '
+     'once round the ring every eight packets. Its speed is the packet rate.'),
+    ('Brightness', RED,
+     'Full brightness above −65 dBm, down to a quarter at −85 dBm and below. '
+     'A dim comet still moving means the link is weak but alive.'),
+    ('Gaps in the flow', AMBER,
+     'A lost packet leaves its dot dark, so loss reads as a stutter. If the comet stops '
+     'moving entirely the board has crashed or browned out.'),
+    ('Breathing, not moving', AMBER,
      'Red: heard the transmitter and then lost it (nothing for 2 s). '
      'Amber: nothing heard at all since boot.'),
     ('The transmitter', BLUE,
-     'Deliberately different in shape as well as colour: a solid bar of green-to-yellow '
-     'across all seven pixels, with a blue marker on pixel 7.'),
+     'Identical display in blue. It advances on every ping it sends, and a dot only '
+     'brightens once this receiver’s ACK comes back, at the strength measured here.'),
 ]
 
 
@@ -72,7 +77,7 @@ class Receiver:
         return self.serial is not None
 
     def open(self, port):
-        self.serial = serial.Serial(port, 115200, timeout=0, write_timeout=0.15, exclusive=True)
+        self.serial = open_serial(port)
         self.port = port
         self.buffer = b''
         self.banner = {}
@@ -131,8 +136,7 @@ class Receiver:
             if rssi is not None and rssi != 127:
                 self.packets.append((now, rssi, number(fields, 'nf'), number(fields, 'gap', 0)))
         elif line.startswith('LEDS '):
-            raw = parse_fields(line).get('px', '')
-            parts = raw.split(',')
+            parts = parse_fields(line).get('px', '').split(',')
             if len(parts) == 8:
                 self.pixels = parts
         elif ':' in line and not line.startswith('='):
@@ -149,8 +153,8 @@ class App:
 
         root.title('NCT · ESP-NOW range test')
         root.configure(bg=BG)
-        root.geometry('1320x960')
-        root.minsize(1140, 880)
+        root.geometry('1320x980')
+        root.minsize(1140, 900)
         self.configure_style()
 
         frame = ttk.Frame(root, padding=20)
@@ -265,7 +269,8 @@ class App:
             card.grid(row=0, column=index, sticky='nsew', padx=(0, 14) if index == 0 else 0)
             rssi = tk.Canvas(card, height=170, bg=CARD, highlightthickness=0)
             rssi.pack(fill='both', expand=True)
-            ttk.Label(card, text='PACKET LOSS', style='CardTitle.TLabel').pack(anchor='w', pady=(10, 2))
+            ttk.Label(card, text='PACKET LOSS', style='CardTitle.TLabel')\
+                .pack(anchor='w', pady=(10, 2))
             loss = tk.Canvas(card, height=64, bg=CARD, highlightthickness=0)
             loss.pack(fill='x')
             self.charts[key] = (rssi, loss)
@@ -277,7 +282,7 @@ class App:
         card.pack(fill='x', pady=(14, 0))
         body = ttk.Frame(card, style='Card.TFrame')
         body.pack(fill='x')
-        self.led_canvas = tk.Canvas(body, height=92, width=430, bg=CARD, highlightthickness=0)
+        self.led_canvas = tk.Canvas(body, height=86, width=420, bg=CARD, highlightthickness=0)
         self.led_canvas.pack(side='left', padx=(0, 22))
         legend = ttk.Frame(body, style='Card.TFrame')
         legend.pack(side='left', fill='both', expand=True)
@@ -298,11 +303,8 @@ class App:
         self.log.see('end')
         self.log.configure(state='disabled')
 
-    def candidate_ports(self):
-        return [p.device for p in list_ports.comports() if p.vid is not None]
-
     def refresh_ports(self):
-        ports = self.candidate_ports()
+        ports = [p.device for p in list_ports.comports() if p.vid is not None]
         self.port_box['values'] = ports
         if self.port_var.get() not in ports:
             self.port_var.set(self.preferred if self.preferred in ports
@@ -378,14 +380,13 @@ class App:
 
         # A filled area rather than one bar per sample: at 1 Hz the bars are ten
         # pixels apart and read as scattered dots rather than as a flat zero.
-        worst, area, outline = 0.0, [], []
+        worst, outline = 0.0, []
         for timestamp, loss, _rssi, _noise in points:
             age = now - timestamp
             if age > span or loss is None:
                 continue
             x = 38 + (1 - age / span) * (width - 42)
-            y = base - (min(loss, 100) / 100) * (base - top)
-            outline += [x, y]
+            outline += [x, base - (min(loss, 100) / 100) * (base - top)]
             worst = max(worst, loss)
         if len(outline) >= 4:
             colour = GREEN if worst < 2 else (AMBER if worst < 20 else RED)
@@ -399,25 +400,22 @@ class App:
     def draw_leds(self):
         canvas = self.led_canvas
         canvas.delete('all')
-        size, gap, top = 38, 10, 18
+        size, gap, top = 40, 11, 14
         for index, colour in enumerate(self.receiver.pixels):
             try:
                 red, green, blue = (int(colour[i:i + 2], 16) for i in (0, 2, 4))
             except ValueError:
                 red = green = blue = 0
-            x = 6 + index * (size + gap) + (14 if index == 7 else 0)
+            x = 6 + index * (size + gap)
             dark = max(red, green, blue) < 8
-            # An unlit pixel is drawn as a dim outlined disc, not pure black, so
-            # it reads as an LED that is off rather than as a hole in the card.
+            # An unlit pixel is a dim outlined disc, not pure black, so it reads
+            # as an LED that is off rather than as a hole in the card.
             fill = ('#161f2b' if dark
                     else f'#{scale_channel(red):02x}{scale_channel(green):02x}{scale_channel(blue):02x}')
             canvas.create_oval(x, top, x + size, top + size, fill=fill,
                                outline='#33465c' if dark else fill, width=1)
             canvas.create_text(x + size / 2, top + size + 12, text=str(index), fill=MUTED,
                                font=('Menlo', 9))
-        canvas.create_text(6, 8, anchor='nw', text='history', fill=MUTED, font=('Helvetica', 9))
-        canvas.create_text(6 + 7 * (size + gap) + 14, 8, anchor='nw', text='role',
-                           fill=MUTED, font=('Helvetica', 9))
 
     def repaint(self):
         receiver = self.receiver
@@ -451,14 +449,13 @@ class App:
         ttk.Style().configure('Head.TLabel', foreground=colour)
 
         def show(key, value, fmt='{:.0f}'):
-            variable, label = self.metrics[key]
+            variable, _label = self.metrics[key]
             variable.set('—' if value is None else fmt.format(value))
-            return label
 
         show('loss', loss, '{:.1f}')
         self.metrics['loss'][1].configure(
             foreground=TEXT if not loss else (AMBER if loss < 20 else RED))
-        show('rssi', rssi, '{:.0f}')
+        show('rssi', rssi)
         show('snr', None if rssi is None or noise is None else rssi - noise)
         show('rate', received)
 
@@ -471,7 +468,7 @@ class App:
                 f"   ·   sleep {banner.get('Wi-Fi sleep', '?')}"
                 f"   ·   transmitter {stat.get('src', 'none')}")
 
-        self.draw_rssi(*[self.charts['minute'][0], receiver.packets, MINUTE])
+        self.draw_rssi(self.charts['minute'][0], receiver.packets, MINUTE)
         self.draw_loss(self.charts['minute'][1], receiver.samples, MINUTE)
         self.draw_rssi(self.charts['half_hour'][0],
                        [(t, r, n, 0) for t, _l, r, n in receiver.samples], HALF_HOUR)
