@@ -71,7 +71,7 @@ The page refreshes itself every minute.
 |---|---|
 | `GET /api/inventory/head?dataset=` | Revision + count, used by the apps' status line |
 | `GET /api/inventory?dataset=` | All records with per-record revisions |
-| `POST /api/inventory/push` | `{dataset, records, base_revisions, client}`. Compare-and-swap: 409 with current records if any base is stale; 400 if the post-push set fails validation (duplicate number/NFC, bad fields). Each accepted push advances the revision by exactly 1. Records are never deleted |
+| `POST /api/inventory/push` | `{dataset, records, base_revisions, client}`. Compare-and-swap: 409 with current records if any base is stale; 400 if the post-push set fails validation (duplicate number/NFC, bad fields). Each push that changes something advances the revision by exactly 1; identical records write nothing. 503 `{retryable: true}` if the document kept changing under the push (the desktop retries). Records are never deleted |
 | `/login`, `POST /api/session` | Password sign-in / sign-out for the web page |
 | `POST /api/sightings` | `{dataset, cubes: {mac: {kind: {at, detail}}}, zones: [...]}`: replaces the calling computer's sightings report |
 | `/` | Read-only inventory app (cubes, computers, zones, activity) |

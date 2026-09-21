@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Web Sync view: the universal Sync control plus the manual operations behind it.
 
-Manual: Check, Sync with conflict decisions, Upload only, Download only, Publish / Pull the zone
-database. The password is stored on this computer and shared by every app (web_client).
-Network I/O runs on worker threads."""
+Manual: Check, Sync now, Upload only, Download only, Publish / Pull the zone database. Shows every
+record a sync would move, and what the merge decided by itself when two computers changed the same
+device (the newest change wins). The password is stored on this computer and shared by every app
+(web_client). Network I/O runs on worker threads."""
 import argparse
 import queue
 import sys
@@ -11,7 +12,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, simpledialog
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
@@ -45,7 +46,6 @@ class App:
         self.events = queue.Queue()
         self.busy = False
         self.plan = None
-        self.resolutions = {}
         self.setup_ui()
         root.after(100, self.poll)
         root.after(200, lambda: self.start('check'))
@@ -78,7 +78,7 @@ class App:
         controls = ttk.Frame(outer); controls.pack(fill='x', pady=12)
         self.check_button = ttk.Button(controls, text='Check', command=lambda: self.start('check'))
         self.check_button.pack(side='left', padx=(0, 8))
-        self.sync_button = ttk.Button(controls, text='Sync with decisions', command=lambda: self.start('sync'))
+        self.sync_button = ttk.Button(controls, text='Sync now', command=lambda: self.start('sync'))
         self.sync_button.pack(side='left')
         self.upload_button = ttk.Button(controls, text='Upload only', command=lambda: self.start('upload'))
         self.upload_button.pack(side='left', padx=(8, 0))
@@ -88,22 +88,21 @@ class App:
         self.publish_button.pack(side='left', padx=(16, 0))
         self.pull_button = ttk.Button(controls, text='Pull zone DB', command=lambda: self.start('pull'))
         self.pull_button.pack(side='left', padx=(8, 0))
-        self.take_web = ttk.Button(controls, text='Conflict: take web', command=lambda: self.resolve('remote'))
-        self.keep_local = ttk.Button(controls, text='Conflict: keep local', command=lambda: self.resolve('local'))
-        self.keep_local.pack(side='right'); self.take_web.pack(side='right', padx=8)
         ttk.Label(outer, foreground=MUTED, wraplength=1000, text=(
             'The Sync button above does everything (inventory both ways, then the zone database). The manual '
             'operations here do one part each. Web changes are written to this computer only while the pairing and '
-            'cube-flasher apps are closed or idle; otherwise they wait for the next sync. Conflicts are never resolved '
-            'automatically: select them, choose which side to keep, then "Sync with decisions". A new zone database '
-            'version is created only when the cube mappings changed.')).pack(anchor='w')
+            'cube-flasher apps are closed or idle; otherwise they wait for the next sync. Sync never needs a decision: '
+            'when two computers changed the same device, the newest change wins, and a number or tag claimed by two '
+            'devices stays with the newest claim (rows marked "Decided"; also logged as events). To reverse a '
+            'decision, make the change again on either computer and Sync. A new zone database version is created '
+            'only when the cube mappings changed.')).pack(anchor='w')
 
         middle = ttk.Frame(outer); middle.pack(fill='both', expand=True, pady=(12, 0))
-        self.tree = ttk.Treeview(middle, columns=('change', 'mac', 'local', 'web', 'choice'), show='headings', height=10)
+        self.tree = ttk.Treeview(middle, columns=('change', 'mac', 'local', 'web', 'merged'), show='headings', height=10)
         for col, label, width in [('change', 'Change', 120), ('mac', 'MAC', 150), ('local', 'This computer', 260),
-                                  ('web', 'Web', 260), ('choice', 'Resolution', 110)]:
-            self.tree.heading(col, text=label); self.tree.column(col, width=width, stretch=col in ('local', 'web'))
-        self.tree.tag_configure('conflict', foreground=RED)
+                                  ('web', 'Web', 240), ('merged', 'After sync', 240)]:
+            self.tree.heading(col, text=label); self.tree.column(col, width=width, stretch=col in ('local', 'web', 'merged'))
+        self.tree.tag_configure('decided', foreground=AMBER)
         self.tree.tag_configure('upload', foreground=BLUE)
         self.tree.tag_configure('download', foreground=GREEN)
         self.tree.pack(side='left', fill='both', expand=True)
@@ -127,9 +126,6 @@ class App:
         for button, ok in ((self.check_button, idle), (self.sync_button, idle), (self.upload_button, idle),
                            (self.download_button, idle), (self.publish_button, idle), (self.pull_button, idle)):
             button.state(['!disabled'] if ok else ['disabled'])
-        conflicts = bool(self.plan and self.plan['conflicts']) and idle
-        for button in (self.take_web, self.keep_local):
-            button.state(['!disabled'] if conflicts else ['disabled'])
 
     # ---------- check / sync ----------
     def ask_password(self):
@@ -149,9 +145,9 @@ class App:
         self.set_status({'check': 'Checking web inventory…', 'sync': 'Synchronizing…', 'upload': 'Uploading local changes…',
                          'download': 'Downloading web changes…', 'publish': 'Publishing the zone database…',
                          'pull': 'Pulling the zone database…'}[job])
-        threading.Thread(target=self.worker, args=(job, dict(self.resolutions)), daemon=True).start()
+        threading.Thread(target=self.worker, args=(job,), daemon=True).start()
 
-    def worker(self, job, resolutions):
+    def worker(self, job):
         try:
             name = web_client.client_name('Web Sync')
             if job == 'check':
@@ -162,7 +158,7 @@ class App:
                 published, status = zone_publish.pull(self.database, self.web)
                 result = dict(published=published, status=status)
             else:
-                result = web_sync.run(self.database, self.web, name, resolutions,
+                result = web_sync.run(self.database, self.web, name,
                                       upload=job != 'download', download=job != 'upload')
             self.events.put(('done', (job, result, None)))
         except Exception as exc:  # reported in the UI
@@ -177,8 +173,14 @@ class App:
             self.set_status('The web inventory rejected the password — click Check to enter it again', RED)
             self.log(str(error)); self.update_buttons()
             return
+        if isinstance(error, web_sync.SyncBusy):
+            self.set_status('Another app on this computer is syncing right now — nothing else is needed', AMBER)
+            self.update_buttons()
+            return
         if error:
-            self.set_status(f'{job.capitalize()} stopped: {error}', RED); self.log(f'{job} failed: {error}')
+            note = (' — nothing is lost; the next sync checks what the web received' if getattr(error, 'after_push', False)
+                    else '')
+            self.set_status(f'{job.capitalize()} stopped: {error}{note}', RED); self.log(f'{job} failed: {error}')
             self.update_buttons()
             return
         if self.prompted:
@@ -192,41 +194,36 @@ class App:
         self.plan = result
         if result.get('sightings') is not None:
             self.log(f"Reported last-seen data for {result['sightings']} cubes")
-        self.resolutions = {mac: side for mac, side in self.resolutions.items() if mac in result['conflicts']}
         self.show_plan()
-        up, down, conflicts = len(result['upload']), len(result['download']), len(result['conflicts'])
+        for note in result['notes']:
+            self.log('Decided: ' + note['text'])
+        for entry in result['lost']:
+            self.log('Gives way: ' + entry['text'])
+        up, down, decided = len(result['upload']), len(result['download']), len(result['notes'])
+        lost = f" · {len(result['lost'])} device(s) here give way to a newer change" if result['lost'] else ''
         if job == 'check':
-            if conflicts:
-                self.set_status(f'{conflicts} conflict(s) need a decision · {up} to upload · {down} to download', RED)
-            elif up or down:
-                self.set_status(f'{up} local change(s) to upload · {down} web change(s) to download — Sync now', AMBER)
+            if up or down:
+                self.set_status(f'{up} local change(s) to upload · {down} web change(s) to download — Sync now{lost}', AMBER)
             else:
                 self.set_status(f"Up to date with web revision {result['revision']}", GREEN)
-            self.log(f"Checked revision {result['revision']}: upload {up}, download {down}, conflicts {conflicts}")
+            self.log(f"Checked revision {result['revision']}: upload {up}, download {down}, decided {decided}")
         else:
+            up = len(result['uploaded'])
             if job == 'upload':
-                up = len(result.get('uploaded', result['upload']))
-            elif job == 'download':
-                up = 0
-            if conflicts:
-                self.set_status(f'Nothing changed: {conflicts} conflict(s) need a decision, then Sync again', RED)
-            elif job == 'upload':
                 self.set_status(f"Uploaded {up}. {result['unapplied']} web change(s) not downloaded (Download only or "
                                 'Sync to take them)', AMBER if result['unapplied'] else GREEN)
             elif result['unapplied']:
-                self.set_status(f"Uploaded {up}. {result['unapplied']} web change(s) wait until the pairing and "
-                                'flasher apps are closed — then Sync again', AMBER)
+                self.set_status(f"Uploaded {up}. {result['unapplied']} web change(s) wait ({result['deferred']}) — "
+                                f'then Sync again{lost}', AMBER)
             else:
                 self.set_status(f"Synchronized: uploaded {up}, applied {down if result['applied'] else 0} · "
-                                f"revision {result['revision']}", GREEN)
+                                f"revision {result['revision']}{lost}", AMBER if lost else GREEN)
             self.log(f"Sync revision {result['revision']}: uploaded {up}, applied "
-                     f"{down if result['applied'] else 0}, waiting {result['unapplied']}, conflicts {conflicts}")
-            if not conflicts:
-                # List only what remains: web changes still waiting for the apps to close.
-                self.resolutions = {}
-                self.plan = dict(result, upload=result.get('waiting_upload', []),
-                                 download=[] if result['applied'] or not result['unapplied'] else result['download'])
-                self.show_plan()
+                     f"{down if result['applied'] else 0}, waiting {result['unapplied']}, decided {decided}")
+            # List only what remains: web changes still waiting for the apps to close.
+            self.plan = dict(result, upload=result.get('waiting_upload', []),
+                             download=result['download'] if result['unapplied'] else [])
+            self.show_plan()
         self.update_buttons()
 
     def zone_finished(self, job, result):
@@ -241,18 +238,21 @@ class App:
         self.set_status(text, GREEN)
         self.log(text)
 
+    def decisions(self, mac):
+        return [n['text'] for n in self.plan['notes'] if n['mac'] == mac] + \
+               [e['text'] for e in self.plan['lost'] if e['mac'] == mac]
+
     def show_plan(self):
         self.tree.delete(*self.tree.get_children())
         if not self.plan:
             return
         plan = self.plan
-        rows = [(mac, 'conflict') for mac in plan['conflicts']]
-        rows += [(mac, 'upload') for mac in plan['upload']] + [(mac, 'download') for mac in plan['download'] if mac not in plan['upload']]
+        rows = [(mac, 'upload') for mac in plan['upload']] + [(mac, 'download') for mac in plan['download'] if mac not in plan['upload']]
         for mac, kind in rows:
-            choice = {'local': 'keep local', 'remote': 'take web'}.get(self.resolutions.get(mac), '')
-            label = {'conflict': '⚠ Conflict', 'upload': '↑ Upload', 'download': '↓ Download'}[kind]
+            label = {'upload': '↑ Upload', 'download': '↓ Download'}[kind] + (' · Decided' if self.decisions(mac) else '')
             self.tree.insert('', 'end', iid=mac, values=(label, mac, describe(plan['local'].get(mac)),
-                             describe(plan['remote'].get(mac)), choice), tags=(kind,))
+                             describe(plan['remote'].get(mac)), describe(plan['merged'].get(mac))),
+                             tags=('decided' if self.decisions(mac) else kind,))
 
     def show_detail(self):
         selection = self.tree.selection()
@@ -260,25 +260,14 @@ class App:
         if self.plan and selection:
             mac = selection[0]
             local, remote = self.plan['local'].get(mac) or {}, self.plan['remote'].get(mac) or {}
-            text = mac + '\n\n'
+            merged = self.plan['merged'].get(mac) or {}
+            text = mac + '\n\n' + ''.join(line + '\n\n' for line in self.decisions(mac))
             for field in SHOWN:
-                a, b = local.get(field, '—'), remote.get(field, '—')
+                a, b, c = local.get(field, '—'), remote.get(field, '—'), merged.get(field, '—')
                 marker = '≠' if a != b else ' '
-                text += f'{marker} {field}\n   here: {a}\n   web:  {b}\n'
+                text += f'{marker} {field}\n   here: {a}\n   web:  {b}\n' + (f'   sync: {c}\n' if a != b else '')
         self.detail.configure(state='normal'); self.detail.delete('1.0', 'end')
         self.detail.insert('1.0', text); self.detail.configure(state='disabled')
-
-    def resolve(self, side):
-        chosen = [mac for mac in self.tree.selection() if self.plan and mac in self.plan['conflicts']]
-        if not chosen:
-            messagebox.showinfo('Resolve conflict', 'Select one or more conflict rows first.')
-            return
-        for mac in chosen:
-            self.resolutions[mac] = side
-        self.show_plan()
-        left = [mac for mac in self.plan['conflicts'] if mac not in self.resolutions]
-        self.set_status(f'{len(chosen)} resolution(s) chosen · {len(left)} conflict(s) left'
-                        + ('' if left else ' — Sync now to apply them'), AMBER if left else BLUE)
 
     def poll(self):
         try:
@@ -290,6 +279,10 @@ class App:
                     self.log(payload)
         except queue.Empty:
             pass
+        except Exception as exc:  # a result this view cannot show must not freeze it
+            self.busy = False
+            self.set_status(f'Unexpected result: {type(exc).__name__}: {exc}', RED)
+            self.update_buttons()
         self.root.after(200, self.poll)
 
 

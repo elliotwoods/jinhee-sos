@@ -78,6 +78,16 @@ describe("push / pull", () => {
     expect(doc.changes[0]).toMatchObject({ mac: a.mac, client: "other" });
   });
 
+  it("identical records write nothing, and a busy document is retryable instead of a crash", async () => {
+    const a = device("02:00:00:00:00:01", 5);
+    await push(db, "d", { [a.mac]: a }, { [a.mac]: 0 }, actor);
+    expect(await push(db, "d", { [a.mac]: a }, { [a.mac]: 1 }, actor)).toMatchObject({ status: 200, body: { revision: 1, changed: 0 } });
+    expect((await db.read("d")).doc).toMatchObject({ revision: 1, changes: [{ revision: 1 }] });
+    db.write = async () => { throw new StoreConflict("Document changed during write"); };
+    expect(await push(db, "d", { [a.mac]: { ...a, cube_id: 6 } }, { [a.mac]: 1 }, actor))
+      .toMatchObject({ status: 503, body: { retryable: true } });
+  });
+
   it("memory store rejects stale etags", async () => {
     await db.write("x", { revision: 1, records: {}, changes: [] }, null);
     await expect(db.write("x", { revision: 2, records: {}, changes: [] }, null)).rejects.toBeInstanceOf(StoreConflict);

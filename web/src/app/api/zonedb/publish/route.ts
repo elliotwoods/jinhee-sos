@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { datasetFrom, json, readJson, withPassword } from "@/lib/http";
-import { publish, ZoneDbError } from "@/lib/zonedb";
+import { publish, ZoneDbBusy, ZoneDbError } from "@/lib/zonedb";
 
 export async function POST(req: NextRequest) {
   const body = await readJson(req);
@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
       return json({ ...result.doc, changed: result.changed });
     } catch (error) {
       if (error instanceof ZoneDbError) return json({ error: error.message }, 400);
+      if (error instanceof ZoneDbBusy) return json({ error: error.message, retryable: true }, 503);
       throw error;
     }
   });

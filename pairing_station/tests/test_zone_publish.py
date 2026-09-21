@@ -93,7 +93,7 @@ class ZonePublishTests(unittest.TestCase):
         with self.assertRaises(WebError):
             zone_publish.pull(self.paths['a'], self.client())
 
-    def test_conflicts_block_publishing(self):
+    def test_device_changed_on_two_computers_does_not_block_publishing(self):
         zone_publish.web_sync.run(self.paths['a'], self.client(), 'a')
         zone_publish.web_sync.run(self.paths['b'], self.client(), 'b')
         for name, number in (('a', 101), ('b', 102)):
@@ -103,9 +103,7 @@ class ZonePublishTests(unittest.TestCase):
             db.close()
             if name == 'a':
                 zone_publish.web_sync.run(self.paths['a'], self.client(), 'a')
-        with self.assertRaises(zone_publish.PublishBlocked):
-            self.publish('b')
-        self.assertEqual(self.web.zonedb['version'], 0)
+        self.assertEqual(self.publish('b')['published']['version'], 1)  # the merge settled it; nobody had to decide
 
     def test_status_line_warns_about_unpublished_and_newer_web_versions(self):
         anonymous = WebClient(self.web.url, None, 'jinhee-sos', timeout=2)  # status lines have no password

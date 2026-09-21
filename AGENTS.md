@@ -67,7 +67,7 @@ system interpreter. Python 3.14 with Tk is the tested Mac configuration.
 - `usb_identify.py`: optional USB identification and reported-version checks; no upload.
 - `port_lock.py`: advisory serial ownership shared with flashers, plus pyserial exclusivity.
 - `http_api.py`: loopback control running Python on the Tk/SQLite owner thread.
-- `inventory_sync.py`: public per-MAC JSON synchronization, conflict validation;
+- `inventory_sync.py`: public per-MAC JSON synchronization, validation, the conflict-free merge;
   also the shared three-way `merge`/`apply`/`validate` used by the web sync.
 - `web_client.py`, `web_sync.py`, `web_status.py`: stdlib client for `web/`, web
   three-way sync (own baseline), and the background read-only status line the apps
@@ -98,7 +98,7 @@ or a newly identified cube replaces the pin. Filter/search must not hide that pi
 
 `pairing_station/data/devices.sqlite3` is the local authoritative database. CSV is
 an export, not an editable import. `inventory/devices/*.json` is the shared Git
-inventory; see setup instructions for synchronization and conflict resolution.
+inventory; see setup instructions for synchronization and the merge rules.
 The web inventory (`web/`) stores the same records; `web/src/lib/records.ts` mirrors
 `inventory_sync.validate`. Change record fields or validation in both together, or a
 computer could be unable to apply what the server accepted.
@@ -119,7 +119,18 @@ computer could be unable to apply what the server accepted.
   reserved tag. Transfer atomically, audit both devices, preserve unrelated tags,
   and leave a retryable pending mapping if the new device does not acknowledge.
   This does not erase the old cube's firmware remotely.
-- Bulk saved-mapping transmission must not steal NFC ownership.
+- Bulk saved-mapping transmission must not steal NFC ownership. In the sync merge a record
+  whose `pending_uid` equals its `uid` has not changed its identity.
+- Sync never asks for a decision and must stay that way: `inventory_sync.merge_records` is pure,
+  always resolves, and gives the same answer on every computer (newest `updated_at` wins a
+  device's number/tags whole; role merges separately, excluded > led > auto; absence or a
+  role-only record never deletes; `reconcile` leaves a number or tag claimed twice with the
+  newest claim and keeps the loser's own `updated_at`, never `now()`). Decisions are audited
+  (`sync_resolved`, `sync_applied`) and the operator is told what a local device lost. Keep
+  `tests/test_sync_convergence.py` passing (NCT_SYNC_SEEDS=300 for a longer run) when touching
+  database writers, the merge, `web_sync.run` or the fake server.
+- `inventory_sync.apply` writes only the planned MACs and refuses (`LocalChanged`) if SQLite
+  changed since the plan; never reintroduce a blanket rewrite or `INSERT OR REPLACE` on devices.
 - A previous pending mapping must not disable Register. Fresh registration retains
   it until a new scan is accepted. A disconnected station or genuinely active
   operation can disable Register; display the reason.

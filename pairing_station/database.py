@@ -21,6 +21,11 @@ def hex_bytes(value, lengths):
         raise ValueError('Unsupported byte length')
     return value
 
+def released_status(cube_id, uid, pending_uid):
+    """Status of a device after it lost a tag or its number (local take-over and sync repairs agree)."""
+    return ('needs_number' if cube_id is None else
+            'unconfirmed' if pending_uid else 'not_transmitted' if uid else 'awaiting_tag')
+
 class Database:
     def __init__(self, path, recover_pending=True):
         self.path = Path(path)
@@ -183,6 +188,20 @@ class Database:
         self.export_default()
         return self.get(mac)
 
+    def unregister(self, mac, detail):
+        """Release a device's number, tag and pending tag (its board now runs something else). Role is kept.
+        Returns the previous row, or None if there was nothing to release."""
+        with self.conn:
+            self.conn.execute('BEGIN IMMEDIATE')
+            row = self.get(mac)
+            if not row or (row['cube_id'] is None and not row['uid'] and not row['pending_uid']):
+                return None
+            self.conn.execute("UPDATE devices SET cube_id=NULL,uid=NULL,pending_uid=NULL,status='needs_number',updated_at=?,detail=? WHERE mac=?",
+                              (timestamp(), detail, mac))
+            self.event(mac, 'unregistered', f"#{row['cube_id']} uid={row['uid']} pending={row['pending_uid']}: {detail}")
+        self.export_default()
+        return row
+
     def prepare(self, mac, uid, take_over=False):
         uid = hex_bytes(uid, {4, 7})
         with self.conn:
@@ -197,8 +216,7 @@ class Database:
             for previous in conflicts:
                 kept_uid = None if previous['uid'] == uid else previous['uid']
                 kept_pending = None if previous['pending_uid'] == uid else previous['pending_uid']
-                status = ('needs_number' if previous['cube_id'] is None else
-                          'unconfirmed' if kept_pending else 'not_transmitted' if kept_uid else 'awaiting_tag')
+                status = released_status(previous['cube_id'], kept_uid, kept_pending)
                 detail = f"Tag {uid} transferred to #{row['cube_id']} ({mac}); previous device firmware not cleared"
                 self.conn.execute('UPDATE devices SET uid=?,pending_uid=?,status=?,updated_at=?,detail=? WHERE mac=?',
                                   (kept_uid, kept_pending, status, timestamp(), detail, previous['mac']))

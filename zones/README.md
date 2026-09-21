@@ -150,19 +150,21 @@ Steps 2-4 briefly put the board in its bootloader. The table shows what each por
   - **Force flash:** *Flash selected* on a REFUSED board asks (default No) whether to overwrite it anyway, e.g. a
     board the database still lists as a neocube/excluded device, or a range-test / pool-central board being
     repurposed. The known pairing station MAC and non-ESP32 USB devices can never be forced. The receipt records
-    `forced: true`. Forcing does not change the pairing database, so a board still registered as a cube is refused
-    again next time until its registration is cleared there.
+    `forced: true`. Force-flashing a board registered as a **neocube** unregisters it once the zone firmware is
+    written: its number, NFC tag and pending tag are released (event `unregistered`, receipt `unregistered`), its
+    role stays `auto`, and later reflashes need no force. The flashed zone database is the one that was already
+    published and still contains the old mapping. Publish a new zone database in the Zone Database Manager, and run
+    Sync so the web copy and other computers take the release. An excluded device's record is not changed.
 - **Every flash** does the following:
-  - backs up the original flash (first time per MAC, in `data/backups/`)
   - writes the firmware, the zone identity and the published cube database
   - reads the data back
   - reboots
   - checks the zone's own report
 - **Build all firmware** rebuilds all four sketches. Headless: `python zones/flasher/zone_build.py`.
 
-Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43 [--rx-gain 38]`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube/excluded device).
+Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43 [--rx-gain 38]`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube, unregistering it, or an excluded device).
 
-Restore a board's original firmware from its backup:
+Flashing takes no backup of the old firmware. Boards backed up by earlier versions can be restored from `data/backups/`:
 `pairing_station/.venv/bin/python -m esptool --chip esp32c3 --port <port> write-flash 0 zones/flasher/data/backups/<MAC>_<time>.bin`
 
 ## Cube monitor (second tab)

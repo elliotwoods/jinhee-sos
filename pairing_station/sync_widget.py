@@ -3,7 +3,9 @@
 One click uploads local inventory changes, downloads web changes and publishes/pulls the zone
 database (sync_all.sync). The button shows what is pending: "⟳ Sync ↑3 ↓2". The web password is
 asked for once, stored owner-only (web_client.save_password) and shared by every app until the web
-rejects it. Manual push/pull and conflict decisions live in the Web Sync view (inventory_web/app.py).
+rejects it. Sync never needs a decision: when two computers changed the same device the newest change
+wins, and the operator is told what a local device lost. Manual push/pull and the record-by-record
+view live in the Web Sync view (inventory_web/app.py).
 
 Threading: status checks and syncs run on worker threads; results come back through a queue that
 the Tk thread polls. Nothing here touches Tk or the host's SQLite connection from a worker.
@@ -15,11 +17,13 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 from tkinter import messagebox, simpledialog
 
 import sync_all
 import web_client
 from web_client import Unauthorized, Unreachable, WebClient, client_name
+from web_sync import SyncBusy
 
 ROOT = Path(__file__).resolve().parents[1]
 COLORS = dict(ok='#54d6a0', pending='#ffc16b', error='#ff7b7b', muted='#9aafc4', busy='#82b8fa', ink='#101720')
@@ -42,9 +46,8 @@ def describe(status):
         return '⟳ Sync · sign in', 'error', 'The web rejected the stored password; click Sync to enter it again'
     if state == 'offline':
         return 'Sync · offline', 'muted', 'Web unreachable; working locally (flashing and zone updates use the last pull)'
-    if status['conflicts']:
-        return f'⚠ Sync · {status["conflicts"]} conflict{"s" if status["conflicts"] != 1 else ""}', 'error', \
-            'Local and web changed the same device; decide in Web Sync'
+    if state == 'error':
+        return '⚠ Sync · problem', 'error', f'{status.get("message") or "Sync status unavailable"} — click Sync to try'
     up, down = [], []
     if status['inventory_up']:
         up.append(f'{status["inventory_up"]} inventory change{"s" if status["inventory_up"] != 1 else ""}')
@@ -61,6 +64,8 @@ def describe(status):
         notes.append('↓ ' + ' + '.join(down))
     if status.get('waiting') and not status['inventory_down']:
         notes.append(f'{status["waiting"]} downloaded change(s) wait for the pairing/cube-flasher apps to be idle')
+    if status.get('lost'):
+        notes.append(f'{status["lost"]} device(s) here give way to a newer change on another computer')
     if not (status['up'] or status['down']):
         version = status.get('web_version') or status.get('local_version')
         return '✓ Synced', 'ok', f'Up to date · zone database v{version}' if version else 'Up to date'
@@ -73,6 +78,9 @@ class SyncWidget(tk.Frame):
 
     def __init__(self, parent, database, app, held=(), can_apply=lambda: True, on_synced=None, bg=None,
                  muted=None, manual=True, start=True, server=None, dataset=None):
+        """`held`: instance-lock suffixes the host app holds. `can_apply`: is the host idle, so web changes
+        may be written into SQLite underneath it? Asked on the sync worker just before writing, so it
+        may only read plain state (no Tk, no SQLite)."""
         bg = bg or _background(parent)
         super().__init__(parent, bg=bg)
         self.database, self.app, self.held = Path(database), app, tuple(held)
@@ -113,7 +121,7 @@ class SyncWidget(tk.Frame):
                 self.client.password = web_client.load_password()  # signed in from another app
             return sync_all.status(self.database, self.client)
         except Exception as exc:  # status only: never disturb the host app
-            return dict(state='offline', error=f'{type(exc).__name__}: {exc}')
+            return dict(state='error', message=f'Sync status unavailable ({type(exc).__name__}: {exc})')
 
     def refresh(self):
         self._wake.set()
@@ -133,15 +141,21 @@ class SyncWidget(tk.Frame):
     def _poll(self):
         try:
             while True:
-                kind, payload = self.events.get_nowait()
-                if kind == 'status':
-                    if payload.get('state') == 'unauthorized':
-                        self.client.password = None
-                    self.status = payload
-                elif kind == 'synced':
-                    self._synced(*payload)
-            self.render()
-        except queue.Empty:
+                try:
+                    kind, payload = self.events.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    if kind == 'status':
+                        if payload.get('state') == 'unauthorized':
+                            self.client.password = None
+                        self.status = payload
+                    elif kind == 'synced':
+                        self._synced(*payload)
+                except tk.TclError:
+                    raise
+                except Exception:  # one bad result must not stop the button from working
+                    traceback.print_exc()
             self.render()
         except tk.TclError:  # widget destroyed while closing
             return
@@ -163,11 +177,6 @@ class SyncWidget(tk.Frame):
     def click(self):
         if self.busy:
             return
-        if self.status.get('conflicts'):
-            if messagebox.askyesno('Sync', 'Some devices changed both here and on the web. Open Web Sync to decide?',
-                                   parent=self):
-                open_web_sync(self.database)
-            return
         if not self.client.password:
             self.client.password = web_client.load_password()
         prompted = False
@@ -178,17 +187,17 @@ class SyncWidget(tk.Frame):
             if not password:
                 return
             self.client.password, prompted = password, True
-        apply_ok = bool(self.can_apply())
         self.busy = True
         self.render()
-        threading.Thread(target=self._work, args=(apply_ok, prompted), daemon=True).start()
+        threading.Thread(target=self._work, args=(prompted,), daemon=True).start()
 
-    def _work(self, apply_ok, prompted):
+    def _work(self, prompted):
         try:
             if prompted:
                 self.client.head()  # verify before storing
                 web_client.save_password(self.client.password)
-            result = sync_all.sync(self.database, self.client, client_name(self.app), held=self.held, apply_ok=apply_ok)
+            result = sync_all.sync(self.database, self.client, client_name(self.app), held=self.held,
+                                   apply_ok=self.can_apply)
             self.events.put(('synced', (result, None)))
         except Exception as exc:  # reported in the widget
             self.events.put(('synced', (None, exc)))
@@ -196,25 +205,50 @@ class SyncWidget(tk.Frame):
 
     def _synced(self, result, error):
         self.busy = False
+        self.render()
         if isinstance(error, Unauthorized):
             web_client.forget_password()
             self.client.password = None
             messagebox.showerror('Sync', 'The web rejected the password. Click Sync to enter it again.', parent=self)
+            return
+        if isinstance(error, SyncBusy):
+            messagebox.showinfo('Sync', 'Another app on this computer is syncing right now. Nothing else is needed.',
+                                parent=self)
+            return
+        if error and getattr(error, 'after_push', False):
+            messagebox.showwarning('Sync', f'Sync was interrupted while uploading ({error}).\n\nNothing is lost: your '
+                                   'changes are safe on this computer, and the next Sync checks what the web received. '
+                                   'Click Sync again.', parent=self)
             return
         if isinstance(error, Unreachable):
             messagebox.showwarning('Sync', 'The web is unreachable; nothing changed. Everything keeps working locally.',
                                    parent=self)
             return
         if error:
-            messagebox.showerror('Sync', f'Sync stopped: {error}', parent=self)
+            messagebox.showerror('Sync', f'Sync stopped: {error}\n\nNothing is lost; click Sync to try again.', parent=self)
             return
         self.last_sync = time.strftime('%H:%M')
-        if result['blocked']:
-            if messagebox.askyesno('Sync', f'{result["blocked"]}. Local changes were not uploaded.\n\nOpen Web Sync '
-                                   'to choose which side to keep?', parent=self):
-                open_web_sync(self.database)
+        text = summary(result)
+        if text:
+            messagebox.showwarning('Sync', text, parent=self)
         if self.on_synced:
             self.on_synced(result)
+
+
+def summary(result):
+    """What the operator must hear after a successful sync, or '' when it just worked."""
+    inventory, parts = result.get('sync') or {}, []
+    lost = inventory.get('lost') or []
+    if lost:
+        lines = [entry['text'] for entry in lost[:6]] + ([f'… and {len(lost) - 6} more'] if len(lost) > 6 else [])
+        waiting = '' if inventory.get('applied', True) else ' (takes effect here once the apps are idle)'
+        parts.append('A newer change on another computer took priority over these devices'
+                     f'{waiting}:\n\n' + '\n'.join('• ' + line for line in lines) +
+                     '\n\nA cube without a number or tag is left out of the zone database until it is set again.')
+    if result.get('zone_error'):
+        parts.append(f'The inventory synced, but the zone database was not published: {result["zone_error"]}\n'
+                     'Click Sync to try again.')
+    return '\n\n'.join(parts)
 
 
 def _background(widget):

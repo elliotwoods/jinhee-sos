@@ -68,7 +68,7 @@ class ZoneFlasherTests(unittest.TestCase):
                 data = (run / 'zdb_a.bin').read_bytes()[:size]
                 out.write_bytes(bytes([data[0] ^ 1]) + data[1:] if self.corrupt_readback else data)
             else:
-                out.write_bytes(b'\xff' * 16)  # backup
+                out.write_bytes(b'\xff' * 16)
         return 'ok'
 
     def boot(self, port, runner):
@@ -109,7 +109,7 @@ class ZoneFlasherTests(unittest.TestCase):
         slot = zonedb.parse_slot((run / 'zdb_a.bin').read_bytes())
         self.assertEqual((slot['version'], slot['count']), (1, 32))
         self.assertEqual(zonedb.parse_config((run / 'zcfg.bin').read_bytes()), dict(zone_type=1, point_id=2, name='Preshow 2', rx_gain=48))
-        self.assertEqual(sum('0x400000' in c for c in self.calls), 1)  # first flash backs up
+        self.assertFalse(any('0x400000' in c for c in self.calls))  # the old firmware is not backed up
         self.assertEqual(self.calls[-1][self.calls[-1].index('--after') + 1], 'watchdog-reset')
         self.assertTrue(all(c[c.index('--before') + 1] == 'no-reset' for c in self.calls[2:] if '--before' in c))
         db = Database(self.db_path)
@@ -118,7 +118,6 @@ class ZoneFlasherTests(unittest.TestCase):
         self.assertEqual([(z['mac'], z['name'], z['source'], z['db_version']) for z in zones], [(MAC, 'Preshow 2', 'flash', 1)])
         self.calls.clear()
         self.assertEqual(self.execute()['result'], 'success')
-        self.assertFalse(any('0x400000' in c for c in self.calls))  # backup kept, not repeated
 
     def test_refuses_without_a_published_database(self):
         db = Database(self.db_path)
@@ -153,6 +152,18 @@ class ZoneFlasherTests(unittest.TestCase):
         self.assertEqual(record['result'], 'success', record.get('detail'))
         self.assertTrue(record['forced'])
         self.assertTrue(any('write-flash' in c for c in self.calls))
+        self.assertEqual(record['unregistered'], dict(cube_id=cube['cube_id'], uid=cube['uid'], pending_uid=cube['pending_uid']))
+        self.assertIn(f'was neocube #{cube["cube_id"]}', record['detail'])
+        db = Database(self.db_path)
+        row, role = db.get(cube['mac']), db.roles().get(cube['mac'], 'auto')
+        events = [e['action'] for e in db.conn.execute('SELECT action FROM events WHERE mac=?', (cube['mac'],))]
+        db.close()
+        self.assertEqual((row['cube_id'], row['uid'], row['pending_uid'], row['status'], role), (None, None, None, 'needs_number', 'auto'))
+        self.assertIn('unregistered', events)
+        self.calls.clear()
+        record = self.execute()  # no longer a cube: an ordinary reflash, nothing to unregister
+        self.assertEqual(record['result'], 'success', record.get('detail'))
+        self.assertNotIn('unregistered', record)
         self.calls.clear()
         self.mac = '3C:0F:02:AD:83:24'
         record = self.execute(force=True)
@@ -163,6 +174,21 @@ class ZoneFlasherTests(unittest.TestCase):
         self.calls.clear()
         self.assertEqual(self.execute(force=True)['result'], 'failed')
         self.assertEqual(self.calls, [])
+
+    def test_forced_flash_that_writes_nothing_keeps_the_cube_registered(self):
+        db = Database(self.db_path)
+        cube = db.rows()[0]
+        db.close()
+        self.mac = cube['mac']
+        with patch.object(self, 'fake_tool', side_effect=lambda args, timeout=90: (
+                f'MAC: {self.mac}\nDetected flash size: 2MB' if 'flash-id' in [str(a) for a in args] else 'esptool v5.3.1')):
+            record = self.execute(force=True)
+        self.assertEqual(record['result'], 'failed')
+        self.assertNotIn('unregistered', record)
+        db = Database(self.db_path)
+        row = db.get(cube['mac'])
+        db.close()
+        self.assertEqual((row['cube_id'], row['uid']), (cube['cube_id'], cube['uid']))
 
     def test_readback_mismatch_and_boot_mismatch_are_not_success(self):
         self.corrupt_readback = True

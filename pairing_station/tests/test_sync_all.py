@@ -99,16 +99,31 @@ class SyncAllTests(unittest.TestCase):
         self.assertEqual(db.get(MAC)['cube_id'], 100)
         db.close()
 
-    def test_conflicts_stop_before_publishing(self):
+    def test_same_cube_registered_on_two_computers_still_publishes(self):
         sync_all.sync(self.paths['a'], self.client(), 'a')
         sync_all.sync(self.paths['b'], self.client(), 'b')
         self.register('a', 101)
         sync_all.sync(self.paths['a'], self.client(), 'a')
-        self.register('b', 102, uid='04:0A:0B:0D')
-        self.assertEqual(self.status('b')['conflicts'], 1)
+        self.register('b', 102, uid='04:0A:0B:0D')  # later: the newest registration wins
+        self.assertEqual(self.status('b')['conflicts'], 0)
         result = sync_all.sync(self.paths['b'], self.client(), 'b')
-        self.assertIn('conflict', result['blocked'])
-        self.assertEqual(self.web.zonedb['version'], 2)
+        self.assertEqual((result['blocked'], result['zone_error'], self.web.zonedb['version']), (None, None, 3))
+        self.assertIn(self.web.records[MAC]['record']['cube_id'], (101, 102))
+
+    def test_zone_publish_failure_is_not_a_failed_sync(self):
+        self.register('a', 100)
+        self.web.zonedb_missing = True  # a server from before the zone database
+        result = sync_all.sync(self.paths['a'], self.client(), 'a')
+        self.assertEqual((len(result['sync']['uploaded']), result['zone']), (33, None))
+        self.assertIn('404', result['zone_error'])
+        self.web.zonedb_missing = False
+        self.assertEqual(sync_all.sync(self.paths['a'], self.client(), 'a')['zone']['published']['version'], 1)
+
+    def test_status_says_what_is_wrong_instead_of_offline(self):
+        self.web.failures = [(500, '<html>oops</html>')]
+        status = self.status('a')
+        self.assertEqual(status['state'], 'error')
+        self.assertIn('temporary problem', status['message'])
 
     def test_host_app_lock_and_idle_flag(self):
         sync_all.sync(self.paths['a'], self.client(), 'a')

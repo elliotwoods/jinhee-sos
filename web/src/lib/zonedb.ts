@@ -2,6 +2,7 @@
 // NctZone firmware's validRecords(); change them together. Zones accept only a HIGHER
 // version, so the server allocates versions and they never go down.
 import { createHash } from "node:crypto";
+import { backoff } from "./inventory";
 import { type Store, StoreConflict, type ZoneDbDoc } from "./store";
 
 export const RECORD_SIZE = 18; // <IB7s6s: cubeID, uidLength, uid[7], mac[6]
@@ -10,6 +11,8 @@ const WRITE_ATTEMPTS = 5;
 const MAX_VERSION = 0xffffffff;
 
 export class ZoneDbError extends Error {}
+/** The document kept changing underneath the publish: worth another try (503), not a bad request. */
+export class ZoneDbBusy extends Error {}
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -97,7 +100,9 @@ export async function publish(
       await store.writeZoneDb(dataset, next, etag);
       return { doc: next, changed: true };
     } catch (error) {
-      if (!(error instanceof StoreConflict) || attempt + 1 >= WRITE_ATTEMPTS) throw error;
+      if (!(error instanceof StoreConflict)) throw error;
+      if (attempt + 1 >= WRITE_ATTEMPTS) throw new ZoneDbBusy("The zone database is busy with other publishes; try again");
+      await backoff(attempt);
     }
   }
 }

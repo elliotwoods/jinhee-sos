@@ -11,10 +11,12 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import inventory_sync  # noqa: E402
 import web_client  # noqa: E402
 
 # Tests must never read or overwrite this computer's stored web password (pairing_station/data/web_password).
 web_client.PASSWORD_FILE = Path(tempfile.mkdtemp(prefix='nct-test-password-')) / 'web_password'
+web_client.RETRY_DELAYS = (0.01, 0.01)  # tests do not wait for a real network to recover
 
 
 class FakeWebInventory:
@@ -25,6 +27,9 @@ class FakeWebInventory:
         self.sightings = {}  # computer -> last report
         self.offline = False
         self.before_push = None  # hook to simulate a concurrent writer
+        self.after_push = None   # hook(handler) once a push is stored; return True to lose the response
+        self.failures = []       # queued (status, body) answers for the next requests; body str = non-JSON
+        self.pushes = 0
         self.zonedb = dict(version=0, hash='', count=0, crc=0, records_b64='', published_at=None, published_by='',
                            inventory_revision=0)
         self.zonedb_missing = False  # simulate a server deployed before /api/zonedb existed
@@ -43,6 +48,21 @@ class FakeWebInventory:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def failed(self):
+                if not owner.failures:
+                    return False
+                code, body = owner.failures.pop(0)
+                if isinstance(body, str):
+                    data = body.encode()
+                    self.send_response(code)
+                    self.send_header('Content-Type', 'text/html')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self.reply(code, body)
+                return True
+
             def authorized(self):
                 header = self.headers.get('Authorization', '')
                 if header.removeprefix('Bearer ') != owner.password:
@@ -55,6 +75,8 @@ class FakeWebInventory:
                     self.close_connection = True
                     return
                 url = urlparse(self.path)
+                if self.failed():
+                    return
                 if url.path == '/api/zonedb/head' and not owner.zonedb_missing:  # public: no records
                     with owner.lock:
                         return self.reply(200, {k: owner.zonedb[k] for k in ('version', 'hash', 'count', 'published_at')})
@@ -74,7 +96,7 @@ class FakeWebInventory:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
                 path = urlparse(self.path).path
-                if not self.authorized():
+                if self.failed() or not self.authorized():
                     return
                 if path == '/api/sightings':
                     owner.sightings[self.headers.get('X-Inventory-Client', '').split(' · ')[0]] = body
@@ -88,10 +110,24 @@ class FakeWebInventory:
                                  if owner.records.get(mac, {'revision': 0})['revision'] != base}
                         if stale:
                             return self.reply(409, {'error': 'stale', 'records': stale})
-                        owner.revision += 1
-                        for mac, record in body['records'].items():
-                            owner.records[mac] = {'record': record, 'revision': owner.revision}
-                        return self.reply(200, {'revision': owner.revision})
+                        merged = {mac: entry['record'] for mac, entry in owner.records.items()} | body['records']
+                        try:  # like the web: the whole inventory after the push must be valid
+                            inventory_sync.validate(merged)
+                        except ValueError as exc:
+                            return self.reply(400, {'error': str(exc)})
+                        changed = [mac for mac, record in body['records'].items()
+                                   if owner.records.get(mac, {}).get('record') != record]
+                        if changed:
+                            owner.revision += 1
+                            owner.pushes += 1
+                        for mac in changed:
+                            owner.records[mac] = {'record': body['records'][mac], 'revision': owner.revision}
+                    if owner.after_push:
+                        hook, owner.after_push = owner.after_push, None
+                        if hook():
+                            self.close_connection = True
+                            return
+                    return self.reply(200, {'revision': owner.revision, 'changed': len(changed)})
                 if path == '/api/zonedb/publish' and not owner.zonedb_missing:
                     body_bytes = base64.b64decode(body['records_b64'])
                     if not body_bytes or len(body_bytes) % 18:

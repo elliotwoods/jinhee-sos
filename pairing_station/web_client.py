@@ -2,12 +2,14 @@
 
 Network calls block; run them on a worker thread, never the Tk callback.
 """
+import http.client
 import json
 import os
 from pathlib import Path
 import platform
 import ssl
 import tempfile
+import time
 import urllib.error
 from urllib.parse import quote
 import urllib.request
@@ -47,11 +49,18 @@ def forget_password():
 
 
 class WebError(RuntimeError):
-    pass
+    """`code`: the HTTP status, when the web answered at all."""
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 class Unreachable(WebError):
     pass
+
+
+class Transient(WebError):
+    """The web answered but could not serve the request right now (5xx, 429, 408): worth another try."""
 
 
 class Unauthorized(WebError):
@@ -61,7 +70,27 @@ class Unauthorized(WebError):
 class PushConflict(WebError):
     def __init__(self, records):
         self.records = records
-        super().__init__('Web records changed during sync: ' + ', '.join(sorted(records)))
+        super().__init__('Web records changed during sync: ' + ', '.join(sorted(records)), 409)
+
+
+RETRY_DELAYS = (1, 3)
+SLOW_TIMEOUT = 30  # pushes and publishes make several storage round trips on the server
+# Answers without the app's JSON body come from the platform in front of it, not from the inventory.
+PLATFORM_ERRORS = {401: 'the web answered with a sign-in page instead of the inventory', 403: 'the web refused this computer',
+                   408: 'the web took too long to answer', 413: 'too much data for one request',
+                   429: 'the web is busy; try again in a moment', 500: 'the web had a temporary problem',
+                   502: 'the web is temporarily unavailable', 503: 'the web is temporarily unavailable',
+                   504: 'the web took too long to answer'}
+
+
+def retrying(call, delays=None):
+    """Run an idempotent request, trying again after a short wait when the web is briefly unavailable."""
+    for delay in RETRY_DELAYS if delays is None else delays:
+        try:
+            return call()
+        except (Transient, Unreachable):
+            time.sleep(delay)
+    return call()
 
 
 def client_name(app='Web Sync'):
@@ -77,7 +106,7 @@ class WebClient:
         self.dataset = dataset
         self.timeout = timeout
 
-    def request(self, method, path, body=None, public=False):
+    def request(self, method, path, body=None, public=False, timeout=None):
         if not self.password and not public:
             raise Unauthorized('No inventory password entered')
         headers = {'Accept': 'application/json', 'X-Inventory-Client': self.client}
@@ -90,21 +119,24 @@ class WebClient:
         request = urllib.request.Request(self.server + path, data, headers, method=method)
         context = ssl.create_default_context()
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout, context=context) as response:
                 return json.loads(response.read() or b'{}')
         except urllib.error.HTTPError as exc:
             try:
                 payload = json.loads(exc.read() or b'{}')
-            except ValueError:
-                payload = {}
+            except (ValueError, OSError, http.client.HTTPException):
+                payload = None
             finally:
                 exc.close()
-            if exc.code == 401:
-                raise Unauthorized(payload.get('error', 'Wrong inventory password')) from None
-            if exc.code == 409 and 'records' in payload:
+            ours = isinstance(payload, dict) and isinstance(payload.get('error'), str)  # the app's own answer
+            if exc.code == 401 and ours:
+                raise Unauthorized(payload['error'], 401) from None
+            if exc.code == 409 and ours and 'records' in payload:
                 raise PushConflict(payload['records']) from None
-            raise WebError(f'{exc.code}: ' + payload.get('error', exc.reason or 'request failed')) from None
-        except (urllib.error.URLError, OSError, ValueError) as exc:
+            message = payload['error'] if ours else PLATFORM_ERRORS.get(exc.code, exc.reason or 'request failed')
+            kind = Transient if exc.code in (408, 429) or exc.code >= 500 else WebError
+            raise kind(f'{exc.code}: {message}', exc.code) from None
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
             raise Unreachable(f'Web inventory unreachable: {getattr(exc, "reason", exc)}') from None
 
     def head(self):
@@ -117,7 +149,7 @@ class WebClient:
     def push(self, records, base_revisions, name):
         return self.request('POST', '/api/inventory/push', {
             'dataset': self.dataset, 'records': records,
-            'base_revisions': base_revisions, 'client': name})
+            'base_revisions': base_revisions, 'client': name}, timeout=max(self.timeout, SLOW_TIMEOUT))
 
     def report_sightings(self, report):
         """Replace this computer's cube/zone sightings on the web (see sightings.collect)."""
@@ -135,4 +167,4 @@ class WebClient:
         """The server allocates the next universal version (or returns the current one for identical content)."""
         return self.request('POST', '/api/zonedb/publish', {
             'dataset': self.dataset, 'records_b64': records_b64, 'min_version': min_version,
-            'inventory_revision': inventory_revision, 'client': name})
+            'inventory_revision': inventory_revision, 'client': name}, timeout=max(self.timeout, SLOW_TIMEOUT))

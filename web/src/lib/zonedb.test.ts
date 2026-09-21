@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { MemoryStore } from "./store";
-import { crc32, head, publish, RECORD_SIZE, validateImage, ZoneDbError } from "./zonedb";
+import { MemoryStore, StoreConflict } from "./store";
+import { crc32, head, publish, RECORD_SIZE, validateImage, ZoneDbBusy, ZoneDbError } from "./zonedb";
 
 function record(cubeId: number, uid: number[], mac = [0x02, 0, 0, 0, 0, cubeId]): Uint8Array {
   const out = new Uint8Array(RECORD_SIZE);
@@ -73,6 +73,11 @@ describe("zone database publish", () => {
     const result = await publish(db, "d", pack(A), 0, 1, "me");
     expect(result.doc.version).toBe(2);
     expect((await db.readZoneDb("d")).doc.hash).toBe(result.doc.hash);
+  });
+
+  it("a document that keeps changing is busy (retryable), not a crash", async () => {
+    db.writeZoneDb = async () => { throw new StoreConflict("Document changed during write"); };
+    await expect(publish(db, "d", pack(A), 0, 1, "me")).rejects.toBeInstanceOf(ZoneDbBusy);
   });
 
   it("rejects bad input without writing", async () => {

@@ -86,6 +86,22 @@ class StationTests(unittest.TestCase):
         self.db.clear_unseen_numbers(also_clear=[keep['mac']])
         self.assertIsNone(self.db.get(keep['mac'])['cube_id'])
 
+    def test_unregister_releases_number_and_tags_but_keeps_role(self):
+        cube = self.db.rows()[0]
+        self.db.set_role(cube['mac'], 'led')
+        previous = self.db.unregister(cube['mac'], 'repurposed')
+        self.assertEqual((previous['cube_id'], previous['uid']), (cube['cube_id'], cube['uid']))
+        row = self.db.get(cube['mac'])
+        self.assertEqual((row['cube_id'], row['uid'], row['pending_uid'], row['status'], row['detail']),
+                         (None, None, None, 'needs_number', 'repurposed'))
+        self.assertEqual(self.db.roles()[cube['mac']], 'led')
+        self.assertIn('unregistered', [r[0] for r in self.db.conn.execute('SELECT action FROM events WHERE mac=?', (cube['mac'],))])
+        self.assertIsNone(self.db.unregister(cube['mac'], 'again'))  # nothing left to release
+        self.assertIsNone(self.db.unregister(NEW, 'unknown'))
+        self.db.rename(cube['mac'], cube['cube_id'])  # the released number is free again
+        with (self.path.parent/'devices.csv').open(encoding='utf-8-sig') as stream:
+            self.assertEqual(next(r for r in csv.DictReader(stream) if r['mac']==cube['mac'])['uid'], '')
+
     def test_rename_unregistered_persists_and_rejects_duplicate_numbers(self):
         self.c.event(dict(event='device', mac=NEW))
         self.c.rename(NEW, 80)

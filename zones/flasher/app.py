@@ -203,7 +203,8 @@ class App:
             'Auto-flash: boards that already carry a zone identity are updated in place (same zone, point, name). Legacy '
             'sketches are recognised from their firmware and flashed when they match the selected zone. Neocubes, the pairing '
             'station and non-zone controllers are never written automatically; "Flash selected" on a refused board offers a '
-            'confirmed force-flash (never for the known pairing station).')).pack(anchor='w', pady=(10, 6))
+            'confirmed force-flash (never for the known pairing station); force-flashing a registered neocube unregisters it '
+            '(number and NFC tag released).')).pack(anchor='w', pady=(10, 6))
         self.port_tree = ttk.Treeview(tab, columns=[c[0] for c in PORT_COLUMNS], show='headings', height=6, selectmode='browse')
         for key, title, width in PORT_COLUMNS:
             self.port_tree.heading(key, text=title)
@@ -459,10 +460,14 @@ class App:
             if not plan:
                 raise ValueError('This port has not been identified yet')
             detection = self.detections[port]
+            unregister = ''
             if plan['action'] == 'refuse' and self.port_rows[port].get('candidate') and zone_detect.forceable(detection):
+                if detection['kind'] == 'cube':
+                    unregister = (f'\n\n{detection["label"].replace(" (database)", "")} will be UNREGISTERED: its number and NFC '
+                                  'tag are released in the device database (run Sync afterwards).')
                 if not messagebox.askyesno('Force flash?', f'REFUSED: {plan["reason"]}\n\n{port} ({detection.get("mac", "?")}) was '
                                            f'identified as: {detection["label"]}.\n\nOverwrite it with zone firmware anyway? '
-                                           'Its current firmware is replaced (a full backup is taken the first time).',
+                                           f'Its current firmware is replaced (no backup is taken).{unregister}',
                                            icon='warning', default='no', parent=self.root):
                     return
                 plan = self.plan_for(port, auto=False, force=True)
@@ -473,7 +478,7 @@ class App:
         except Exception as exc:
             return messagebox.showerror('Zone flasher', str(exc), parent=self.root)
         profile = zone_build.PROFILES[plan['profile']]
-        warning = '\n\nFORCED: overriding the refusal above.' if plan.get('force') else ''
+        warning = f'\n\nFORCED: overriding the refusal above.{unregister}' if plan.get('force') else ''
         if detection.get('profile') and detection['profile'] != plan['profile']:
             warning += f'\n\nNOTE: this board was identified as "{zone_build.PROFILES[detection["profile"]]["label"]}".'
         if messagebox.askokcancel('Flash zone', f'Flash {profile["label"]} as "{plan["name"]}" (point {plan["point"]}, '
@@ -789,6 +794,8 @@ class App:
             self.monitor_off.discard(port)
             self.detections.pop(port, None)   # identify again: shows the new firmware/identity
             self.pending_detect.add(port)
+            if record.get('unregistered'):
+                self.refresh_info()  # registry and "local changes not published" note
             if ok and auto and self.advance.get() and record['profile'] == self.profile_key():
                 points = zone_build.PROFILES[record['profile']]['points']
                 later = [p for p in points if p > record['point_id']]

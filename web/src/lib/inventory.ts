@@ -21,15 +21,20 @@ export async function pull(store: Store, dataset: string) {
 export type PushResult =
   | { status: 200; body: { revision: number; changed: number } }
   | { status: 409; body: { error: string; records: Record<string, { record: unknown; revision: number }> } }
-  | { status: 400; body: { error: string } };
+  | { status: 400; body: { error: string } }
+  | { status: 503; body: { error: string; retryable: true } };
+
+/** Spread out computers that keep colliding on the same document. */
+export const backoff = (attempt: number) => new Promise((resolve) => setTimeout(resolve, 20 * attempt + Math.random() * 40));
 
 /**
  * Compare-and-swap upload. Every pushed MAC names the revision it was merged against
  * (0 = new); if any differs, nothing is written and the current records come back (409) so
  * the client can re-merge. The complete post-push set must pass the same validation as the
- * local sync. Records are never deleted. Each accepted push advances the revision by exactly
- * 1, and the whole document is written conditionally, so concurrent pushes are re-checked
- * against each other instead of overwriting.
+ * local sync. Records are never deleted. Each push that changes something advances the revision
+ * by exactly 1 (a push of identical records writes nothing), and the whole document is written
+ * conditionally, so concurrent pushes are re-checked against each other instead of overwriting.
+ * If the document keeps changing underneath us the answer is 503 "retryable", never a bare 500.
  */
 export async function push(
   store: Store,
@@ -75,13 +80,18 @@ export async function push(
       doc.records[mac] = { record: records[mac], revision, updated_at: at, updated_from: client };
       doc.changes.unshift({ revision, mac, before, after: records[mac], client, at });
     }
+    if (changed === 0) return { status: 200, body: { revision: doc.revision, changed } };
     doc.revision = revision;
     doc.changes = doc.changes.slice(0, KEEP_CHANGES);
     try {
       await store.write(dataset, doc, etag);
       return { status: 200, body: { revision, changed } };
     } catch (error) {
-      if (!(error instanceof StoreConflict) || attempt + 1 >= WRITE_ATTEMPTS) throw error;
+      if (!(error instanceof StoreConflict)) throw error;
+      if (attempt + 1 >= WRITE_ATTEMPTS) {
+        return { status: 503, body: { error: "The inventory is busy with other uploads; try again", retryable: true } };
+      }
+      await backoff(attempt);
     }
   }
 }

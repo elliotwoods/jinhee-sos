@@ -138,10 +138,11 @@ run setup or:
 pairing_station/.venv/bin/python scripts/sync_inventory.py
 ```
 
-If both machines edited the same MAC, resolve that JSON record consciously. If two
-records now share a cube number or NFC tag, correct the ownership conflict and
-retry sync. Do not delete records to resolve conflicts; the sync tool deliberately
-rejects deletion. Clear nullable fields with `null` when appropriate. A successful
+If both machines edited the same MAC the newest change wins, and if two records now
+share a cube number or NFC tag (also after Git merged two people's files) the newest
+claim keeps it; both are logged as `sync_resolved` events (see the web inventory rules
+below). Records are never deleted: a deleted JSON file is restored from SQLite. Clear
+nullable fields with `null` when appropriate. A successful
 sync does not transmit registrations to cubes or publish the zone database.
 
 Shared inventory is **not** a complete SQLite backup. Local audit events (`nfc_seen`),
@@ -167,14 +168,17 @@ two computers pushing at once are re-checked rather than overwritten.
 
 **Sync now** uploads local changes at any time. Downloaded changes are applied
 only while the pairing and cube flasher apps are closed (same locks as Git sync);
-otherwise they wait and the apps' status line says so. When the same MAC changed on
-both sides but only its status/detail/timestamp differ, the newest record wins
-automatically (`inventory_sync.auto_resolve`; logged as `auto-resolved N`). A number,
-tag or role changed on one side only wins over the other side's bookkeeping change.
-Conflicts (number, tag or role changed differently on both sides) change nothing
-until a side is chosen explicitly in the app. The
+otherwise they wait and the apps' status line says so. Sync never needs a decision
+(`inventory_sync.merge_records`): a number, tag or role changed on one side only wins
+over the other side's bookkeeping change; when both sides changed a device differently,
+the newest change to a device wins (its number, tags and their status are taken together; the role merges on its own, the more cautious role winning), and a number or NFC tag claimed by two devices stays with the newest claim, exactly like a local take-over: the other device drops to "needs number" or loses the tag
+(`inventory_sync.reconcile`). Each decision is a `sync_resolved` event, every record
+written by a sync is a `sync_applied` event, and Sync tells the operator when a device
+on this computer gave way. Retransmitting a saved mapping is not a change and never
+takes a tag. A local write that lands while a sync is running is merged, not
+overwritten, and only one app per computer syncs at a time (`devices.sync.lock`). The
 server rejects a push that would create a duplicate number or NFC tag, using the
-same rules as `inventory_sync.validate`. The first sync of a fresh database lets
+same rules as `inventory_sync.validate`; the desktop then merges again by itself. The first sync of a fresh database lets
 web records replace its untouched original seeds, as the Git sync does.
 
 As with Git, web sync does not transmit registrations to cubes, publish the zone
@@ -398,7 +402,7 @@ before running; they are not substitutes for harmless unit tests.
 | No tag detected but PN532 initialized | Check actual tag reads/I²C responses; try a known tag, wiring and power, not just cached readiness |
 | Port owned by another app | Close Serial Monitor/other controller; respect `PortLock` and pyserial exclusivity |
 | API fails | App must be running; use fresh `api.curl`, correct API port, and allowed loopback access |
-| Duplicate number/tag during sync | Resolve the inventory conflict explicitly; preserve the local backup |
+| A cube lost its number/tag after Sync | Another computer used the same number/tag more recently (see the `sync_resolved` event and the record's detail). Assign the physical label number / register again, then Sync |
 | Pool controls appear inert | Check board role, serial connection, calibration validity and explicit override arming |
 
 Do not solve a wrong-port or missing-library problem by erasing hardware, deleting

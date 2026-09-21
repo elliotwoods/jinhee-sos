@@ -73,8 +73,9 @@ class ZoneFlasher:
         self.database, self.emit = Path(database), emit
 
     def execute(self, port, profile_name, point_id, name, params=(), force=False, rx_gain=zonedb.RX_GAIN_DEFAULT):
-        """`force` overwrites a board the database lists as a neocube or excluded device. The known pairing station
-        MAC and non-ESP32 USB devices are refused regardless."""
+        """`force` overwrites a board the database lists as a neocube or excluded device; a neocube is unregistered
+        (number and tags released) once the zone firmware is written. The known pairing station MAC and non-ESP32
+        USB devices are refused regardless."""
         profile = zone_build.PROFILES[profile_name]
         sketch = profile['sketch']
         params = [int(v) for v in params]
@@ -94,7 +95,7 @@ class ZoneFlasher:
                       name=name, params=params, rx_gain=rx_gain,
                       firmware=manifest['version'], build_hash=manifest['build_hash'], result='failed', forced=bool(force))
         db = Database(self.database, recover_pending=False)
-        written = False
+        written = unregister_cube = False
         try:
             if not port.get('candidate'):
                 raise RuntimeError('This USB device is not a flashable ESP32 (or is the protected pairing station)')
@@ -139,6 +140,7 @@ class ZoneFlasher:
                 if mac in zone_detect.PROTECTED:
                     raise RuntimeError(f'{mac} is the pairing station; refusing to overwrite it with zone firmware')
                 if role and force:
+                    unregister_cube = role == 'cube'
                     runner.line(f'FORCED: {mac} is listed as {"a neocube" if role == "cube" else "an excluded device"} in the '
                                 'database; overwriting it with zone firmware anyway')
                 elif role == 'cube':
@@ -146,12 +148,6 @@ class ZoneFlasher:
                 elif role == 'station':
                     raise RuntimeError(f'{mac} is an excluded device; refusing to overwrite it with zone firmware')
                 reset = 'watchdog-reset' if 'USB-Serial/JTAG' in identity else 'hard-reset'
-
-                backups = DATA / 'backups'
-                backups.mkdir(parents=True, exist_ok=True)
-                if not list(backups.glob(f'*{mac.replace(":", "")}*.bin')):
-                    self.emit('stage', 'Back up original flash (first time only)')
-                    tool('read-flash', '0', '0x400000', backups / f'{mac.replace(":", "")}_{time.strftime("%Y%m%d-%H%M%S")}.bin', timeout=240)
 
                 self.emit('stage', 'Write firmware, identity and database')
                 data = manifest['data']
@@ -163,6 +159,12 @@ class ZoneFlasher:
                 args += [hex(data['zcfg']['offset']), folder / 'zcfg.bin', hex(data['zdb_a']['offset']), folder / 'zdb_a.bin']
                 tool(*args, timeout=240)
                 written = True
+                if unregister_cube:  # the cube firmware is gone now, whatever the boot check says
+                    previous = db.unregister(mac, f'Force-flashed with zone firmware {manifest["version"]} as "{name}"')
+                    if previous:
+                        record['unregistered'] = dict(cube_id=previous['cube_id'], uid=previous['uid'],
+                                                      pending_uid=previous['pending_uid'])
+                        runner.line(f'UNREGISTERED neocube #{previous["cube_id"]} ({mac}): number and NFC tag released')
 
                 self.emit('stage', 'Verify data partitions')
                 for part, expected in (('zcfg', config), ('zdb_a', slot)):
@@ -188,7 +190,9 @@ class ZoneFlasher:
                 store.flashed(mac, profile_name, params)
                 store.settings(mac, dict(rx_gain=rx_gain, rx_gain_applied=report.get('rx_gain_applied'), set_result=None))
                 record.update(result='success', detail=f'{name} ({mac}) running {manifest["version"]} with database '
-                                                       f'v{publication.version} ({publication.count} records)')
+                                                       f'v{publication.version} ({publication.count} records)' +
+                                                       (f' · was neocube #{record["unregistered"]["cube_id"]} (unregistered)'
+                                                        if 'unregistered' in record else ''))
         except Exception as exc:
             record.update(result='attention' if written else 'failed', detail=str(exc))
             runner.line(str(exc))
@@ -305,7 +309,7 @@ def main():
     parser.add_argument('--check', action='store_true', help='Only read the report of a running zone (no reset)')
     parser.add_argument('--detect', action='store_true', help='Only identify the connected board (may reboot it)')
     parser.add_argument('--force', action='store_true',
-                        help='Overwrite a board the database lists as a neocube or excluded device (never the pairing station)')
+                        help='Overwrite a board the database lists as a neocube (unregistering it) or excluded device (never the pairing station)')
     args = parser.parse_args()
 
     def emit(kind, value):

@@ -53,8 +53,6 @@ def publish(database, client, name, seen_versions=(), sync=None):
     version, and the returned publication is cached either way (so this is also a pull).
     """
     sync = sync or web_sync.run(database, client, name)
-    if sync['conflicts']:
-        raise PublishBlocked(f'{len(sync["conflicts"])} inventory conflict(s) need a decision in Web Inventory Sync first')
     records = records_from_inventory(sync['merged'])
     if not records:
         raise PublishBlocked('The inventory has no committed cube mappings; refusing to publish an empty database')

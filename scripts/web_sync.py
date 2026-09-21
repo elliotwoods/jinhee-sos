@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Headless web inventory sync: `status` or `sync`. Uses the stored password (asks once and saves it).
 
-`sync` never resolves conflicts; use inventory_web/app.py to choose a side.
+`sync` never needs a decision: when two computers changed the same device the newest change wins;
+what was decided, and what a device on this computer gave up, is printed.
 """
 import argparse
 from getpass import getpass
@@ -37,9 +38,9 @@ def main():
         result = web_sync.run(args.database, client, web_client.client_name('CLI'))
         if prompted:
             web_client.save_password(client.password)
-        if result['conflicts']:
-            raise SystemExit('Nothing changed. Resolve conflicts in the Web Sync app: ' + ', '.join(result['conflicts']))
-        print(f"Revision {result['revision']}: uploaded {len(result['upload'])}, "
+        for line in [note['text'] for note in result['notes']] + [entry['text'] for entry in result['lost']]:
+            print('Decided: ' + line)
+        print(f"Revision {result['revision']}: uploaded {len(result['uploaded'])}, "
               f"applied {len(result['download']) if result['applied'] else 0}, waiting {result['unapplied']}.")
         if result.get('sightings') is not None:
             print(f"Reported last-seen data for {result['sightings']} cubes.")
@@ -48,8 +49,11 @@ def main():
     except web_client.Unauthorized as exc:
         web_client.forget_password()
         raise SystemExit('Web sync stopped: ' + str(exc) + ' (stored password cleared; run again to enter it)')
+    except web_sync.SyncBusy as exc:
+        raise SystemExit(str(exc))
     except (WebError, ValueError, OSError) as exc:
-        raise SystemExit('Web sync stopped: ' + str(exc))
+        note = ' (nothing is lost; run again to check what the web received)' if getattr(exc, 'after_push', False) else ''
+        raise SystemExit('Web sync stopped: ' + str(exc) + note)
 
 
 if __name__ == '__main__':

@@ -8,11 +8,12 @@ import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sync_widget  # noqa: E402
-from sync_widget import SyncWidget, describe  # noqa: E402
+from sync_widget import SyncWidget, describe, summary  # noqa: E402
 import web_client  # noqa: E402
-from web_client import Unauthorized  # noqa: E402
+from web_client import Unauthorized, Unreachable  # noqa: E402
+from web_sync import SyncBusy  # noqa: E402
 
-OK = dict(state='ok', up=0, down=0, conflicts=0, inventory_up=0, inventory_down=0, zone_publish=False,
+OK = dict(state='ok', up=0, down=0, conflicts=0, lost=0, inventory_up=0, inventory_down=0, zone_publish=False,
           zone_pull=False, waiting=0, web_version=14, local_version=14)
 
 
@@ -25,7 +26,14 @@ class DescribeTests(unittest.TestCase):
         self.assertIn('2 inventory changes + new zone mappings to publish', detail)
         self.assertIn('1 web change + zone database v15', detail)
         self.assertEqual(describe(dict(OK, up=1, inventory_up=1))[0], '⟳ Sync  ↑1')
-        self.assertIn('conflict', describe(dict(OK, conflicts=2))[0])
+        self.assertIn('1 device(s) here give way', describe(dict(OK, down=1, inventory_down=1, lost=1))[2])
+        problem = describe(dict(state='error', message='The web could not answer (500)'))
+        self.assertEqual(problem[:2], ('⚠ Sync · problem', 'error')); self.assertIn('500', problem[2])
+        self.assertEqual(summary(dict(sync=dict(upload=[]), zone=None, blocked=None)), '')  # older result shape
+        text = summary(dict(sync=dict(lost=[dict(mac='m', text='#57 (m) loses number 57')], applied=False),
+                            zone_error='404: not found'))
+        self.assertIn('• #57 (m) loses number 57', text); self.assertIn('once the apps are idle', text)
+        self.assertIn('zone database was not published: 404', text)
         self.assertEqual(describe(dict(state='offline'))[0], 'Sync · offline')
         self.assertIn('sign in', describe(dict(state='signin'))[0])
         self.assertEqual(describe(dict(state='unauthorized'))[1], 'error')
@@ -77,7 +85,8 @@ class WidgetTests(unittest.TestCase):
             self.assertEqual(w.button['text'], 'Syncing…')
             self.assertTrue(self.pump(lambda: self.synced and w.button['text'] == '✓ Synced'))
         self.assertEqual(web_client.load_password(), 's3cret')
-        self.assertEqual(run.call_args.kwargs, dict(held=('.lock',), apply_ok=False))
+        self.assertEqual(run.call_args.kwargs['held'], ('.lock',))
+        self.assertIs(run.call_args.kwargs['apply_ok'](), False)  # asked again just before writing
         self.assertIn('last synced', w.detail['text'])
 
     def test_rejected_password_is_forgotten(self):
@@ -91,17 +100,41 @@ class WidgetTests(unittest.TestCase):
         self.assertIsNone(web_client.load_password())
         self.assertIsNone(w.client.password)
 
-    def test_conflicts_open_web_sync_instead_of_syncing(self):
-        self.status = dict(OK, conflicts=1)
+    def test_failures_are_explained_and_the_button_keeps_working(self):
+        web_client.save_password('kept')
         w = self.widget()
-        w.events.put(('status', w.check()))
-        self.assertTrue(self.pump(lambda: 'conflict' in w.button['text']))
-        with patch.object(sync_widget.messagebox, 'askyesno', return_value=True), \
-                patch.object(sync_widget, 'open_web_sync') as opened, \
-                patch.object(sync_widget.sync_all, 'sync') as run:
+        interrupted = Unreachable('timed out'); interrupted.after_push = True
+        for error, box, words in ((SyncBusy('busy'), 'showinfo', 'Another app'),
+                                  (interrupted, 'showwarning', 'next Sync checks'),
+                                  (Unreachable('no route'), 'showwarning', 'nothing changed'),
+                                  (ValueError('odd'), 'showerror', 'Sync stopped: odd')):
+            with patch.object(sync_widget.sync_all, 'sync', side_effect=error), \
+                    patch.object(sync_widget.messagebox, box) as shown:
+                w.click()
+                self.assertTrue(self.pump(lambda: shown.called and not w.busy))
+            self.assertIn(words, shown.call_args.args[1])
+        self.assertEqual(web_client.load_password(), 'kept')
+        # A result the widget cannot digest must not stop the polling loop.
+        with patch.object(sync_widget.sync_all, 'sync', return_value=None), \
+                patch.object(sync_widget.traceback, 'print_exc') as logged:
             w.click()
-        opened.assert_called_once()
-        run.assert_not_called()
+            self.assertTrue(self.pump(lambda: not w.busy))
+        logged.assert_called_once()
+        self.status = dict(state='error', message='The web could not answer (500)')
+        w.events.put(('status', w.check()))
+        self.assertTrue(self.pump(lambda: 'problem' in w.button['text']))
+
+    def test_lost_numbers_are_announced(self):
+        web_client.save_password('kept')
+        w = self.widget()
+        result = dict(sync=dict(lost=[dict(mac='m', text='#57 (m) loses number 57')], applied=True), zone=None,
+                      blocked=None, zone_error=None)
+        with patch.object(sync_widget.sync_all, 'sync', return_value=result), \
+                patch.object(sync_widget.messagebox, 'showwarning') as shown:
+            w.click()
+            self.assertTrue(self.pump(lambda: shown.called))
+        self.assertIn('loses number 57', shown.call_args.args[1])
+        self.assertEqual(self.synced, [result])
 
 
 if __name__ == '__main__':
