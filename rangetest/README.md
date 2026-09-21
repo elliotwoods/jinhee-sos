@@ -12,6 +12,8 @@ carrying the RSSI it measured. A Tk console on the RX shows the link live.
 |---|---|---|
 | `1C:DB:D4:F0:C3:E0` | TX | `/dev/cu.usbmodem1101` |
 | `1C:DB:D4:F0:D2:20` | RX | `/dev/cu.usbmodem101` |
+| `AC:27:6E:82:68:54` | TX | `/dev/cu.usbmodem1101` |
+| `1C:DB:D4:F0:CF:4C` | RX | `/dev/cu.usbmodem101` |
 
 Roles come from a MAC table in the sketch, so there is **one binary** and no way
 to flash the wrong role onto the wrong board. An unrecognised board runs as TX

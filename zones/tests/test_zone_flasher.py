@@ -68,14 +68,15 @@ class ZoneFlasherTests(unittest.TestCase):
                 'STATS: tags=0 unknown=0 send_fail=0 error=0\nREADY\n')
         return parse_report(text)
 
-    def execute(self, point=2, name='Preshow 2', profile='preshow', params=()):
+    def execute(self, point=2, name='Preshow 2', profile='preshow', params=(), force=False):
         with patch.object(zone_flash, 'DATA', self.root / 'data'), \
                 patch('zone_flash.Runner.__call__', side_effect=self.fake_tool), \
                 patch('zone_flash.ports', return_value=[self.port]), \
                 patch('zone_build.load_manifest', return_value=self.manifest), \
                 patch('zone_build.build_dir', return_value=self.build), \
                 patch.object(ZoneFlasher, 'boot_report', side_effect=self.boot):
-            return ZoneFlasher(self.db_path, lambda *e: self.events.append(e)).execute(self.port, profile, point, name, params)
+            return ZoneFlasher(self.db_path, lambda *e: self.events.append(e)).execute(self.port, profile, point, name, params,
+                                                                                   force=force)
 
     def test_success_writes_identity_database_and_records_zone(self):
         record = self.execute()
@@ -115,6 +116,26 @@ class ZoneFlasherTests(unittest.TestCase):
             self.execute(point=9)
         with self.assertRaises(ValueError):
             self.execute(name='a name that is far too long')
+
+    def test_force_overwrites_registered_cube_but_never_the_station(self):
+        db = Database(self.db_path)
+        cube = db.rows()[0]
+        db.close()
+        self.mac = cube['mac']
+        record = self.execute(force=True)
+        self.assertEqual(record['result'], 'success', record.get('detail'))
+        self.assertTrue(record['forced'])
+        self.assertTrue(any('write-flash' in c for c in self.calls))
+        self.calls.clear()
+        self.mac = '3C:0F:02:AD:83:24'
+        record = self.execute(force=True)
+        self.assertEqual(record['result'], 'failed')
+        self.assertIn('pairing station', record['detail'])
+        self.assertFalse(any('write-flash' in c or 'erase-region' in c for c in self.calls))
+        self.port = dict(self.port, candidate=False)
+        self.calls.clear()
+        self.assertEqual(self.execute(force=True)['result'], 'failed')
+        self.assertEqual(self.calls, [])
 
     def test_readback_mismatch_and_boot_mismatch_are_not_success(self):
         self.corrupt_readback = True

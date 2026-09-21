@@ -20,6 +20,7 @@ import zonedb
 
 sys.path.insert(0, str(WORKSPACE / 'flashing_station'))
 from core import Scheduler  # noqa: E402  (armed intake with reconnect debounce)
+from web_status import WebStatus  # noqa: E402  (read-only web inventory comparison)
 
 BG, CARD, FG, MUTED = '#101720', '#1b2633', '#e9f0f7', '#9aafc4'
 GREEN, AMBER, RED, BLUE = '#54d6a0', '#ffc16b', '#ff7a8a', '#82b8fa'
@@ -131,7 +132,10 @@ class App:
         outer.pack(fill='both', expand=True)
         ttk.Label(outer, text='ZONES / FLASHER', font=('Helvetica', 24, 'bold')).pack(anchor='w')
         self.info = tk.StringVar()
-        ttk.Label(outer, textvariable=self.info, foreground=MUTED).pack(anchor='w', pady=(4, 10))
+        ttk.Label(outer, textvariable=self.info, foreground=MUTED).pack(anchor='w', pady=(4, 0))
+        web = ttk.Label(outer, foreground=MUTED)
+        web.pack(anchor='w', pady=(2, 10))
+        self.web_status = WebStatus(self.database, app='Zone flasher').bind(root, web, {'ok': GREEN, 'warn': AMBER, 'muted': MUTED})
         self.tabs = ttk.Notebook(outer)
         self.tabs.pack(fill='both', expand=True)
         self.build_flash_tab()
@@ -190,7 +194,8 @@ class App:
         ttk.Label(tab, foreground=MUTED, wraplength=1180, justify='left', text=(
             'Auto-flash: boards that already carry a zone identity are updated in place (same zone, point, name). Legacy '
             'sketches are recognised from their firmware and flashed when they match the selected zone. Neocubes, the pairing '
-            'station and non-zone controllers are never written.')).pack(anchor='w', pady=(10, 6))
+            'station and non-zone controllers are never written automatically; "Flash selected" on a refused board offers a '
+            'confirmed force-flash (never for the known pairing station).')).pack(anchor='w', pady=(10, 6))
         self.port_tree = ttk.Treeview(tab, columns=[c[0] for c in PORT_COLUMNS], show='headings', height=6, selectmode='browse')
         for key, title, width in PORT_COLUMNS:
             self.port_tree.heading(key, text=title)
@@ -309,7 +314,7 @@ class App:
                 self.pending_detect.add(p['port'])
         self.render_ports()
 
-    def plan_for(self, port, auto=None):
+    def plan_for(self, port, auto=None, force=False):
         detection = self.detections.get(port)
         if not detection:
             return None
@@ -318,7 +323,8 @@ class App:
         except ValueError as exc:
             return dict(action='ask', reason=str(exc))
         return zone_detect.plan(detection, form, self.manifests(), self.published(),
-                                auto=self.scheduler.armed if auto is None else auto, allow_unidentified=self.unidentified.get())
+                                auto=self.scheduler.armed if auto is None else auto, allow_unidentified=self.unidentified.get(),
+                                force=force)
 
     def refresh_plans(self):
         if hasattr(self, 'port_tree'):
@@ -426,9 +432,10 @@ class App:
         info = self.port_rows[port]
 
         def work():
-            record = ZoneFlasher(self.database, self.emit).execute(info, plan['profile'], plan['point'], plan['name'], plan['params'])
+            record = ZoneFlasher(self.database, self.emit).execute(info, plan['profile'], plan['point'], plan['name'], plan['params'],
+                                                                   force=plan.get('force', False))
             self.emit('flashed', (port, record, auto))
-        return self.run(f'Flashing "{plan["name"]}" on {port}…', work, port)
+        return self.run(f'{"FORCE-f" if plan.get("force") else "F"}lashing "{plan["name"]}" on {port}…', work, port)
 
     def flash_selected(self):
         try:
@@ -436,17 +443,24 @@ class App:
             plan = self.plan_for(port, auto=False)
             if not plan:
                 raise ValueError('This port has not been identified yet')
+            detection = self.detections[port]
+            if plan['action'] == 'refuse' and self.port_rows[port].get('candidate') and zone_detect.forceable(detection):
+                if not messagebox.askyesno('Force flash?', f'REFUSED: {plan["reason"]}\n\n{port} ({detection.get("mac", "?")}) was '
+                                           f'identified as: {detection["label"]}.\n\nOverwrite it with zone firmware anyway? '
+                                           'Its current firmware is replaced (a full backup is taken the first time).',
+                                           icon='warning', default='no', parent=self.root):
+                    return
+                plan = self.plan_for(port, auto=False, force=True)
             if plan['action'] != 'flash':
                 raise ValueError(plan['reason'])
             sketch = zone_build.PROFILES[plan['profile']]['sketch']
             zone_build.load_manifest(sketch)
         except Exception as exc:
             return messagebox.showerror('Zone flasher', str(exc), parent=self.root)
-        detection = self.detections[port]
         profile = zone_build.PROFILES[plan['profile']]
-        warning = ''
+        warning = '\n\nFORCED: overriding the refusal above.' if plan.get('force') else ''
         if detection.get('profile') and detection['profile'] != plan['profile']:
-            warning = f'\n\nNOTE: this board was identified as "{zone_build.PROFILES[detection["profile"]]["label"]}".'
+            warning += f'\n\nNOTE: this board was identified as "{zone_build.PROFILES[detection["profile"]]["label"]}".'
         if messagebox.askokcancel('Flash zone', f'Flash {profile["label"]} as "{plan["name"]}" (point {plan["point"]}) on\n'
                                   f'{port} ({detection.get("mac", "?")})?{warning}', parent=self.root):
             self.flash(port, plan)

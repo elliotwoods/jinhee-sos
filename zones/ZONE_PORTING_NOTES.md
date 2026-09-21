@@ -32,7 +32,7 @@ All current tag zones are already ported (see the table in `README.md`). A new z
   - The legacy radios and central controller were on channel 6 and could not reach cubes, which sit on channel 2.
   - Both are on channel 2 now: `PoolZone`, and `central_controller.ino` via a one-line change that needs a reflash.
   - `Poolzone_Radio_Control` (the slider debug sketch without NFC) is left on channel 6 and is superseded by `PoolZone` + serial `dist`.
-- **Not zones:** `ShowStarter_M5Stack_Core2`, `m5core2_controlloer` (old registration console), `SerialDAT` and the pool central controller have no cube table. They are not flashed by the zone flasher, which recognises and refuses the ESP32-C3 ones.
+- **Not zones:** `ShowStarter_M5Stack_Core2`, `m5core2_controlloer` (old registration console), the preshow media bridge (`SerialDAT`, now maintained at `firmware/PreshowBridge`) and the pool central controller have no cube table. They are not flashed by the zone flasher, which recognises and refuses the ESP32-C3 ones.
 - **Known protocol mismatch outside the zones:**
   - `ShowStarter_M5Stack_Core2.ino` broadcasts `MSG_SHOW_START = 7`.
   - Cube firmware v1.4.2 (`ForKimchi.ino`) expects `MSG_SHOW_START = 8`, because 7 became `MSG_TAG_STATE`.

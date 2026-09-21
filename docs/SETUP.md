@@ -149,6 +149,32 @@ represented by per-device JSON. A new machine may therefore show a known mapping
 as not yet scanned locally. The four permanent number reservations (2, 22, 39, 43)
 are seeded by current code when opening the database.
 
+### Shared web inventory
+
+The web inventory (`web/`, deployed at https://nct-inventory.auroravision.xyz)
+holds the same per-MAC records as Git. The two mechanisms interoperate: each keeps
+its own baseline in SQLite metadata (`git_inventory_baseline_v1`,
+`web_inventory_baseline_v1`), and a change arriving through one is simply a local
+change to the other. Run them in any order.
+
+No per-computer setup is needed. All computers use one shared password, which is
+never stored in Git or on disk: Web Sync and `scripts/web_sync.py` ask for it each run,
+and the other apps' status lines compare only against the last sync. The server reads
+it from the `INVENTORY_PASSWORD` Vercel environment variable. The server keeps the
+inventory as a single private Vercel Blob JSON document with conditional writes, so
+two computers pushing at once are re-checked rather than overwritten.
+
+**Sync now** uploads local changes at any time. Downloaded changes are applied
+only while the pairing and cube flasher apps are closed (same locks as Git sync);
+otherwise they wait and the apps' status line says so. Conflicts (same MAC changed
+on both sides) change nothing until a side is chosen explicitly in the app. The
+server rejects a push that would create a duplicate number or NFC tag, using the
+same rules as `inventory_sync.validate`. The first sync of a fresh database lets
+web records replace its untouched original seeds, as the Git sync does.
+
+As with Git, web sync does not transmit registrations to cubes, publish the zone
+database, or carry events, flash history, zone state or reservations.
+
 ### Preserve complete local SQLite state
 
 Close every app using the shared database before copying

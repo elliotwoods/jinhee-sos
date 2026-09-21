@@ -98,6 +98,12 @@ class DetectTests(unittest.TestCase):
         for kind in ('cube', 'station', 'other'):
             self.assertEqual(plan(dict(kind=kind, label='x'), auto=True)['action'], 'refuse')
             self.assertEqual(plan(dict(kind=kind, label='x'))['action'], 'refuse')
+            forced = plan(dict(kind=kind, label='x', mac='14:63:93:C0:EC:14'), force=True)
+            self.assertEqual((forced['action'], forced['force'], forced['name']), ('flash', True, 'Desert 3'))
+            self.assertEqual(plan(dict(kind=kind, label='x'), auto=True, force=True)['action'], 'refuse')  # never in auto
+        station = dict(kind='station', label='Pairing station (protected)', mac='3C:0F:02:AD:83:24')
+        self.assertEqual(plan(station, force=True)['action'], 'refuse')
+        self.assertFalse(zone_detect.forceable(station))
         manual = plan(dict(kind='unknown', label='Unrecognised firmware'))
         self.assertEqual((manual['action'], manual['profile'], manual['point'], manual['name']), ('flash', 'desert', 3, 'Desert 3'))
         zone = dict(kind='nctzone', label='z', configured=True, profile='pool', point=2, name='Pool Radio 2', params=[3800, 400],

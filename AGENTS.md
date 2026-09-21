@@ -18,7 +18,9 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone}/` | NFC-driven show zones; PoolZone also has slider calibration |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
 | Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
+| Preshow media bridge | `zones/firmware/PreshowBridge/` | Receives `PreshowEvent` from the four preshow plates, acknowledges each one, writes `PRESHOW,<n>,ON|OFF` to the TouchDesigner Serial DAT. Not a zone board |
 | Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
+| Web inventory | `web/` (Next.js on Vercel), `inventory_web/app.py`, `scripts/web_sync.py` | Shared web copy of device records (one private Vercel Blob document, shared password), desktop sync app |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
 | Pool light diagnostics | `poolzone_test/` | USB bridge emulating all six pool radios on the current protocol, light-test GUI. The central test firmware moved to `zones/firmware/PoolCentral/` |
 | ESP-NOW range test | `rangetest/` | Dual-role TX/RX link survey firmware, RSSI capture, survey GUI |
@@ -26,8 +28,9 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Historical references | `live files/`, root `ForKimchi.ino`, `m5core2_controlloer.ino` | Existing installation behavior and protocol compatibility |
 
 Do not assume every ESP32 is a cube. Readers, the media bridge, the pairing station,
-and the pool central controller are separate roles. Legacy `Preshow_MediaServer_SerialDAT`
-is the TouchDesigner/media-server bridge. `m5core2_controlloer` was the old registration
+and the pool central controller are separate roles. The TouchDesigner/media-server bridge
+is maintained at `zones/firmware/PreshowBridge/`; `live files/Preshow_MediaServer_SerialDAT`
+is the archived original it replaces. `m5core2_controlloer` was the old registration
 console. Do not flash those boards with cube firmware.
 
 ## First actions in a coding task
@@ -62,7 +65,11 @@ system interpreter. Python 3.14 with Tk is the tested Mac configuration.
 - `usb_identify.py`: optional USB identification and reported-version checks; no upload.
 - `port_lock.py`: advisory serial ownership shared with flashers, plus pyserial exclusivity.
 - `http_api.py`: loopback control running Python on the Tk/SQLite owner thread.
-- `inventory_sync.py`: public per-MAC JSON synchronization, conflict validation.
+- `inventory_sync.py`: public per-MAC JSON synchronization, conflict validation;
+  also the shared three-way `merge`/`apply`/`validate` used by the web sync.
+- `web_client.py`, `web_sync.py`, `web_status.py`: stdlib client for `web/`, web
+  three-way sync (own baseline), and the background read-only status line the apps
+  show. Status must never block, raise into, or write from a host app.
 - `zone_registry.py`, `zones_window.py`: zone discovery and publication from the GUI.
 
 Do not access Tk widgets or the SQLite connection from a worker thread. Workers
@@ -81,6 +88,9 @@ or a newly identified cube replaces the pin. Filter/search must not hide that pi
 `pairing_station/data/devices.sqlite3` is the local authoritative database. CSV is
 an export, not an editable import. `inventory/devices/*.json` is the shared Git
 inventory; see setup instructions for synchronization and conflict resolution.
+The web inventory (`web/`) stores the same records; `web/src/lib/records.ts` mirrors
+`inventory_sync.validate`. Change record fields or validation in both together, or a
+computer could be unable to apply what the server accepted.
 
 - MAC identifies a physical device. Number and NFC ownership are mutable.
 - `cube_id` may be NULL. Do not assume every discovered device has a number.
@@ -114,17 +124,21 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
 
 - Modern cubes, pairing station, and zones use ESP-NOW channel **2**. Check legacy
   sources individually; archived settings may differ.
-- Three protocols share channel 2 and are **not** interchangeable: the cube `Packet`
+- Four protocols share channel 2 and are **not** interchangeable: the cube `Packet`
   (legacy **24-byte** C struct ABI, alignment/padding and field offsets intentional,
   never to be packed without migrating both ends), zone management
-  (`NctZoneProtocol.h`) and the pool light link (`NctPoolProtocol.h`). The preshow
-  media bridge additionally claims every 2-byte frame.
-- Pool frames carry the `NZ` header but are deliberately **absent** from
+  (`NctZoneProtocol.h`), the pool light link (`NctPoolProtocol.h`) and the preshow
+  media link (`NctPreshowProtocol.h`). The preshow media bridge additionally claims
+  every **2-byte** frame, which is the pre-2026 packet it still accepts.
+- Pool and preshow frames carry the `NZ` header but are deliberately **absent** from
   `NctZoneProtocol.h::frameType()`: `ZoneLink::receive()` queues everything that
   function accepts and `ZoneLink::handle()` drops what it does not know, so routing
   them there would swallow them. They reach the sketch through `TagPlate::onFrame`,
   which runs on the Wi-Fi task and may only hand the frame over.
 - The pool radios and the pool central are a **matched set**; reflash them together.
+- So are the preshow plates and the preshow bridge. Flash the **bridge first**: it still
+  accepts the old 2-byte packet, so the plates keep working while they are updated one
+  at a time.
   The central still accepts the legacy 15-byte packet so a partial rollout does not go
   dark, but that shim is insurance, not a supported configuration.
 - Pairing station: ESP32-C3, PN532 I²C **SDA=4, SCL=3**; installed red PN532 board is

@@ -18,7 +18,7 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
 
 | Flasher choice | Firmware | Replaces (`live files/`) | Behaviour |
 |---|---|---|---|
-| Preshow plate (points 1-4) | `PreshowZone` | `PreshowZone1` | cube → PRESHOW; media bridge `POINT n ON/OFF` |
+| Preshow plate (points 1-4) | `PreshowZone` | `PreshowZone1` | cube → PRESHOW; acknowledged `PreshowEvent` to the media bridge, which cues TouchDesigner |
 | Preshow exit / safety plate | `TagPlateZone` | `preshow_enter`, `Tag_Plate` | cube → PRESHOW |
 | Mainshow entrance plate | `TagPlateZone` | `mainshow_enter`, `Mainshow_Tagplate` | cube → MAINSHOW |
 | Desert plate | `DesertZone` | `desert_zone_tagplate(_OTA)` | light panel MOSFET on GPIO1; cube → DESERT; `MSG_TAG_STATE` 1/0 |
@@ -38,6 +38,12 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
   until the controller boots and darkens them.
 - **The radios and the central are a matched set.** They must be reflashed together. Flash the central first: it still
   accepts the old 15-byte packet, so the existing sliders keep working while they are updated one at a time.
+- **The TouchDesigner media bridge is maintained here.** It lives at
+  [`firmware/PreshowBridge`](firmware/PreshowBridge/README.md), replacing the archived
+  `live files/Preshow_MediaServer_SerialDAT`. Like the pool central it is **not** a zone board and **not** a zone-flasher
+  target: no PN532, no `zcfg`/`zdb` partitions, and its own board profile. Build it with `scripts/build_all_firmware.py`.
+- **The preshow plates and the bridge are a matched set too.** Flash the bridge first: it still accepts the old 2-byte
+  packet, so the plates keep working while they are updated one at a time.
 
 ### Pool link protocol
 
@@ -65,6 +71,35 @@ real fault, and the beacon's `radioMask` lets each radio report `central_sees_me
 Pool frames share the `NZ` header but are deliberately **not** routed by `NctZoneProtocol.h::frameType()`; they reach
 the sketch through `TagPlate::onFrame`. See the comment at the top of `NctPoolProtocol.h` for why.
 
+### Preshow link protocol
+
+Defined once in [`libraries/NctZone/src/NctPreshowProtocol.h`](firmware/libraries/NctZone/src/NctPreshowProtocol.h).
+
+```
+PreshowZone x4 ──PreshowEvent (unicast, ESP-NOW ACK + retries)──▶ PreshowBridge ──USB──▶ TouchDesigner
+        ◀────────PreshowAck   (unicast, echoes bootId+seq)────────┤
+        ◀────────PreshowBeacon (broadcast, 500 ms)────────────────┘
+```
+
+The same shape as the pool link, for the same reason: the bridge broadcasts a beacon, each plate latches that address
+as a pinned peer and unicasts back, which is what provides acknowledgement and retries. The bridge's MAC is no longer
+compiled into the plates, so swapping the bridge board needs no reflash.
+
+A show cue is a one-shot edge rather than a stream, so two things are added on top. The bridge **acknowledges every
+well-formed event** by `bootId`+`seq` — including retries, because a lost acknowledgement would otherwise be
+indistinguishable from a lost cue — and the plate retries every 120 ms until that acknowledgement arrives or 3 s have
+passed, at which point it prints `MEDIA FAIL` and bumps the counter the pairing station's *Query zones* table shows.
+A sequence number identifies an **edge**, not a frame, so every retransmission is byte-identical.
+
+The plate then keeps re-asserting its current state once a second, forever. That costs TouchDesigner nothing, because
+the bridge writes a serial line only when a point's state actually changes — and it means a cue lost while the bridge
+was rebooting or out of range heals itself within a second. `PreshowBeacon.pointMask` reports what TouchDesigner was
+actually told, which each plate shows as `bridge_sees_me` on its own console.
+
+The serial format TouchDesigner reads (`PRESHOW,<n>,ON|OFF`) is unchanged from the legacy bridge.
+
+Preshow frames are absent from `frameType()` for the same reason pool frames are.
+
 ## Flash zones (zones/flasher/Launch.command)
 
 Boards are **identified automatically** when plugged in, using the first of these that works:
@@ -81,7 +116,12 @@ Steps 2-4 briefly put the board in its bootloader. The table shows what each por
   - A board that already has a zone identity is updated in place, keeping its zone, point and name. It is skipped if its firmware and database are already current.
   - A legacy sketch is flashed when it matches the selected zone. With *Next point after each new board* ticked, the point then advances.
   - An unidentified board is flashed only if *Flash unidentified boards…* is ticked.
-  - Neocubes, the pairing station and non-zone controllers are always refused.
+  - Neocubes, the pairing station and non-zone controllers are refused by auto-flash.
+  - **Force flash:** *Flash selected* on a REFUSED board asks (default No) whether to overwrite it anyway, e.g. a
+    board the database still lists as a neocube/excluded device, or a range-test / pool-central board being
+    repurposed. The known pairing station MAC and non-ESP32 USB devices can never be forced. The receipt records
+    `forced: true`. Forcing does not change the pairing database, so a board still registered as a cube is refused
+    again next time until its registration is cleared there.
 - **Every flash** does the following:
   - backs up the original flash (first time per MAC, in `data/backups/`)
   - writes the firmware, the zone identity and the published cube database
@@ -90,7 +130,7 @@ Steps 2-4 briefly put the board in its bootloader. The table shows what each por
   - checks the zone's own report
 - **Build all firmware** rebuilds all four sketches. Headless: `python zones/flasher/zone_build.py`.
 
-Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43`, `--detect`, `--check`.
+Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube/excluded device).
 
 Restore a board's original firmware from its backup:
 `pairing_station/.venv/bin/python -m esptool --chip esp32c3 --port <port> write-flash 0 zones/flasher/data/backups/<MAC>_<time>.bin`
@@ -141,9 +181,10 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 
 | Path | Contents |
 |---|---|
-| `firmware/libraries/NctZone/` | Shared Arduino library: `NctTagPlate.h` (tag-plate application core), `NctCubeProtocol.h` (cube Packet), `NctZoneProtocol.h` (zone wire format), `NctPoolProtocol.h` (pool wire format), `NctZoneDb` (slots/config/params), `NctZoneLink` (ESP-NOW updates, status, log, peers), `NctZonePartition.h` |
+| `firmware/libraries/NctZone/` | Shared Arduino library: `NctTagPlate.h` (tag-plate application core), `NctCubeProtocol.h` (cube Packet), `NctZoneProtocol.h` (zone wire format), `NctPoolProtocol.h` (pool wire format), `NctPreshowProtocol.h` (preshow media wire format), `NctZoneDb` (slots/config/params), `NctZoneLink` (ESP-NOW updates, status, log, peers), `NctZonePartition.h` |
 | `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone` sketches, each with the same `partitions.csv` |
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
+| `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
 | `tools/zonedb.py` | Python definition of every image/frame (used by the pairing app, flasher and tests) |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
 | `tests/` | Host-compiled firmware tests and Python tests |

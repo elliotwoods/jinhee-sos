@@ -14,6 +14,7 @@ from backend import Flasher, Runner, ports
 from build import build
 from audio import Audio
 from identity import describe, usb_mac
+from web_status import WebStatus
 
 BG='#101720'; CARD='#1b2633'; FG='#e9f0f7'; MUTED='#9aafc4'; GREEN='#54d6a0'; BLUE='#82b8fa'; AMBER='#ffc16b'
 
@@ -51,7 +52,9 @@ class App:
         self.status=tk.StringVar(value='Ready · choose a cube or arm automatic flashing')
         self.status_label=tk.Label(outer,textvariable=self.status,bg=CARD,fg=BLUE,font=('Helvetica',17,'bold'),anchor='w',padx=16,pady=15)
         self.status_label.pack(fill='x')
-        self.firmware=tk.StringVar();ttk.Label(outer,textvariable=self.firmware,foreground=MUTED).pack(anchor='w',pady=10)
+        self.firmware=tk.StringVar();ttk.Label(outer,textvariable=self.firmware,foreground=MUTED).pack(anchor='w',pady=(10,0))
+        web=ttk.Label(outer,foreground=MUTED);web.pack(anchor='w',pady=(2,10))
+        self.web_status=WebStatus(self.path,app='Cube flasher').bind(self.root,web,{'ok':GREEN,'warn':AMBER,'muted':MUTED})
         controls=ttk.Frame(outer);controls.pack(fill='x',pady=(0,10))
         self.auto=ttk.Button(controls,text='▶ Arm Auto',command=self.arm);self.auto.pack(side='left',padx=(0,7))
         self.manual=ttk.Button(controls,text='Flash selected / Retry',command=self.manual_flash);self.manual.pack(side='left',padx=7)

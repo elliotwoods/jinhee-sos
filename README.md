@@ -48,9 +48,22 @@ Shared inventory uses physical label numbers assigned explicitly in the pairing 
 
 Runtime SQLite files, API tokens, logs, and flash backups stay private. Git contains MAC/NFC mappings intentionally. Flash history and backups can be transferred separately by privately copying `flashing_station/data/` with the apps closed.
 
+## Share the inventory through the web
+
+The same records can also be kept in step through a small web service ([web/](web/README.md)), so computers stay current without commit/pull. It works alongside Git sync: both exchange identical records and keep separate baselines, so they can run in any order.
+
+```sh
+./inventory_web/Launch.command
+```
+
+The app asks for the shared web inventory password each time it opens (it is never saved; ask the team for it). Click **Sync now**. Local changes upload; web changes download. Web changes are written locally only while the pairing and cube-flasher apps are closed; otherwise they wait for the next sync. The read-only web view is https://nct-inventory.auroravision.xyz: sign in with the same password to see devices, recent changes and **Last seen** (which computer and app last contacted the inventory, and how long ago).
+
+If the same device changed on this computer and on the web, the app lists a conflict and changes nothing until you choose **keep local** or **take web** for it. The pairing, cube-flasher, zone-flasher and calibration apps show a one-line web inventory status (up to date / newer web changes / local changes not uploaded / offline). They never block or fail when the web is unreachable. Headless equivalent: `pairing_station/.venv/bin/python scripts/web_sync.py status|sync`.
+
 ## Applications and source
 
 - [Cube flasher](flashing_station/README.md): manual/automatic upload, identity display, audio, and recovery backups.
+- [Web inventory](web/README.md): shared web copy of the inventory; desktop sync app in `inventory_web/`.
 - [Pairing station](pairing_station/README.md): NFC registration and radio LED tests. Launch with `./pairing_station/Launch.command` after setup.
 - [Zone tools](zones/README.md): zone firmware, database distribution, and a separate zone flasher. Zone firmware needs its own build; only cube binaries are bundled here.
 - [Registration console](registration_console/README.md): firmware-side registration utility.

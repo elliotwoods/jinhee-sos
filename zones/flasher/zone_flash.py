@@ -69,7 +69,9 @@ class ZoneFlasher:
     def __init__(self, database, emit):
         self.database, self.emit = Path(database), emit
 
-    def execute(self, port, profile_name, point_id, name, params=()):
+    def execute(self, port, profile_name, point_id, name, params=(), force=False):
+        """`force` overwrites a board the database lists as a neocube or excluded device. The known pairing station
+        MAC and non-ESP32 USB devices are refused regardless."""
         profile = zone_build.PROFILES[profile_name]
         sketch = profile['sketch']
         params = [int(v) for v in params]
@@ -86,7 +88,7 @@ class ZoneFlasher:
         runner = Runner(self.emit, folder / 'upload.log')
         record = dict(id=ident, started_at=timestamp(), port=port['port'], profile=profile_name, sketch=sketch, point_id=point_id,
                       name=name, params=params,
-                      firmware=manifest['version'], build_hash=manifest['build_hash'], result='failed')
+                      firmware=manifest['version'], build_hash=manifest['build_hash'], result='failed', forced=bool(force))
         db = Database(self.database, recover_pending=False)
         written = False
         try:
@@ -130,10 +132,15 @@ class ZoneFlasher:
                 if not re.search(r'Detected flash size:\s*4\s*MB', identity, re.I):
                     raise RuntimeError('Zone boards need 4 MB flash')
                 role = zone_detect.database_role(db, mac)
-                if role == 'cube':
-                    raise RuntimeError(f'{mac} is registered as neocube #{db.get(mac)["cube_id"]}; refusing to overwrite it with zone firmware')
-                if role == 'station':
+                if mac in zone_detect.PROTECTED:
                     raise RuntimeError(f'{mac} is the pairing station; refusing to overwrite it with zone firmware')
+                if role and force:
+                    runner.line(f'FORCED: {mac} is listed as {"a neocube" if role == "cube" else "an excluded device"} in the '
+                                'database; overwriting it with zone firmware anyway')
+                elif role == 'cube':
+                    raise RuntimeError(f'{mac} is registered as neocube #{db.get(mac)["cube_id"]}; refusing to overwrite it with zone firmware')
+                elif role == 'station':
+                    raise RuntimeError(f'{mac} is an excluded device; refusing to overwrite it with zone firmware')
                 reset = 'watchdog-reset' if 'USB-Serial/JTAG' in identity else 'hard-reset'
 
                 backups = DATA / 'backups'
@@ -290,6 +297,8 @@ def main():
     parser.add_argument('--build', action='store_true', help='Build the firmware before flashing')
     parser.add_argument('--check', action='store_true', help='Only read the report of a running zone (no reset)')
     parser.add_argument('--detect', action='store_true', help='Only identify the connected board (may reboot it)')
+    parser.add_argument('--force', action='store_true',
+                        help='Overwrite a board the database lists as a neocube or excluded device (never the pairing station)')
     args = parser.parse_args()
 
     def emit(kind, value):
@@ -320,7 +329,7 @@ def main():
         zone_build.build(profile['sketch'], runner)
     name = args.name or profile['name'].format(point=args.point)
     params = [round(v * spec[2]) for v, spec in zip(args.param, profile['params'])]
-    record = flasher.execute(port, args.profile, args.point, name, params)
+    record = flasher.execute(port, args.profile, args.point, name, params, force=args.force)
     raise SystemExit(0 if record['result'] == 'success' else 1)
 
 

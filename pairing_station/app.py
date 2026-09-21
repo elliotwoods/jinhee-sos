@@ -15,6 +15,7 @@ from controller import Controller
 from transport import Transport
 from usb_identify import UsbIdentifier
 from zone_registry import ZoneRegistry
+from web_status import WebStatus
 
 class App:
     def __init__(self, root, database, api_port=8765):
@@ -39,6 +40,8 @@ class App:
         self.usb_prompt_active = False
         root.title('NCT · NFC Pairing Station')
         self.dashboard = Dashboard(self)
+        # Read-only web inventory comparison; never blocks or fails the station.
+        self.web_status = WebStatus(database, app='Pairing app').bind(root, self.web_label, {'ok': '#54d6a0', 'warn': '#ffc16b', 'muted': '#a5b5c8'})
         # Native menus expose the same actions to keyboard/accessibility users.
         menubar = tk.Menu(root)
         station_menu = tk.Menu(menubar, tearoff=False)
@@ -305,6 +308,7 @@ class App:
     def close(self):
         self.closing = True
         self.usb_identifier.stop()
+        self.web_status.stop()
         if self.api: self.api.close()
         try:
             if self.controller.connected: self.controller.stop()

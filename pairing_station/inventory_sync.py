@@ -1,4 +1,11 @@
-"""Explicit, three-way synchronization between local SQLite and Git device records."""
+"""Explicit, three-way synchronization between local SQLite and shared device records.
+
+The Git folder (`sync`) and the web database (`web_sync.py`) exchange identical records and
+keep separate baselines, so either can run in any order without seeing the other's changes
+as conflicts.
+"""
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -8,13 +15,48 @@ KEY = 'git_inventory_baseline_v1'
 FIELDS = {'mac', 'cube_id', 'uid', 'pending_uid', 'source', 'status', 'updated_at', 'detail'}
 
 
-def snapshot(db):
-    roles = db.roles()
-    rows = {r['mac']: dict(r, role=roles.get(r['mac'], 'auto')) for r in db.rows()}
+class Conflict(ValueError):
+    """Both sides changed the same MAC since the shared baseline."""
+    def __init__(self, macs, where='Git'):
+        self.macs = sorted(macs)
+        super().__init__(f'Both SQLite and {where} changed ' + ', '.join(self.macs) + '; resolve before syncing')
+
+
+class AppsOpen(RuntimeError):
+    pass
+
+
+@contextmanager
+def app_locks(database):
+    """Hold the pairing and cube-flasher instance locks; raise AppsOpen if either app runs."""
+    handles = []
+    try:
+        for suffix in ('.lock', '.flasher.lock'):
+            handle = Path(database).with_suffix(suffix).open('a')
+            handles.append(handle)
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise AppsOpen('Close the pairing and flashing apps before applying inventory changes.') from None
+        yield
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+def snapshot_conn(conn):
+    roles = dict(conn.execute('SELECT mac, role FROM device_roles'))
+    columns = sorted(FIELDS)
+    rows = {r[0]: dict(zip(columns, r[1:]), role=roles.get(r[0], 'auto'))
+            for r in conn.execute('SELECT mac,' + ','.join(columns) + ' FROM devices')}
     for mac, role in roles.items():
         if mac not in rows:
             rows[mac] = {'mac': mac, 'role': role}
     return rows
+
+
+def snapshot(db):
+    return snapshot_conn(db.conn)
 
 
 def validate(records):
@@ -47,22 +89,24 @@ def validate(records):
             raise ValueError('Invalid text fields for ' + mac)
 
 
-def sync(db, folder):
-    """Caller must close desktop apps. Conflicts never pick a silent winner."""
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    remote = {}
-    for path in sorted(folder.glob('*.json')):
-        row = json.loads(path.read_text())  # also rejects unresolved Git markers
-        mac = row.get('mac', '')
-        if path.stem != mac.replace(':', '').lower() or mac in remote:
-            raise ValueError('Invalid inventory filename: ' + path.name)
-        remote[mac] = row
-    validate(remote)
-    saved = db.conn.execute('SELECT value FROM metadata WHERE key=?', (KEY,)).fetchone()
-    baseline = json.loads(saved[0]) if saved else {}
-    local = snapshot(db)
-    merged = {}
+def load_baseline(db, key):
+    """Return (baseline, saved). `saved` is False before the first sync with that remote."""
+    saved = db.conn.execute('SELECT value FROM metadata WHERE key=?', (key,)).fetchone()
+    return (json.loads(saved[0]) if saved else {}), bool(saved)
+
+
+def save_baseline(db, key, records):
+    with db.conn:
+        db.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (key, json.dumps(records, sort_keys=True)))
+
+
+def merge(local, remote, baseline, saved, resolutions=None):
+    """Pure three-way merge. Returns (merged, conflicting MACs); never picks a silent winner.
+
+    `resolutions` maps a conflicting MAC to 'local' or 'remote', chosen explicitly by an operator.
+    """
+    resolutions = resolutions or {}
+    merged, conflicts = {}, []
     for mac in sorted(local.keys() | remote.keys() | baseline.keys()):
         before, ours, theirs = baseline.get(mac), local.get(mac), remote.get(mac)
         if saved and (ours is None or theirs is None) and before is not None:
@@ -77,10 +121,20 @@ def sync(db, folder):
             value = theirs
         elif theirs == before:
             value = ours
+        elif resolutions.get(mac) == 'local':
+            value = ours
+        elif resolutions.get(mac) == 'remote':
+            value = theirs
         else:
-            raise ValueError('Both SQLite and Git changed ' + mac + '; resolve before syncing')
+            conflicts.append(mac)
+            continue
         if value is not None:
             merged[mac] = value
+    return merged, conflicts
+
+
+def apply(db, merged):
+    """Replace local device records with a validated merged set. Caller holds app_locks."""
     validate(merged)
     # All checks precede mutation. Clear unique columns first to allow renumbering/tag transfers.
     with db.conn:
@@ -92,6 +146,27 @@ def sync(db, folder):
             db.conn.execute('INSERT OR REPLACE INTO device_roles VALUES (?,?)', (mac, row['role']))
         # Independent computers cannot safely allocate MAX(number)+1.
         db.conn.execute("INSERT OR REPLACE INTO metadata VALUES ('auto_number','0')")
+    db.export_default()
+
+
+def sync(db, folder):
+    """Caller must close desktop apps. Conflicts never pick a silent winner."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    remote = {}
+    for path in sorted(folder.glob('*.json')):
+        row = json.loads(path.read_text())  # also rejects unresolved Git markers
+        mac = row.get('mac', '')
+        if path.stem != mac.replace(':', '').lower() or mac in remote:
+            raise ValueError('Invalid inventory filename: ' + path.name)
+        remote[mac] = row
+    validate(remote)
+    baseline, saved = load_baseline(db, KEY)
+    merged, conflicts = merge(snapshot(db), remote, baseline, saved)
+    if conflicts:
+        raise Conflict(conflicts[:1])
+    validate(merged)
+    apply(db, merged)
     for mac, row in merged.items():
         path = folder / (mac.replace(':', '').lower() + '.json')
         content = json.dumps(row, indent=2, sort_keys=True) + '\n'
@@ -100,7 +175,5 @@ def sync(db, folder):
             temporary.write_text(content)
             os.replace(temporary, path)
     # If file writing fails, the old baseline allows a safe retry.
-    with db.conn:
-        db.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (KEY, json.dumps(merged, sort_keys=True)))
-    db.export_default()
+    save_baseline(db, KEY, merged)
     return len(merged)

@@ -19,10 +19,11 @@ enum MessageType : uint8_t {
   ZONE_LOG      = 0x22,
   ZONE_IDENTIFY = 0x23,
   ZONE_REBOOT   = 0x24,
-  // 0x30 POOL_STATE and 0x31 POOL_BEACON are reserved by NctPoolProtocol.h and are
-  // deliberately NOT handled by frameType() below: ZoneLink::receive() queues every
-  // frame frameType() accepts and ZoneLink::handle() drops what it does not know, so
-  // routing them here would swallow them before the pool sketch ever sees them. They
+  // 0x30 POOL_STATE and 0x31 POOL_BEACON are reserved by NctPoolProtocol.h, and
+  // 0x40 PRESHOW_EVENT, 0x41 PRESHOW_ACK and 0x42 PRESHOW_BEACON by NctPreshowProtocol.h.
+  // All five are deliberately NOT handled by frameType() below: ZoneLink::receive() queues
+  // every frame frameType() accepts and ZoneLink::handle() drops what it does not know, so
+  // routing them here would swallow them before the sketch ever sees them. They
   // reach the sketch through TagPlate::onFrame instead. Do not reuse these values.
 };
 

@@ -25,10 +25,10 @@
     {
       "offset": 65536,
       "file": "neocore_usb.ino.bin",
-      "sha256": "472e0fed676a2cb5d049b7580575a452d86223a538d12531166f715a0a98dafd",
+      "sha256": "e70722bea0c649c8e538b9c38ad174118b5410eddfd4e632b4fa9624fa4e4147",
       "size": 963120
     }
   ],
   "source_hash": "62ec9486425d184c50926f44e5858c35f508b912d60bf3f7b6676822c05ae757",
-  "build_hash": "b93621c9fdb8428d6c5abbf5253d5d8401f059b538ab3167ac5336ac53a14da5"
+  "build_hash": "ff7ac578f81330fad851c14ae7ec24f41b9237e3809f5255eaada6dcf2a5bf24"
 }

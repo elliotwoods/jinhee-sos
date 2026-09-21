@@ -57,6 +57,12 @@ def main():
         ('Pool radio test', 'poolzone_test/firmware/PoolRadioTest', 'poolzone_test/build', SUPERMINI,
          ('zones/firmware/libraries',)),
         ('Pool central', 'zones/firmware/PoolCentral', 'zones/build/PoolCentral', C3, ('zones/firmware/libraries',)),
+        # The TouchDesigner media bridge. Not a zone board (no PN532, no zcfg/zdb partitions),
+        # so it is not a zone-flasher target and is built here instead. The board was rebuilt
+        # with a different antenna and power supply; if it is not a plain ESP32-C3, this FQBN
+        # is the only thing that needs changing.
+        ('Preshow bridge', 'zones/firmware/PreshowBridge', 'zones/build/PreshowBridge', C3,
+         ('zones/firmware/libraries',)),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
         ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:

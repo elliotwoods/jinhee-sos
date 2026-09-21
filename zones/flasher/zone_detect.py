@@ -20,7 +20,7 @@ SIGNATURES = [
     (b'NCT NEOCORE CUBE', 'cube', 'Neocube firmware', None),
     (b'POOL CENTRAL', 'other', 'Pool central controller', None),
     (b'NCT RANGE TEST', 'other', 'ESP-NOW range/link test board', None),
-    (b'NCT PRESHOW MEDIA BRIDGE', 'other', 'Preshow media bridge (SerialDAT)', None),
+    (b'NCT PRESHOW MEDIA BRIDGE', 'other', 'Preshow media bridge (PreshowBridge)', None),
     (b'MEDIA BRIDGE PEER', 'legacy_zone', 'Legacy PreshowZone plate', 'preshow'),
     (b'PRESHOW EXIT TAG', 'legacy_zone', 'Legacy preshow exit plate', 'preshow_exit'),
     (b'MAINSHOW ENTRANCE', 'legacy_zone', 'Legacy mainshow entrance plate', 'mainshow'),
@@ -116,12 +116,21 @@ def from_flash(mac, db, read):
     return dict(result, mac=mac, source='firmware image')
 
 
-def plan(detection, form, manifests, published, auto=False, allow_unidentified=False):
-    """Decide what flashing this board would do. Returns dict(action=flash|skip|refuse|ask, reason, profile, point, name, params)."""
+def forceable(detection):
+    """A refused board the operator may still overwrite by hand. The known pairing station never is."""
+    return detection['kind'] in NOT_FLASHABLE and (detection.get('mac') or '').upper() not in PROTECTED
+
+
+def plan(detection, form, manifests, published, auto=False, allow_unidentified=False, force=False):
+    """Decide what flashing this board would do. Returns dict(action=flash|skip|refuse|ask, reason, profile, point, name, params).
+
+    `force` (manual flashing only, never auto) overrides a refusal for anything `forceable`."""
     kind = detection['kind']
-    if kind in NOT_FLASHABLE:
-        return dict(action='refuse', reason=NOT_FLASHABLE[kind])
     chosen = dict(profile=form['profile'], point=form['point'], name=form['name'], params=list(form.get('params') or []))
+    if kind in NOT_FLASHABLE:
+        if force and not auto and forceable(detection):
+            return dict(chosen, action='flash', force=True, reason=f'FORCED over refusal: {NOT_FLASHABLE[kind]}')
+        return dict(action='refuse', reason=NOT_FLASHABLE[kind])
     if not auto:
         return dict(chosen, action='flash', reason='Flash with the selected zone settings')
     if kind == 'nctzone' and detection.get('configured') and detection.get('profile') and not detection.get('ambiguous'):

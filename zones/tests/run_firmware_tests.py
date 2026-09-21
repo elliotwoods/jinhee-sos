@@ -16,10 +16,12 @@ LIBRARY = ROOT / 'firmware/libraries/NctZone/src'
 SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone']
 # Sketches that are not zone boards (no zcfg/zdb partitions, not a zone-flasher target)
 # but are still compiled for the host against the same stubs.
-EXTRA_SKETCHES = ['PoolCentral']
+EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge']
 # Packet definitions a sketch may never re-declare: the pool packet used to be copied into
-# five sketches with nothing cross-checking them.
-PRIVATE_STRUCTS = ['Packet', 'PoolState', 'PoolBeacon', 'RadioPacket']
+# five sketches with nothing cross-checking them, and the preshow media packet was copied
+# into the plate and the bridge with the same result.
+PRIVATE_STRUCTS = ['Packet', 'PoolState', 'PoolBeacon', 'RadioPacket',
+                   'PreshowMediaPacket', 'PreshowEvent', 'PreshowAck', 'PreshowBeacon']
 SHIMS = ['Arduino.h', 'WiFi.h', 'esp_now.h', 'esp_wifi.h', 'Wire.h', 'Adafruit_PN532.h', 'esp_partition.h', 'VL53L4CD.h', 'Preferences.h',
          'freertos/FreeRTOS.h', 'freertos/queue.h']
 
@@ -92,7 +94,8 @@ def main():
         (directory / 'fixtures.h').write_text(fixtures())
         flags = ['c++', '-std=c++17', '-Wall', '-Wno-unused-function', '-g', '-fsanitize=address,undefined',
                  '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY)]
-        tests = (['test_library.cpp', 'test_PoolProtocol.cpp', 'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] +
+        tests = (['test_library.cpp', 'test_PoolProtocol.cpp', 'test_PreshowProtocol.cpp',
+                  'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] +
                  [f'test_{name}.cpp' for name in SKETCHES + EXTRA_SKETCHES])
         for test in tests:
             binary = directory / test.replace('.cpp', '')
