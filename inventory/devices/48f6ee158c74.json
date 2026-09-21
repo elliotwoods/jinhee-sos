@@ -1,11 +1,11 @@
 {
-  "cube_id": null,
-  "detail": "Choose Rename device to assign its label number",
+  "cube_id": 151,
+  "detail": "Renumbered from None to 151. Awaiting NFC registration.",
   "mac": "48:F6:EE:15:8C:74",
   "pending_uid": null,
-  "role": "auto",
+  "role": "excluded",
   "source": "usb",
-  "status": "needs_number",
+  "status": "awaiting_tag",
   "uid": null,
-  "updated_at": "2026-09-18T19:41:18+00:00"
+  "updated_at": "2026-09-20T18:12:39+00:00"
 }
