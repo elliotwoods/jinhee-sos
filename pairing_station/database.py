@@ -95,6 +95,14 @@ class Database:
     def excluded(self, mac):
         return self.roles().get(mac) == 'excluded'
 
+    def metadata(self, key):
+        row = self.conn.execute('SELECT value FROM metadata WHERE key=?', (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_metadata(self, key, value):
+        with self.conn:
+            self.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (key, str(value)))
+
     def reserve(self, mac, source="paired"):
         mac = hex_bytes(mac, {6})
         if int(mac[:2], 16) & 1:

@@ -18,9 +18,10 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone}/` | NFC-driven show zones; PoolZone also has slider calibration |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
 | Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
+| Mainshow controller | `zones/firmware/MainshowController/`, `zones/mainshow/app.py` | Makes a cube mainshow-ready (`SET_ZONE 4`) and triggers the main show (`MSG_SHOW_START` = 8, fresh showId ×5) from the app, its BOOT button or a trigger input. Replaces the M5 Core2 show starter. Not a zone board |
 | Preshow media bridge | `zones/firmware/PreshowBridge/` | Receives `PreshowEvent` from the four preshow plates, acknowledges each one, writes `PRESHOW,<n>,ON|OFF` to the TouchDesigner Serial DAT. Not a zone board |
 | Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
-| Zone Database Manager | `zones/dbmanager/app.py` | Wireless zone discovery/version view, targeted and walkaround database updates over an ESP-NOW dongle (pairing-station firmware), dongle flashing, web publish/pull |
+| Zone Database Manager | `zones/dbmanager/app.py` | Wireless zone discovery/version view, targeted, update-all and auto-update-all database updates over an ESP-NOW dongle (pairing-station firmware), dongle flashing, web publish/pull |
 | Web inventory | `web/` (Next.js on Vercel), `inventory_web/app.py`, `scripts/web_sync.py` | Shared web copy of device records (one private Vercel Blob document, shared password), desktop sync app |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
 | Pool light diagnostics | `poolzone_test/` | USB bridge emulating all six pool radios on the current protocol, light-test GUI. The central test firmware moved to `zones/firmware/PoolCentral/` |
@@ -29,7 +30,7 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Historical references | `live files/`, root `ForKimchi.ino`, `m5core2_controlloer.ino` | Existing installation behavior and protocol compatibility |
 
 Do not assume every ESP32 is a cube. Readers, the media bridge, the pairing station,
-and the pool central controller are separate roles. The TouchDesigner/media-server bridge
+the pool central controller and the Mainshow controller are separate roles. The TouchDesigner/media-server bridge
 is maintained at `zones/firmware/PreshowBridge/`; `live files/Preshow_MediaServer_SerialDAT`
 is the archived original it replaces. `m5core2_controlloer` was the old registration
 console. Do not flash those boards with cube firmware.
@@ -215,7 +216,7 @@ There is no guarantee that a historically recorded test count is current. Run an
 report the current suite. A GUI abort in a sandbox/headless process is different
 from a test assertion failure; use a desktop-capable execution environment.
 
-`python scripts/build_all_firmware.py --dry-run` lists ten maintained firmware
+`python scripts/build_all_firmware.py --dry-run` lists twelve maintained firmware
 and diagnostic targets. Without `--dry-run`, it builds them, reuses existing cube/
 zone manifest builders, reports failures, and exits nonzero if any fail. No uploads.
 `live files` sketches are historical and are not all part of this build command.

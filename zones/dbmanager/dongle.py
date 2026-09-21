@@ -4,8 +4,13 @@ The pairing-station firmware relays zone frames (`zone_send` / `zone_frame`) wit
 NFC reader, so a bare ESP32-C3 with that firmware is a complete dongle. Flashing writes the
 bootloader, partition table, boot selector and application separately so NVS is preserved,
 and refuses boards the inventory knows as cubes or zones.
+
+The same pipeline writes the Mainshow controller firmware (`MAINSHOW`, used by zones/mainshow).
+A board recorded as the controller is refused when writing anything else, so the dongle
+flasher cannot quietly turn the show trigger back into a relay.
 """
 from pathlib import Path
+import json
 import shutil
 import sys
 
@@ -14,51 +19,69 @@ sys.path.insert(0, str(ROOT / 'flashing_station'))
 from backend import MAC_RE, Runner, ports, tool_command  # noqa: E402
 from core import PROTECTED, PortLock  # noqa: E402
 
-FIRMWARE = 'nct-pairing-1.7-zones'  # what the dongle must report in `hello` (1.7 adds signal strength)
-SKETCH = ROOT / 'pairing_station/firmware/pairing_station'
-BUILD = ROOT / 'pairing_station/build'
 BOARD = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'  # same recipe as scripts/build_all_firmware.py
-LIBRARIES = (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware/libraries')
 IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 SEGMENTS = [(0x0, 'bootloader'), (0x8000, 'partitions'), (0xE000, 'boot_app0'), (0x10000, 'app')]
 BOOT_APP0 = slice(0xE000, 0x10000)  # taken from the merged image the build also produces
 BACKUPS = ROOT / 'pairing_station/data/dongle/backups'  # full 4 MB image before the first write to a board
+CONTROLLERS_KEY = 'mainshow_controllers'  # metadata: JSON list of boards flashed as the Mainshow controller
 
 
-def artifacts():
-    return dict(bootloader=BUILD / 'pairing_station.ino.bootloader.bin', partitions=BUILD / 'pairing_station.ino.partitions.bin',
-                app=BUILD / 'pairing_station.ino.bin', merged=BUILD / 'pairing_station.ino.merged.bin')
+class Firmware:
+    """One firmware that this pipeline can put on a spare ESP32-C3."""
+
+    def __init__(self, label, version, sketch, build, libraries):
+        self.label, self.version, self.sketch, self.build, self.libraries = label, version, sketch, build, libraries
+
+    @property
+    def stem(self):
+        return self.sketch.name + '.ino'
 
 
-def sources():
-    files = [p for p in SKETCH.iterdir() if p.suffix in ('.ino', '.h', '.cpp')]
+# `version` is what the board must report in `hello`.
+PAIRING = Firmware('pairing-station relay', 'nct-pairing-1.7-zones',  # 1.7 adds signal strength
+                   ROOT / 'pairing_station/firmware/pairing_station', ROOT / 'pairing_station/build',
+                   (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware/libraries'))
+MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.1.0', ROOT / 'zones/firmware/MainshowController',
+                    ROOT / 'zones/build/MainshowController', (ROOT / 'zones/firmware/libraries',))
+FIRMWARE = PAIRING.version
+
+
+def artifacts(firmware=PAIRING):
+    build, stem = firmware.build, firmware.stem
+    return dict(bootloader=build / f'{stem}.bootloader.bin', partitions=build / f'{stem}.partitions.bin',
+                app=build / f'{stem}.bin', merged=build / f'{stem}.merged.bin')
+
+
+def sources(firmware=PAIRING):
+    files = [p for p in firmware.sketch.iterdir() if p.suffix in ('.ino', '.h', '.cpp')]
     files += [p for p in (ROOT / 'zones/firmware/libraries/NctZone/src').iterdir() if p.suffix in ('.h', '.cpp')]
     return files
 
 
-def build_state():
+def build_state(firmware=PAIRING):
     """'current', 'missing' or 'stale' (a source is newer than the build)."""
-    files = artifacts()
+    files = artifacts(firmware)
     if not all(p.is_file() for p in files.values()):
         return 'missing'
     built = min(p.stat().st_mtime for p in files.values())
-    return 'stale' if max(p.stat().st_mtime for p in sources()) > built else 'current'
+    return 'stale' if max(p.stat().st_mtime for p in sources(firmware)) > built else 'current'
 
 
-def build(runner):
+def build(runner, firmware=PAIRING):
     cli = str(IDE_CLI) if IDE_CLI.exists() else shutil.which('arduino-cli')
     if not cli:
-        raise RuntimeError('Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 to build the dongle firmware')
-    BUILD.mkdir(parents=True, exist_ok=True)
+        raise RuntimeError(f'Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 to build the {firmware.label} firmware')
+    firmware.build.mkdir(parents=True, exist_ok=True)
     args = [cli, 'compile', '--fqbn', BOARD]
-    for library in LIBRARIES:
+    for library in firmware.libraries:
         args += ['--libraries', str(library)]
-    runner(args + ['--build-path', str(BUILD / 'cache'), '--output-dir', str(BUILD), str(SKETCH)], 900)
+    runner(args + ['--build-path', str(firmware.build / 'cache'), '--output-dir', str(firmware.build), str(firmware.sketch)], 900)
 
 
-def segment_files(folder):
+def segment_files(folder, firmware=PAIRING):
     """Copy the build into `folder` (frozen for this attempt) and return [(offset, path)]."""
-    files = artifacts()
+    files = artifacts(firmware)
     merged = files['merged'].read_bytes()
     folder.mkdir(parents=True, exist_ok=True)
     out = []
@@ -70,15 +93,33 @@ def segment_files(folder):
     return out
 
 
+def controllers(db):
+    """MACs recorded as Mainshow controllers (Tk/SQLite thread)."""
+    try:
+        return set(json.loads(db.metadata(CONTROLLERS_KEY) or '[]'))
+    except ValueError:
+        return set()
+
+
+def set_controller(db, mac, is_controller):
+    """Record (or forget) that `mac` runs the Mainshow controller firmware, so the dongle flasher leaves it alone."""
+    macs = controllers(db)
+    macs = macs | {mac} if is_controller else macs - {mac}
+    db.set_metadata(CONTROLLERS_KEY, json.dumps(sorted(macs)))
+
+
 def known_boards(db, zones):
     """Snapshot (on the Tk/SQLite thread) of what the inventory knows, for refusal() on a worker."""
     roles = db.roles()
     return dict(cubes={r['mac']: r['cube_id'] for r in db.rows() if roles.get(r['mac']) != 'excluded'},
-                zones={z['mac'] for z in zones}, excluded={m for m, role in roles.items() if role == 'excluded'})
+                zones={z['mac'] for z in zones}, excluded={m for m, role in roles.items() if role == 'excluded'},
+                controllers=controllers(db))
 
 
-def refusal(mac, known):
-    """Why this board must not become a dongle, or None."""
+def refusal(mac, known, firmware=PAIRING):
+    """Why this board must not be given `firmware`, or None."""
+    if mac in known.get('controllers', ()) and firmware is not MAINSHOW:
+        return f'{mac} is the Mainshow controller; reflash or retire it from the Mainshow app (zones/mainshow)'
     if mac in PROTECTED:
         return 'This is the installed pairing station; it already runs the relay firmware — just connect to it'
     if mac in known['zones']:
@@ -89,19 +130,19 @@ def refusal(mac, known):
     return None
 
 
-def flash(port, known, folder, emit, force_build=False):
-    """Build if needed, identify, refuse cubes/zones, write the relay firmware. Returns the dongle MAC.
+def flash(port, known, folder, emit, force_build=False, firmware=PAIRING):
+    """Build if needed, identify, refuse cubes/zones, write `firmware` (the relay by default). Returns the board MAC.
 
     Runs on a worker thread (no SQLite here: `known` comes from known_boards()); the caller records
     the dongle's excluded role afterwards so the cube and zone flashers leave it alone.
     """
     runner = Runner(emit, folder / 'dongle.log')
     folder.mkdir(parents=True, exist_ok=True)
-    state = build_state()
+    state = build_state(firmware)
     if force_build or state != 'current':
-        emit('stage', f'Build pairing-station firmware ({state})')
-        build(runner)
-    segments = segment_files(folder / 'firmware')
+        emit('stage', f'Build {firmware.label} firmware ({state})')
+        build(runner, firmware)
+    segments = segment_files(folder / 'firmware', firmware)
     with PortLock(port['port']):
         emit('stage', 'Check flashing tool')
         if '5.3.1' not in runner(tool_command() + ['version'], timeout=10):
@@ -125,7 +166,7 @@ def flash(port, known, folder, emit, force_build=False):
         if not match:
             raise RuntimeError('ESP32-C3 bootloader did not report a MAC; nothing was written')
         mac = match[1].upper()
-        reason = refusal(mac, known)
+        reason = refusal(mac, known, firmware)
         if reason:
             raise RuntimeError(reason + '; nothing was written')
         backup = BACKUPS / f'{mac.replace(":", "")}.bin'
@@ -137,7 +178,7 @@ def flash(port, known, folder, emit, force_build=False):
             if not partial.is_file() or partial.stat().st_size != 0x400000:
                 raise RuntimeError('Backup incomplete; nothing was written')
             partial.rename(backup)
-        emit('stage', f'Write relay firmware to {mac}')
+        emit('stage', f'Write {firmware.label} firmware to {mac}')
         args = ['write-flash', '--flash-mode', 'keep', '--flash-freq', 'keep', '--flash-size', 'keep']
         for offset, path in segments:
             args += [hex(offset), str(path)]

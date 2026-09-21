@@ -56,6 +56,126 @@ def age_text(age):
     return '—' if age is None else f'{int(age)} s' if age < 120 else f'{int(age // 60)} min' if age < 7200 else f'{int(age // 3600)} h'
 
 
+def progress_text(fraction, width=12):
+    filled = round(fraction * width)
+    return '█' * filled + '░' * (width - filled) + f' {int(fraction * 100):>3}%'
+
+
+class UpdateDialog:
+    """Modal progress for one update run. It holds the grab while the run is active so the main window
+    (selection, other updates) cannot change underneath it; afterwards it shows the result until closed."""
+    AUTO_CLOSE_MS = 2000  # automatic (Auto update all) runs close by themselves; the status line keeps the result
+
+    def __init__(self, app):
+        self.app = app
+        p = app.zones.publication
+        self.version, self.crc, self.auto = p.version, p.crc, app.zones.walk_run
+        self.macs = []  # expected zones in order of appearance (zones coming into range join the run)
+        self.finished = self.closed = False
+        top = self.top = tk.Toplevel(app.root)
+        top.title('Updating zones')
+        top.configure(bg=BG)
+        top.transient(app.root)
+        top.protocol('WM_DELETE_WINDOW', self.close_request)
+        frame = ttk.Frame(top, padding=16); frame.pack(fill='both', expand=True)
+        self.heading = ttk.Label(frame, text='', font=('Helvetica', 16, 'bold'))
+        self.heading.pack(anchor='w')
+        self.info = ttk.Label(frame, text='', foreground=MUTED)
+        self.info.pack(anchor='w', pady=(2, 8))
+        self.bar = ttk.Progressbar(frame, maximum=100, length=560)
+        self.bar.pack(fill='x')
+        self.tree = ttk.Treeview(frame, columns=('zone', 'mac', 'progress', 'state'), show='headings', height=8,
+                                 selectmode='none')
+        for key, title, width in [('zone', 'Zone', 140), ('mac', 'MAC', 150), ('progress', 'Progress', 170), ('state', 'State', 150)]:
+            self.tree.heading(key, text=title)
+            self.tree.column(key, width=width, anchor='w')
+        for state, color in [('done', GREEN), ('receiving', BLUE), ('waiting', MUTED), ('failed', RED)]:
+            self.tree.tag_configure(state, foreground=color)
+        self.tree.pack(fill='both', expand=True, pady=(10, 8))
+        self.result = ttk.Label(frame, text='', font=('Helvetica', 12, 'bold'), wraplength=600, justify='left')
+        self.result.pack(anchor='w')
+        buttons = ttk.Frame(frame); buttons.pack(fill='x', pady=(10, 0))
+        self.close_button = ttk.Button(buttons, text='Close', command=self.close)
+        self.close_button.pack(side='right')
+        self.close_button.state(['disabled'])
+        self.stop_button = ttk.Button(buttons, text='Stop' + (' (turns off Auto update all)' if self.auto else ''),
+                                      command=lambda: app.action(app.stop))
+        self.stop_button.pack(side='right', padx=(0, 6))
+        top.update_idletasks()
+        x = app.root.winfo_rootx() + max(0, (app.root.winfo_width() - top.winfo_reqwidth()) // 2)
+        y = app.root.winfo_rooty() + max(0, (app.root.winfo_height() - top.winfo_reqheight()) // 3)
+        top.geometry(f'+{x}+{y}')
+        self.grabbed = False
+
+    def grab(self):
+        if self.grabbed or self.finished:
+            return
+        try:
+            self.top.grab_set()  # fails until the window is viewable; retried on the next update
+            self.grabbed = True
+        except tk.TclError:
+            pass
+
+    def update(self):
+        zones = self.app.zones
+        running = zones.publication is not None and not self.finished
+        if running:
+            state = zones.publishing_state()
+            self.macs += [mac for mac in state['expected'] if mac not in self.macs]
+        rows = {z['mac']: z for z in zones.zone_rows()}
+        fractions, confirmed = [], 0
+        for mac in self.macs:
+            z = rows.get(mac)
+            done = bool(z) and z['db_version'] == self.version and z['db_crc'] == self.crc
+            staging = bool(z) and z['staging_version'] == self.version and bool(z['staging_total'])
+            fraction = 1.0 if done else (z['staging_chunks'] or 0) / z['staging_total'] if staging else 0.0
+            fractions.append(fraction)
+            confirmed += done
+            tag = 'done' if done else 'receiving' if staging else 'waiting' if running else 'failed'
+            text = {'done': 'confirmed ✓', 'receiving': f'receiving {z["staging_chunks"] if staging else 0}/'
+                    f'{z["staging_total"] if staging else 0}', 'waiting': 'waiting for zone', 'failed': 'not confirmed'}[tag]
+            values = ((z or {}).get('name') or '—', mac, progress_text(fraction), text)
+            if self.tree.exists(mac):
+                self.tree.item(mac, values=values, tags=(tag,))
+            else:
+                self.tree.insert('', 'end', iid=mac, values=values, tags=(tag,))
+        self.bar['value'] = 100 * sum(fractions) / len(fractions) if fractions else 0
+        what = 'Auto update all' if self.auto else 'Updating'
+        self.heading.configure(text=f'{what}: {len(self.macs)} zone(s) to database v{self.version}')
+        if running:
+            self.info.configure(text=f'{confirmed}/{len(self.macs)} confirmed · cycle {state["cycles"] + 1} · '
+                                     f'{state["elapsed_s"]:.0f} / {zones.publish_timeout} s · '
+                                     f'{state["send_failures"]} send failure(s)')
+            self.grab()
+        else:
+            self.finish(confirmed)
+
+    def finish(self, confirmed):
+        if self.finished:
+            return
+        self.finished = True
+        self.info.configure(text=f'{confirmed}/{len(self.macs)} confirmed')
+        ok = self.macs and confirmed == len(self.macs)
+        self.result.configure(text=self.app.zones.message, foreground=GREEN if ok else AMBER)
+        self.stop_button.state(['disabled'])
+        self.close_button.state(['!disabled'])
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        if self.auto:
+            self.top.after(self.AUTO_CLOSE_MS, self.close)
+
+    def close_request(self):
+        if self.finished:
+            self.close()  # while running, only Stop ends the run
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.top.destroy()
+
+
 class App:
     HEARTBEAT, HELLO_RETRY, SILENCE = 1.0, 3.0, 8.0
 
@@ -76,6 +196,7 @@ class App:
         self.last_reconnect_scan = 0
         self.busy = None  # 'flash' while a dongle is being written
         self.last_render = 0
+        self.update_dialog = None
         self.closing = False
         self.setup_ui()
         self.scan_ports(prefer=port)
@@ -157,7 +278,7 @@ class App:
         ttk.Checkbutton(toolbar, text='Auto-refresh', variable=self.auto_var,
                         command=lambda: self.action(self.toggle_auto)).pack(side='left', padx=8)
         self.walk_var = tk.BooleanVar(value=False)
-        self.walk_check = ttk.Checkbutton(toolbar, text='Walkaround', variable=self.walk_var,
+        self.walk_check = ttk.Checkbutton(toolbar, text='Auto update all', variable=self.walk_var,
                                           command=lambda: self.action(self.toggle_walkaround))
         self.walk_check.pack(side='left', padx=12)
         self.stop_button = ttk.Button(toolbar, text='Stop', command=lambda: self.action(self.stop))
@@ -187,6 +308,8 @@ class App:
         self.update_button = ttk.Button(selection, text='Update selected', style='Accent.TButton',
                                         command=lambda: self.action(self.update_selected))
         self.update_button.pack(side='left')
+        self.update_all_button = ttk.Button(selection, text='Update all', command=lambda: self.action(self.update_all))
+        self.update_all_button.pack(side='left', padx=(6, 0))
         self.identify_button = ttk.Button(selection, text='Identify (10 s)', command=lambda: self.action(self.identify))
         self.identify_button.pack(side='left', padx=(6, 0))
         self.log_button = ttk.Button(selection, text='Show log', command=lambda: self.action(self.show_log))
@@ -278,11 +401,11 @@ class App:
             self.transport.send(message)
         except ValueError:
             # The USB link went away between polls: handled as a drop-out in poll(), not as an error
-            # (an error would switch walkaround off). The registry times the relay out and carries on.
+            # (an error would switch Auto update all off). The registry times the relay out and carries on.
             self.link_lost = self.link_lost or 'Dongle USB connection lost'
 
     def lost(self, reason):
-        """Unexpected drop-out: stop the running update (zones keep their staging for 60 s), keep walkaround
+        """Unexpected drop-out: stop the running update (zones keep their staging for 60 s), keep Auto update all
         armed, and reconnect automatically when the same dongle reappears."""
         port = self.selected_port()
         self.disconnect(reason + ' — reconnecting automatically when the dongle is back')
@@ -309,6 +432,11 @@ class App:
         was = self.connected
         self.connected = bool(ok)
         firmware = event.get('firmware', '?')
+        if firmware.startswith('mainshow-'):
+            self.connected = False
+            self.radio_status.configure(text=f'{event.get("mac")} is the Mainshow controller ({firmware}), not a dongle: '
+                                        'Disconnect and choose the other port', foreground=RED)
+            return
         if not ok:
             problem = ('radio failed to start; reset the dongle' if not event.get('radio_ok') else
                        f'channel {event.get("channel")} (zones use 2)' if event.get('channel') != 2 else
@@ -413,7 +541,7 @@ class App:
         if not self.auto_var.get() and self.walk_var.get():
             self.walk_var.set(False)
             self.zones.set_walkaround(False)
-            self.log('Walkaround off (it needs auto-refresh)')
+            self.log('Auto update all off (it needs auto-refresh)')
 
     def toggle_walkaround(self):
         if self.walk_var.get():
@@ -425,7 +553,7 @@ class App:
             self.auto_var.set(True)
             self.zones.set_auto_refresh(True)
         self.zones.set_walkaround(self.walk_var.get())
-        self.log('Walkaround ' + ('on: out-of-date zones in range are updated automatically' if self.walk_var.get() else 'off'))
+        self.log('Auto update all ' + ('on: out-of-date zones in range are updated automatically' if self.walk_var.get() else 'off'))
 
     def update_selected(self):
         self.require_dongle()
@@ -444,6 +572,20 @@ class App:
                                           f'{age_text(zone["age_s"])}. Try anyway?', parent=self.root):
                 return
         self.zones.update(zone['mac'])
+
+    def update_all(self):
+        """One broadcast run for every out-of-date zone in range (zones that come into range join it)."""
+        self.require_dongle()
+        if self.zones.publication:
+            raise ValueError('An update is already running; wait or Stop it first')
+        published = self.zones.store.current()
+        behind = [z for z in self.zones.zone_rows() if z['in_range'] and z['state'] == 'behind']
+        if not behind:
+            raise ValueError(f'No out-of-date zones in range (published v{published.version})')
+        if not messagebox.askokcancel('Update all zones', f'Send database v{published.version} to {len(behind)} '
+                                      'out-of-date zone(s) in range?', parent=self.root):
+            return
+        self.zones.publish(expected={z['mac'] for z in behind})
 
     def stop(self):
         if self.walk_var.get():
@@ -541,8 +683,20 @@ class App:
             self.zones.set_walkaround(False)
         self.root.after(100, self.poll)
 
+    def sync_update_dialog(self):
+        """Open the progress window when an update run starts; a new run replaces a finished one."""
+        dialog, run = self.update_dialog, self.zones.publication
+        if dialog and (dialog.closed or (run and dialog.finished)):
+            dialog.close()
+            self.update_dialog = dialog = None
+        if run and not dialog:
+            self.update_dialog = dialog = UpdateDialog(self)
+        if dialog:
+            dialog.update()
+
     def render(self, force=False):  # force: called after a user action (always the full render)
         self.last_render = time.monotonic()
+        self.sync_update_dialog()
         store = self.zones.store
         published = store.published()
         if published['version']:
@@ -567,6 +721,8 @@ class App:
         self.selected_label.configure(text=f'Selected: {chosen["name"] or chosen["mac"]}' if chosen else 'Selected: —')
         for button, enabled in [(self.refresh_button, self.connected),
                                 (self.update_button, on_air and chosen['state'] == 'behind' and not self.zones.publication),
+                                (self.update_all_button, self.connected and not self.zones.publication
+                                 and any(z['state'] == 'behind' for z in in_range)),
                                 (self.identify_button, on_air), (self.log_button, on_air), (self.reboot_button, on_air),
                                 (self.stop_button, bool(self.zones.publication or self.walk_var.get())),
                                 (self.flash_button, not busy), (self.connect_button, self.busy != 'flash'),
@@ -575,7 +731,7 @@ class App:
         self.connect_button.configure(text='Disconnect' if self.transport.port else 'Connect')
 
         counts = {s: sum(z['state'] == s for z in in_range) for s in STATE_TEXT}
-        walking = ' · WALKAROUND ON' if self.walk_var.get() else ''
+        walking = ' · AUTO UPDATE ALL ON' if self.walk_var.get() else ''
         self.summary.configure(
             text=(f'{len(in_range)} zone(s) in range: {counts["current"]} current · {counts["behind"]} out of date · '
                   f'{counts["updating"]} updating · {counts["ahead"]} newer/different{walking}   ({len(rows)} known)')
@@ -641,7 +797,7 @@ def main():
     parser.add_argument('--database', type=Path, default=DATA / 'devices.sqlite3')
     parser.add_argument('--port', help='Dongle serial port (default: a known dongle/station, else the first ESP32)')
     parser.add_argument('--connect', action='store_true', help='Connect to the dongle at launch')
-    parser.add_argument('--walkaround', action='store_true', help='Start with walkaround mode on')
+    parser.add_argument('--auto-update-all', '--walkaround', dest='walkaround', action='store_true', help='Start with Auto update all on')
     parser.add_argument('--server', default=DEFAULT_SERVER)
     parser.add_argument('--dataset', default=DEFAULT_DATASET)
     args = parser.parse_args()

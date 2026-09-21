@@ -46,7 +46,7 @@ class DetectTests(unittest.TestCase):
                  b'NCT DESERT TAG PLATE v1.4.1-CH2-FIX': ('legacy_zone', 'desert'), b'=== POOL RADIO v1.2.0 ===': ('legacy_zone', 'pool'),
                  b'NCT PRESHOW TAG PLATE': ('legacy_zone', 'preshow_exit'), b'Cube READY': ('cube', None),
                  b'nct-pairing-1.6-zones': ('station', None), b'=== POOL CENTRAL READY ===': ('other', None),
-                 b'NCT PRESHOW MEDIA BRIDGE': ('other', None), b'hello world': ('unknown', None), b'\xff' * 64: ('blank', None)}
+                 b'NCT PRESHOW MEDIA BRIDGE': ('other', None), b'..NCT MAINSHOW CONTROLLER..': ('other', None), b'hello world': ('unknown', None), b'\xff' * 64: ('blank', None)}
         for image, (kind, profile) in cases.items():
             result = zone_detect.classify_image(image if kind == 'blank' else b'\x00' * 40 + image)
             self.assertEqual((result['kind'], result['profile']), (kind, profile), image)

@@ -42,7 +42,7 @@ class DongleTests(unittest.TestCase):
         return 'ok'
 
     def flash(self, state='current'):
-        with patch.object(dongle, 'BUILD', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), patch.object(dongle, 'build_state', return_value=state), \
+        with patch.object(dongle.PAIRING, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), patch.object(dongle, 'build_state', return_value=state), \
                 patch.object(dongle, 'build') as build, patch('backend.Runner.__call__', side_effect=self.fake_tool), \
                 patch.object(dongle, 'ports', return_value=[PORT]), \
                 patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()):
@@ -83,6 +83,41 @@ class DongleTests(unittest.TestCase):
             self.assertIn(text, str(error))
             self.assertIn('nothing was written', str(error))
             self.assertFalse(any('write-flash' in c or 'read-flash' in c for c in self.calls))
+
+    def test_mainshow_firmware_and_controller_protection(self):
+        stem = 'MainshowController.ino'
+        self.assertEqual(dongle.artifacts(dongle.MAINSHOW)['app'].name, stem + '.bin')
+        self.assertEqual(dongle.MAINSHOW.sketch.name, 'MainshowController')
+        for name, data in [('bootloader', b'B'), ('partitions', b'P'), ('app', b'M' * 10)]:
+            (self.build / f'{stem}{"" if name == "app" else "." + name}.bin').write_bytes(data)
+        (self.build / f'{stem}.merged.bin').write_bytes((self.build / 'pairing_station.ino.merged.bin').read_bytes())
+        known = dict(KNOWN, controllers={MAC})
+        with patch.object(dongle.MAINSHOW, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
+                patch.object(dongle, 'build_state', return_value='current'), patch('backend.Runner.__call__', side_effect=self.fake_tool), \
+                patch.object(dongle, 'ports', return_value=[PORT]), patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()):
+            # The controller cannot be turned back into a relay dongle by the dongle flasher...
+            with self.assertRaisesRegex(RuntimeError, 'Mainshow controller'):
+                dongle.flash(PORT, known, Path(self.tmp.name) / 'run', lambda *e: None)
+            self.assertFalse(any('write-flash' in c for c in self.calls))
+            # ...but the Mainshow app may (re)write the controller firmware to it.
+            self.assertEqual(dongle.flash(PORT, known, Path(self.tmp.name) / 'run2', lambda *e: None,
+                                          firmware=dongle.MAINSHOW), MAC)
+        write = next(c for c in self.calls if 'write-flash' in c)
+        self.assertEqual(Path(write[write.index('0x10000') + 1]).read_bytes(), b'M' * 10)
+        self.assertEqual(dongle.refusal('02:00:00:00:00:01', known, dongle.MAINSHOW)[:22], '02:00:00:00:00:01 is a')
+
+    def test_controller_record(self):
+        sys.path.insert(0, str(ROOT.parent / 'pairing_station'))
+        from database import Database
+        db = Database(Path(self.tmp.name) / 'devices.sqlite3')
+        try:
+            self.assertEqual(dongle.controllers(db), set())
+            dongle.set_controller(db, MAC, True)
+            self.assertEqual(dongle.known_boards(db, [])['controllers'], {MAC})
+            dongle.set_controller(db, MAC, False)
+            self.assertEqual(dongle.controllers(db), set())
+        finally:
+            db.close()
 
     def test_known_boards_snapshot(self):
         sys.path.insert(0, str(ROOT.parent / 'pairing_station'))

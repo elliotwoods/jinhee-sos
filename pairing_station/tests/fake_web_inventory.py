@@ -6,6 +6,15 @@ import json
 import threading
 from urllib.parse import parse_qs, urlparse
 import zlib
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import web_client  # noqa: E402
+
+# Tests must never read or overwrite this computer's stored web password (pairing_station/data/web_password).
+web_client.PASSWORD_FILE = Path(tempfile.mkdtemp(prefix='nct-test-password-')) / 'web_password'
 
 
 class FakeWebInventory:

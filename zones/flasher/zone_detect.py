@@ -21,6 +21,7 @@ SIGNATURES = [
     (b'POOL CENTRAL', 'other', 'Pool central controller', None),
     (b'NCT RANGE TEST', 'other', 'ESP-NOW range/link test board', None),
     (b'NCT PRESHOW MEDIA BRIDGE', 'other', 'Preshow media bridge (PreshowBridge)', None),
+    (b'NCT MAINSHOW CONTROLLER', 'other', 'Mainshow controller (MainshowController)', None),
     (b'MEDIA BRIDGE PEER', 'legacy_zone', 'Legacy PreshowZone plate', 'preshow'),
     (b'PRESHOW EXIT TAG', 'legacy_zone', 'Legacy preshow exit plate', 'preshow_exit'),
     (b'MAINSHOW ENTRANCE', 'legacy_zone', 'Legacy mainshow entrance plate', 'mainshow'),

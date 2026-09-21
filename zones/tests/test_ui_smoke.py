@@ -116,6 +116,12 @@ class UiSmokeTests(unittest.TestCase):
             self.assertFalse(app.update_button.instate(['disabled']))
             app.update_button.invoke()
             self.assertEqual(app.zones.publish_target, zone)
+            # The run opens the modal progress window listing the zone being updated.
+            dialog = app.update_dialog
+            self.assertIsNotNone(dialog)
+            self.assertEqual(dialog.macs, [zone])
+            self.assertFalse(dialog.finished)
+            self.assertTrue(dialog.close_button.instate(['disabled']))
             app.poll()
             announce = next(m for m in sent if m.get('cmd') == 'zone_send' and bytes.fromhex(m['hex'])[3] == zonedb.DB_ANNOUNCE)
             self.assertEqual(announce['mac'], zone)
@@ -126,6 +132,14 @@ class UiSmokeTests(unittest.TestCase):
                 app.poll()
             self.assertIsNone(app.zones.publication)
             self.assertIn('confirmed', app.status.get())
+            app.render(force=True)
+            self.assertTrue(dialog.finished)
+            self.assertEqual(dialog.tree.item(zone)['values'][3], 'confirmed ✓')
+            self.assertTrue(dialog.stop_button.instate(['disabled']))
+            dialog.close_button.invoke()
+            app.render(force=True)
+            self.assertIsNone(app.update_dialog)
+            self.assertTrue(app.update_all_button.instate(['disabled']))  # nothing out of date in range
             # Walkaround needs a published database and turns auto-refresh on.
             app.auto_var.set(False); app.toggle_auto()
             app.walk_var.set(True); app.walk_check.invoke(); app.walk_check.invoke()
@@ -138,6 +152,8 @@ class UiSmokeTests(unittest.TestCase):
             app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(2, 0x1234)))
             app.poll()
             self.assertTrue(app.zones.walk_run)
+            app.render(force=True)
+            self.assertTrue(app.update_dialog.auto)
             app.transport.send = MagicMock(side_effect=ValueError('Serial port is disconnected'))
             app.send = manager_app.App.send.__get__(app)
             app.zones.send = app.send

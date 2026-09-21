@@ -44,6 +44,11 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
   target: no PN532, no `zcfg`/`zdb` partitions, and its own board profile. Build it with `scripts/build_all_firmware.py`.
 - **The preshow plates and the bridge are a matched set too.** Flash the bridge first: it still accepts the old 2-byte
   packet, so the plates keep working while they are updated one at a time.
+- **The main show is started by [`firmware/MainshowController`](firmware/MainshowController/README.md).** It replaces the
+  M5 Core2 show starter, whose `MSG_SHOW_START = 7` current cubes ignore. It is not a zone board either.
+  - The [Mainshow app](mainshow/README.md) (`mainshow/Launch.command`) flashes it onto a spare dongle board, makes a cube
+    mainshow-ready and triggers the show (to one cube or broadcast).
+  - The board's BOOT button and trigger input (XIAO D1 to GND) trigger the show without a computer.
 
 ### Pool link protocol
 
@@ -166,19 +171,24 @@ the pairing app's **Zones → Zone Database Manager…** opens it too). Zone fir
     Only a new publication fixes it.
 - **Update selected** sends a unicast (never forced) announce to that zone, then broadcast chunks, until the zone
   reports the new version and CRC (45 s limit).
-- **Walkaround** needs auto-refresh. When no update is running, it starts one broadcast run for every in-range zone
+- **Update all** starts one broadcast run for every in-range zone that is out of date (after a confirmation).
+  Zones that come into range during the run and need the version join it.
+- **Progress window.** Every update run opens a window listing its zones with per-zone chunk progress; it
+  blocks the main window until the run ends (Stop is in the window), then shows the result until closed.
+  Automatic runs close it by themselves after 2 s.
+- **Auto update all** (formerly *Walkaround*; `--auto-update-all`) needs auto-refresh. When no update is running, it starts one broadcast run for every in-range zone
   that is out of date. A zone that does not confirm is retried after 30 s. It never touches newer/different zones.
 - **Signal** column: the dongle's RSSI for each zone, smoothed. `▂▄▆` at −67 dBm or better, `▂▄·` down to
   −80 dBm, `▂··` below that. Requires dongle firmware 1.7.
 - **Actions for the selected zone** sit beneath the list: Update selected (only for an out-of-date zone),
-  Identify, Show log, Reboot.
+  Update all, Identify, Show log, Reboot.
 - **Sync** (the same widget as in every app) uploads local inventory changes, downloads web changes and pulls or
   publishes the zone database. `↑` and `↓` count what is pending. Conflicts stop it and open **Web Sync…**. The
   **web allocates the version**: identical content keeps the current version; otherwise it becomes
   `max(current, min_version) + 1`, where `min_version` is the highest version this computer has seen on any zone
   or published locally. Versions are therefore universal and only increase, whichever computer publishes. Every
   computer must run this software: an old pairing-station app still publishes from its own counter.
-- **Drop-outs.** If the dongle's USB drops mid-update, the update stops and Walkaround stays on. The same dongle
+- **Drop-outs.** If the dongle's USB drops mid-update, the update stops and Auto update all stays on. The same dongle
   is reopened automatically when it reappears. Zones keep a partial update for 60 s, and a repeated announce
   for the same version resumes it. If the dongle stops answering, the app re-handshakes and does not replay the
   interrupted command. A zone that leaves range times out (45 s) and discards its partial update itself.
@@ -212,8 +222,10 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 | `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone` sketches, each with the same `partitions.csv` |
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
+| `firmware/MainshowController/` | Main show trigger (SET_ZONE 4 / SHOW_START over ESP-NOW, BOOT button, trigger input): not a zone board |
 | `tools/zonedb.py` | Python definition of every image/frame (used by the database manager, flasher and tests) |
-| `dbmanager/` | Zone Database Manager (`app.py`) and ESP-NOW dongle flashing (`dongle.py`) |
+| `dbmanager/` | Zone Database Manager (`app.py`) and ESP-NOW dongle flashing (`dongle.py`, also used for the Mainshow controller) |
+| `mainshow/` | Mainshow Controller app (`app.py`): cube mainshow-ready, show trigger, controller flashing |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
 | `tests/` | Host-compiled firmware tests and Python tests |
 | `ZONE_PORTING_NOTES.md` | How to move the other zone firmwares onto this system |

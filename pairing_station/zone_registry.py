@@ -212,7 +212,7 @@ class ZoneRegistry:
         self.backoff.clear()
         self.next_query = 0
         if not enabled and self.walk_run:
-            self.stop('Walkaround stopped')
+            self.stop('Auto update all stopped')
 
     def update(self, mac):
         """Update one zone (unicast announce; never forced, so a zone never goes back a version)."""
@@ -373,6 +373,6 @@ class ZoneRegistry:
                 # One broadcast run updates every out-of-date zone in range at once.
                 self.publish(expected=candidates, timeout=self.WALK_TIMEOUT)
                 self.walk_run = True
-                self.message = f'Walkaround: updating {len(candidates)} zone(s) to v{self.publication.version}'
+                self.message = f'Auto update all: updating {len(candidates)} zone(s) to v{self.publication.version}'
         if now >= self.next_query and not self.inflight:
             self.query()
