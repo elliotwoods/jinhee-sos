@@ -300,6 +300,8 @@ struct WireStub {
 };
 inline WireStub Wire;
 constexpr int PN532_MIFARE_ISO14443A = 0;
+constexpr uint8_t PN532_I2C_ADDRESS = 0x48 >> 1, PN532_PN532TOHOST = 0xD5, PN532_COMMAND_RFCONFIGURATION = 0x32,
+                  PN532_COMMAND_READREGISTER = 0x06;
 inline std::vector<uint8_t> presentedTag;
 inline bool pn532Present = true;
 struct Adafruit_PN532 {
@@ -307,6 +309,8 @@ struct Adafruit_PN532 {
   void begin() {}
   uint32_t getFirmwareVersion() { return pn532Present ? 0x32010607 : 0; }
   bool SAMConfig() { return true; }
+  // The host has no reader command channel, so the gain setting reports itself as not applied.
+  bool sendCommandCheckAck(uint8_t *, uint8_t, uint16_t = 100) { return false; }
   bool readPassiveTargetID(int, uint8_t *uid, uint8_t *length, int timeout) {
     if (!pn532Present) return false;  // command not acknowledged: returns at once
     fakeNow += presentedTag.empty() ? timeout : 20;

@@ -10,7 +10,7 @@ All current tag zones are already ported (see the table in `README.md`). A new z
    - Create `TagPlate plate;`.
    - Set `TagPlateOptions` (`banner`, `zoneType`, or `0` to take the zone from flash).
    - Set the hooks:
-     - `onTagEnter(uid, len, cube)` and `onTagLeave(uid, len, cube)`. `cube` is null for unregistered tags. The core has already sent `MSG_SET_ZONE` before `onTagEnter` runs.
+     - `onTagEnter(uid, len, cube)` and `onTagLeave(uid, len, cube)`. `cube` is null for unregistered tags. The core has already sent `MSG_SET_ZONE` before `onTagEnter` runs, and keeps repeating it for up to three seconds (see `ZONE_REPEAT_MS` in `NctTagPlate.h`); set `options.repeatZone = false` only if a plate has a reason not to. Anything the hook sends to the same cube straight afterwards can overwrite the colour inside the cube, which is exactly what those repeats are for.
      - `onSerial(line)` for extra console commands, and `onReport()` for extra `?` lines (printed before `READY`).
    - Call `plate.begin(options)`, then `plate.printReport()` at the end of `setup()`.
    - Call `plate.loop()` in `loop()`. Never block. The PN532 poll already costs up to 80 ms per pass.

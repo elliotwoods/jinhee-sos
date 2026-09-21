@@ -21,6 +21,7 @@ struct TagPlateOptions {
   int sdaPin = 4, sclPin = 3;  // field-proven PN532 wiring
   bool nfcEnabled = true;     // local sensor calibration can bypass reader initialization/polling
   int ledPin = 8;              // SuperMini onboard LED (active low)
+  bool repeatZone = true;      // re-send the tapped cube's colour (see ZONE_REPEAT_MS)
 };
 
 class TagPlate {
@@ -30,6 +31,26 @@ class TagPlate {
   // Reader supervision (lessons from pairing_station/I2C_DEBUG.md): a healthy no-tag poll lasts ~NFC_READ_TIMEOUT;
   // one that returns at once means the I2C command failed. The firmware query is a live check, not a cached flag.
   static constexpr uint32_t NFC_HEALTH_INTERVAL = 3000, NFC_FAST_FAIL_MS = 20, NFC_FAST_FAIL_LIMIT = 10;
+
+  // Colour repeats, because one MSG_SET_ZONE is not enough to be sure a cube changed colour.
+  // Two different ways it gets lost, and they need different answers:
+  //   - The unicast fails on the radio. ESP-NOW says so in the send callback, so that case can be
+  //     retried until it is acknowledged.
+  //   - The cube drops it after the radio accepted it. ForKimchi.ino keeps exactly ONE received
+  //     packet (pendingPacket/packetReady) and consumes it in loop(), whose idle pass is delay(2),
+  //     so two frames arriving inside one pass leave only the second. A plate that sends anything
+  //     straight behind the colour - the desert plate's MSG_TAG_STATE, which the cube does not even
+  //     handle - can have its colour command silently replaced by a no-op. The wire reports success,
+  //     so nothing here can detect it; the only answer is to send the colour again unprompted.
+  // Hence two unconditional repeats first, then retries only while the radio is failing. The cube
+  // never acknowledges MSG_SET_ZONE itself and is not to be changed, so an application-level
+  // acknowledgement is not available. Every repeat is byte-identical and setZoneColor() only writes
+  // the LEDs, so a duplicate costs one 24-byte frame and nothing else.
+  // Healthy radio: three frames per tap. Radio down: seven, spread over the window, then a report.
+  static constexpr uint8_t ZONE_REPEAT_COUNT = 2;  // unconditional, offsets from the first send
+  static constexpr uint32_t ZONE_REPEAT_MS[ZONE_REPEAT_COUNT] = {120, 400};
+  static constexpr uint32_t ZONE_RETRY_MS = 600;           // cadence afterwards, while unacknowledged
+  static constexpr uint32_t ZONE_REPEAT_WINDOW_MS = 3000;  // nothing is re-sent after this
 
   // Hooks (all optional). `cube` is null for tags that are not in the database.
   void (*onTagEnter)(const uint8_t *uid, uint8_t length, const Record *cube) = nullptr;
@@ -108,6 +129,7 @@ class TagPlate {
     link.poll();
     processSendResults();
     pollFlash();
+    pollZoneRepeat();
     if (options_.nfcEnabled) pollNfc();
   }
 
@@ -234,7 +256,50 @@ class TagPlate {
     nfc_.begin();
     nfcVersion_ = nfc_.getFirmwareVersion();
     if (((nfcVersion_ >> 24) & 0xFF) != 0x32) return false;  // a floating bus can return garbage; PN532 IC is 0x32
-    return nfc_.SAMConfig();
+    if (!nfc_.SAMConfig()) return false;
+    setMaxRxGain();
+    return true;
+  }
+
+  // Raise the receiver gain to its maximum so a weakly coupled cube is still read.
+  // RFConfiguration CfgItem 0x0A takes all eleven analog registers for 106 kbps type A (UM0701-02 table 19);
+  // only CIU_RFCfg moves, from its 0x59 default to 0x79, which sets RxGain (bits 6..4) to 111 = 48 dB instead
+  // of 101 = 38 dB (PN512 data sheet table 92). The other ten keep their documented defaults. Higher gain also
+  // raises the noise the demodulator sees, so measure rather than assume a marginal tag improves.
+  // The reply (D5 33, UM0701-02 p106) is read here because the library acknowledges the command and waits for
+  // its reply but never consumes it, and that unread reply is what held SCL low (pairing_station/I2C_DEBUG.md).
+  bool setMaxRxGain() {
+    uint8_t command[] = {PN532_COMMAND_RFCONFIGURATION, 0x0A, 0x79, 0xF4, 0x3F, 0x11, 0x4D,
+                         0x85, 0x61, 0x6F, 0x26, 0x62, 0x87};
+    uint8_t reply[10] = {};  // ready byte, then 00 00 FF LEN LCS D5 33 DCS 00
+    bool ok = nfc_.sendCommandCheckAck(command, sizeof(command)) &&
+              Wire.requestFrom(uint8_t(PN532_I2C_ADDRESS), uint8_t(sizeof(reply))) == sizeof(reply);
+    if (ok) {
+      for (uint8_t &byte : reply) byte = Wire.read();
+      ok = reply[6] == PN532_PN532TOHOST && reply[7] == PN532_COMMAND_RFCONFIGURATION + 1;
+    }
+    Serial.printf("PN532 RX GAIN 48dB: %s\n", ok ? "set" : "NOT SET (reader stays at the default 38dB)");
+    return ok;
+  }
+
+  // Diagnostic: print the gain the chip is actually running, instead of trusting that the command above stuck.
+  // ReadRegister (UM0701-02 p76) fetches CIU_RFCfg, which lives at XRAM 0x6316; that address comes from libnfc's
+  // register table, whose CIU_Status1 0x6337 matches the manual's own worked example. RxGain is bits 6..4
+  // (PN512 data sheet table 92). Reply: ready byte, then 00 00 FF LEN LCS D5 07 <value> DCS 00.
+  void printRxGain() {
+    static const uint8_t DB[8] = {18, 23, 18, 23, 33, 38, 43, 48};
+    uint8_t command[] = {PN532_COMMAND_READREGISTER, 0x63, 0x16};
+    uint8_t reply[11] = {};
+    bool ok = nfc_.sendCommandCheckAck(command, sizeof(command)) &&
+              Wire.requestFrom(uint8_t(PN532_I2C_ADDRESS), uint8_t(sizeof(reply))) == sizeof(reply);
+    if (ok) {
+      for (uint8_t &byte : reply) byte = Wire.read();
+      ok = reply[6] == PN532_PN532TOHOST && reply[7] == PN532_COMMAND_READREGISTER + 1;
+    }
+    if (!ok) { Serial.println("RFCFG: read failed"); return; }
+    uint8_t value = reply[8];
+    Serial.printf("RFCFG: CIU_RFCfg=0x%02X rx_gain=%udB level_amp=%u rf_level=%u\n",
+                  value, DB[(value >> 4) & 0x07], (value >> 7) & 1, value & 0x0F);
   }
 
   void nfcLost(const char *why) {
@@ -254,6 +319,7 @@ class TagPlate {
       if (!oldest) continue;
       oldest->active = false;
       if (!r.ok) link.noteSendFail();
+      if (repeating_ && oldest->type == MSG_SET_ZONE && oldest->cubeID == repeatCube_.cubeID) repeatAcked_ = r.ok;
       if (oldest->handle && oldest->handle == currentTagHandle_)
         currentDelivery_ = r.ok ? 1 : -1;
       if (oldest->handle) link.updateTag(oldest->handle, r.ok ? TAG_DELIVERED : TAG_UNCONFIRMED);
@@ -296,6 +362,7 @@ class TagPlate {
       if (flashing_ && flashCube_.cubeID == cube->cubeID) flashing_ = false;  // a real tap wins over a test flash
       if (zoneType() >= ZONE_PRESHOW && zoneType() <= ZONE_MAINSHOW) {
         if (!sendToCube(*cube, MSG_SET_ZONE, zoneType(), handle)) currentDelivery_ = -1;
+        startZoneRepeat(*cube, zoneType(), handle);
       } else {
         Serial.println("ZONE TYPE NOT CONFIGURED: cube not updated");
         link.updateTag(handle, TAG_UNCONFIRMED);
@@ -354,6 +421,7 @@ class TagPlate {
     }
     if (tagPresent_ && now - lastSeen_ > TAG_LEAVE_TIMEOUT) {
       tagPresent_ = false;
+      cancelZoneRepeat();
       Serial.print("TAG LEAVE: ");
       printHex(currentUid_, currentUidLength_);
       Serial.println();
@@ -370,6 +438,49 @@ class TagPlate {
     for (uint16_t i = 0; i < db.count(); i++)
       if (db.records()[i].cubeID == id) return &db.records()[i];
     return nullptr;
+  }
+
+  // ---- colour repeats (see ZONE_REPEAT_MS) ----
+  // Every repeat carries the tap's handle, so the zone log and currentDelivery() report how the
+  // whole three-second effort ended rather than how the first frame alone went.
+  void startZoneRepeat(const Record &cube, uint8_t zone, uint32_t handle) {
+    if (!options_.repeatZone) return;
+    repeatCube_ = cube;
+    repeatValue_ = zone;
+    repeatHandle_ = handle;
+    repeatSent_ = 0;
+    repeatAcked_ = false;
+    repeatStartedAt_ = millis();
+    repeatDueAt_ = repeatStartedAt_ + ZONE_REPEAT_MS[0];
+    repeating_ = true;
+  }
+
+  // Any colour command issued after this one supersedes it, and a tag that has left may already be
+  // on the next plate: a repeat must never repaint a cube somebody else has since claimed.
+  void cancelZoneRepeat() { repeating_ = false; }
+
+  void pollZoneRepeat() {
+    if (!repeating_) return;
+    uint32_t now = millis();
+    if (int32_t(now - repeatDueAt_) < 0) return;
+    uint32_t elapsed = now - repeatStartedAt_;
+    if (repeatSent_ >= ZONE_REPEAT_COUNT) {  // past the unconditional pair: only a failing radio is retried
+      if (repeatAcked_) return cancelZoneRepeat();
+      if (elapsed > ZONE_REPEAT_WINDOW_MS) {
+        repeating_ = false;
+        Serial.printf("Cube #%lu colour NOT ACKNOWLEDGED after %u tries\n", (unsigned long)repeatCube_.cubeID,
+                      repeatSent_ + 1);
+        Serial.printf("EVT ZONE_GAVE_UP cube=%lu value=%u tries=%u ms=%lu\n", (unsigned long)repeatCube_.cubeID,
+                      repeatValue_, repeatSent_ + 1, (unsigned long)elapsed);
+        return;
+      }
+    }
+    repeatSent_++;
+    repeatAcked_ = false;
+    Serial.printf("EVT ZONE_REPEAT cube=%lu value=%u n=%u ms=%lu\n", (unsigned long)repeatCube_.cubeID,
+                  repeatValue_, repeatSent_, (unsigned long)elapsed);
+    sendToCube(repeatCube_, MSG_SET_ZONE, repeatValue_, repeatHandle_);
+    repeatDueAt_ = repeatSent_ < ZONE_REPEAT_COUNT ? repeatStartedAt_ + ZONE_REPEAT_MS[repeatSent_] : now + ZONE_RETRY_MS;
   }
 
   void pollFlash() {
@@ -393,6 +504,7 @@ class TagPlate {
     bool isZone = !strcmp(word, "zone"), isClear = !strcmp(word, "clear"), isFlash = !strcmp(word, "flash"),
          isCube = !strcmp(word, "cube");
     if (!strcmp(word, "stop") && n == 1) {
+      cancelZoneRepeat();
       if (flashing_) {
         flashing_ = false;
         sendToCube(flashCube_, MSG_SET_ZONE, ZONE_IDLE);
@@ -406,6 +518,7 @@ class TagPlate {
       Serial.printf("ERR cube %lu is not in this zone's database\n", id);
       return true;
     }
+    if (!isCube) cancelZoneRepeat();  // a hand-set colour supersedes the repeats of the last tap
     if (isCube) {
       Serial.printf("CUBE %lu uid=", (unsigned long)cube->cubeID);
       printHex(cube->uid, cube->uidLength);
@@ -456,6 +569,8 @@ class TagPlate {
       printReport();
     } else if (!strcmp(line, "nfc")) {
       printNfc();
+    } else if (!strcmp(line, "rfcfg")) {
+      printRxGain();
     } else if (!strcmp(line, "nfc recover")) {
       nfcLost("recovery requested");
       if (tagPresent_) {
@@ -486,6 +601,10 @@ class TagPlate {
   bool flashing_ = false, flashBlue_ = false;
   Record flashCube_ = {};
   uint32_t flashStarted_ = 0, flashDuration_ = 0, lastFlash_ = 0;
+  bool repeating_ = false, repeatAcked_ = false;
+  Record repeatCube_ = {};
+  uint8_t repeatValue_ = 0, repeatSent_ = 0;
+  uint32_t repeatHandle_ = 0, repeatStartedAt_ = 0, repeatDueAt_ = 0;
   char serialLine_[64] = {};
   size_t serialUsed_ = 0;
 };

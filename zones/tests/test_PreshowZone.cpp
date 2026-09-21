@@ -68,7 +68,7 @@ int main() {
   image("zcfg", CONFIG_POINT2);
   setup();
   assert(plate.radioOk && plate.nfcOk && plate.configOk && radioChannel == 2);
-  assert(has(Serial.output, "FW: preshow-3.0.0") && has(Serial.output, "DB: version=1 count=32"));
+  assert(has(Serial.output, "FW: preshow-3.1.0") && has(Serial.output, "DB: version=1 count=32"));
   assert(Serial.output.rfind("READY") > Serial.output.rfind("STATS:"));
   assert(!esp_now_is_peer_exist(BRIDGE) && "the bridge address is no longer compiled in");
   assert(esp_now_is_peer_exist(BROADCAST) && "but broadcast is, so events go out before any beacon");
@@ -80,9 +80,11 @@ int main() {
   presentedTag = FIRST_UID;
   run(200);
   auto cube = framesTo(FIRST_MAC.data(), mark);
-  assert(cube.size() == 1);
-  Packet p = cubePacket(cube[0]);
-  assert(p.type == MSG_SET_ZONE && p.success == nctzone::ZONE_PRESHOW && p.cubeID == FIRST_ID);
+  assert(cube.size() == 2 && "the colour, and the first of its two repeats (NctTagPlate.h ZONE_REPEAT_MS)");
+  for (auto &frame : cube) {
+    Packet p = cubePacket(frame);
+    assert(p.type == MSG_SET_ZONE && p.success == nctzone::ZONE_PRESHOW && p.cubeID == FIRST_ID);
+  }
   auto media = eventsTo(BROADCAST, mark);
   assert(media.size() >= PRESHOW_BURST_COUNT && "an edge is burst, not sent once");
   assert(media[0].pointId == 2 && media[0].state == 1 && media[0].bootId == mediaBootId);
@@ -235,7 +237,7 @@ int main() {
   seqBefore = mediaSeq;
   presentedTag = EXTRA_UID;
   run(200);
-  assert(framesTo(EXTRA_MAC.data(), mark).size() == 1 && mediaSeq == seqBefore + 1);
+  assert(framesTo(EXTRA_MAC.data(), mark).size() == 2 && mediaSeq == seqBefore + 1);  // colour + first repeat
   presentedTag.clear();
   run(1000);
   liveBridge(NEW_BRIDGE, 1000);
@@ -300,7 +302,7 @@ int main() {
   run(200);
   presentedTag.clear();
   run(1000);
-  assert(framesTo(FIRST_MAC.data(), mark).size() == 1 && events(mark).empty());
+  assert(framesTo(FIRST_MAC.data(), mark).size() == 3 && events(mark).empty());  // colour + its two repeats
   assert(has(Serial.output, "MEDIA SKIPPED: zone point not configured") && !eventValid);
   // And a beacon cannot make it start: there is no point id to cue.
   beaconFrom(BRIDGE, 0x0F, ++bridgeEpochCounter);
@@ -335,7 +337,7 @@ int main() {
   mark = sentFrames.size();
   presentedTag = FIRST_UID;
   run(300);
-  assert(framesTo(FIRST_MAC.data(), mark).size() == 1);
+  assert(framesTo(FIRST_MAC.data(), mark).size() == 2 && "the recovered reader commands the cube again");
   presentedTag.clear();
   run(1000);
   assert(has(serial("nfc"), "recoveries=") && !has(serial("nfc"), "recoveries=0 "));

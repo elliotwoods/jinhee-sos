@@ -77,8 +77,9 @@ int main() {
   presentedTag=FIRST_UID; laserDistance=213; run(250);
   assert(confirmedPosition==12 && plate.tagPresent() && pinLevels[STRIP_LED_PIN]==HIGH);
   assert(central().active && central().member==12 && central().uidLength==FIRST_UID.size());
-  auto cube=framesTo(FIRST_MAC.data(),mark); assert(cube.size()==1);
-  assert(cubePacket(cube[0]).type==MSG_SET_ZONE && cubePacket(cube[0]).success==ZONE_POOL);
+  // The colour goes out once and is then repeated (NctTagPlate.h, ZONE_REPEAT_MS).
+  auto cube=framesTo(FIRST_MAC.data(),mark); assert(cube.size()==2);
+  for (auto &frame : cube) assert(cubePacket(frame).type==MSG_SET_ZONE && cubePacket(frame).success==ZONE_POOL);
   assert(plate.currentCube().cubeID==FIRST_ID && plate.currentDelivery()==1);
   size_t beats=stateFrames().size(); run(1500);
   size_t sent=stateFrames().size()-beats;

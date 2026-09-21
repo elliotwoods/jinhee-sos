@@ -14,9 +14,14 @@ int main() {
   run(200);
   presentedTag.clear();
   run(1000);
-  assert(sentFrames.size() == mark + 1);
-  Packet p = cubePacket(framesTo(FIRST_MAC.data(), mark)[0]);
-  assert(p.type == MSG_SET_ZONE && p.success == nctzone::ZONE_MAINSHOW);
+  // The colour is sent once and then repeated twice (NctTagPlate.h, ZONE_REPEAT_MS): one frame is
+  // not enough to be sure the cube changed colour, and the cube acknowledges nothing itself.
+  auto cube = framesTo(FIRST_MAC.data(), mark);
+  assert(cube.size() == 3 && sentFrames.size() == mark + 3);
+  for (auto &frame : cube) {
+    Packet p = cubePacket(frame);
+    assert(p.type == MSG_SET_ZONE && p.success == nctzone::ZONE_MAINSHOW && "every repeat is identical");
+  }
 
   image("zcfg", CONFIG_POINT2);  // same binary, preshow exit plate
   setup();
@@ -25,7 +30,7 @@ int main() {
   run(200);
   presentedTag.clear();
   run(1000);
-  assert(sentFrames.size() == mark + 1 && cubePacket(sentFrames.back()).success == nctzone::ZONE_PRESHOW);
+  assert(sentFrames.size() == mark + 3 && cubePacket(sentFrames.back()).success == nctzone::ZONE_PRESHOW);
 
   // Without a valid config the plate must not guess a zone.
   image("zcfg", {});

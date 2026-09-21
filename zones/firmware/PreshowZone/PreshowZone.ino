@@ -22,7 +22,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "preshow-3.0.0";
+constexpr const char *FIRMWARE_VERSION = "preshow-3.1.0";
 
 uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
