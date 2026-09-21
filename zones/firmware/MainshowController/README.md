@@ -39,11 +39,28 @@ Every trigger uses a fresh random showId. Each trigger is sent **5 times, 30 ms 
   not a strapping pin, and D10 is avoided because an ex-cube board may still have its LED data line on it.
 - The BOOT button is a strapping pin. Holding it **while powering up** starts the ROM bootloader instead of the show firmware.
 
+## Status LEDs
+
+This runs on ex-cube boards, which carry the cube's eight WS2812s on XIAO **D10** (GPIO10).
+
+| State | LEDs |
+|---|---|
+| Waiting for a show start | faint red (12 of 255) scrolling slowly, one pixel per 180 ms |
+| Show running | strong green (100, the cube's cap) scrolling fast, one pixel per 60 ms |
+| `led_test` on | red, green, blue, white (1 s each), then each pixel alone in white, repeating |
+
+- The controller hears nothing back from the cubes, so **"running" means within 298 s of the last trigger**. That is the length
+  of the cube's timeline (`SHOW_LENGTH_MS`). It covers every trigger source, including a unicast trigger from the app.
+- Green therefore means "a show was started less than 4:58 ago", not "cubes are playing". A cube that was not
+  mainshow-ready, or did not hear the start, is not playing.
+- The status also doesn't follow a trigger input that stays closed longer than the show. It turns red again at 4:58 while the input is still held.
+- `{"cmd":"led_test","on":1|0}` switches the bench cycle on or off. Off returns to the status scroll.
+
 ## USB protocol (115200, one JSON object per line)
 
 | Request | Reply |
 |---|---|
-| `{"cmd":"hello","id":"…"}` | `hello` with `firmware`, `mac`, `channel`, `radio_ok`, `button_pin`, `trigger_pin`, `lockout_ms`, `rearm_ms`, `last_show_id`, `shows` |
+| `{"cmd":"hello","id":"…"}` | `hello` with `firmware`, `mac`, `channel`, `radio_ok`, `button_pin`, `trigger_pin`, `lockout_ms`, `rearm_ms`, `last_show_id`, `shows`, `led_pin`, `led_test`, `show_running`, `show_length_ms` |
 | `{"cmd":"ping","id":"…"}` | `pong` |
 | `{"cmd":"set_zone","id":"…","mac":"AA:BB:…","zone":0-4}` | `zone_sent` with `status`: `delivered` \| `unconfirmed` \| `rejected` \| `no_result` |
 | `{"cmd":"show_start","id":"…","target":"broadcast"\|"AA:BB:…"}` | `show_start` with `source`, `show_id`, `target`, `sent`, `repeats` and, for unicast only, `delivered` (out of `repeats`) |

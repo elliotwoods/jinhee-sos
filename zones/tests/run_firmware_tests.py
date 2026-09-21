@@ -21,9 +21,9 @@ EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController']
 # five sketches with nothing cross-checking them, and the preshow media packet was copied
 # into the plate and the bridge with the same result.
 PRIVATE_STRUCTS = ['Packet', 'PoolState', 'PoolBeacon', 'RadioPacket',
-                   'PreshowMediaPacket', 'PreshowEvent', 'PreshowAck', 'PreshowBeacon']
+                   'PreshowMediaPacket', 'PreshowEvent', 'PreshowAck', 'PreshowBeacon', 'PreshowLegacy']
 SHIMS = ['Arduino.h', 'WiFi.h', 'esp_now.h', 'esp_wifi.h', 'Wire.h', 'Adafruit_PN532.h', 'esp_partition.h', 'VL53L4CD.h', 'Preferences.h',
-         'freertos/FreeRTOS.h', 'freertos/queue.h']
+         'freertos/FreeRTOS.h', 'freertos/queue.h', 'Adafruit_NeoPixel.h']
 
 
 def packet_text(source):

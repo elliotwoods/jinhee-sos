@@ -5,6 +5,7 @@ keep separate baselines, so either can run in any order without seeing the other
 as conflicts.
 """
 from contextlib import contextmanager
+from datetime import datetime
 import fcntl
 import json
 import os
@@ -13,6 +14,9 @@ from database import hex_bytes
 
 KEY = 'git_inventory_baseline_v1'
 FIELDS = {'mac', 'cube_id', 'uid', 'pending_uid', 'source', 'status', 'updated_at', 'detail'}
+# What a record means. The other fields (status, updated_at, detail, source) are bookkeeping that
+# describes these and the latest event (seen, acknowledged, unconfirmed); they never cause a conflict.
+IDENTITY = ('cube_id', 'uid', 'pending_uid', 'role')
 
 
 class Conflict(ValueError):
@@ -105,9 +109,47 @@ def save_baseline(db, key, records):
         db.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (key, json.dumps(records, sort_keys=True)))
 
 
-def merge(local, remote, baseline, saved, resolutions=None):
-    """Pure three-way merge. Returns (merged, conflicting MACs); never picks a silent winner.
+def _identity(row):
+    return tuple((row or {}).get(k) for k in IDENTITY)
 
+
+def _time(row):
+    try:
+        moment = datetime.fromisoformat(row.get('updated_at') or '')
+        return moment.timestamp() if moment.tzinfo else moment.replace(tzinfo=None).timestamp()
+    except (TypeError, ValueError):
+        return float('-inf')
+
+
+def _newer(a, b):
+    """The record with the later updated_at; ties break on content so every computer picks the same one."""
+    key = lambda row: (_time(row), json.dumps(row, sort_keys=True))
+    return a if key(a) >= key(b) else b
+
+
+def auto_resolve(before, ours, theirs):
+    """Winner when both sides changed a record but not its meaning differently, else None.
+
+    Identity fields equal on both sides: the newest record wins (latest seen/acknowledged state).
+    Only one side changed the identity fields: that side wins; its status describes the new number/tag.
+    Records are taken whole, never spliced, so status always matches uid/pending_uid.
+    """
+    if ours is None or theirs is None:
+        return None
+    if _identity(ours) == _identity(theirs):
+        return _newer(ours, theirs)
+    if before is not None and _identity(theirs) == _identity(before):
+        return ours
+    if before is not None and _identity(ours) == _identity(before):
+        return theirs
+    return None
+
+
+def merge(local, remote, baseline, saved, resolutions=None):
+    """Pure three-way merge. Returns (merged, conflicting MACs).
+
+    Bookkeeping-only differences resolve automatically (`auto_resolve`); a conflict means both sides
+    changed a device's number, tag or role differently, and never gets a silent winner.
     `resolutions` maps a conflicting MAC to 'local' or 'remote', chosen explicitly by an operator.
     """
     resolutions = resolutions or {}
@@ -130,6 +172,8 @@ def merge(local, remote, baseline, saved, resolutions=None):
             value = ours
         elif resolutions.get(mac) == 'remote':
             value = theirs
+        elif (winner := auto_resolve(before, ours, theirs)) is not None:
+            value = winner
         else:
             conflicts.append(mac)
             continue

@@ -41,6 +41,14 @@ static std::vector<PreshowEvent> events(size_t from = 0) {
   return out;
 }
 
+// The pre-2026 2-byte packets, which the plate also emits until it has heard a beacon.
+static std::vector<std::vector<uint8_t>> legacyTo(const uint8_t *mac, size_t from = 0) {
+  std::vector<std::vector<uint8_t>> out;
+  for (auto &frame : framesTo(mac, from))
+    if (frame.data.size() == PRESHOW_LEGACY_SIZE) out.push_back(frame.data);
+  return out;
+}
+
 static std::vector<PreshowEvent> eventsTo(const uint8_t *mac, size_t from = 0) {
   std::vector<PreshowEvent> out;
   for (auto &frame : framesTo(mac, from))
@@ -62,16 +70,32 @@ static void liveBridge(const uint8_t *mac, uint32_t ms, uint8_t mask = 0) {
   }
 }
 
+// Keep a bridge alive AND the host lease alive, the way the test app does: ping well inside
+// HOST_TIMEOUT_MS rather than letting the lease lapse mid-test.
+static void hostBridge(const uint8_t *mac, uint32_t ms) {
+  uint32_t until = millis() + ms;
+  while (millis() < until) {
+    size_t mark = sentFrames.size();
+    Serial.input = "HOST PING\n";
+    beaconFrom(mac, 0);
+    run(200);
+    for (auto &e : events(mark)) ackFor(mac, e);
+    run(10);
+  }
+}
+
 int main() {
   image("zdb_a", SLOT_V1);
   image("zdb_b", {});
   image("zcfg", CONFIG_POINT2);
   setup();
   assert(plate.radioOk && plate.nfcOk && plate.configOk && radioChannel == 2);
-  assert(has(Serial.output, "FW: preshow-3.1.0") && has(Serial.output, "DB: version=1 count=32"));
+  assert(has(Serial.output, "FW: preshow-3.2.0") && has(Serial.output, "DB: version=1 count=32"));
   assert(Serial.output.rfind("READY") > Serial.output.rfind("STATS:"));
-  assert(!esp_now_is_peer_exist(BRIDGE) && "the bridge address is no longer compiled in");
-  assert(esp_now_is_peer_exist(BROADCAST) && "but broadcast is, so events go out before any beacon");
+  assert(esp_now_is_peer_exist(BROADCAST) && "broadcast, so events go out before any beacon");
+  // The legacy bridge is pinned only as the fallback destination; the plate still has to
+  // LEARN the real bridge's address from a beacon.
+  assert(esp_now_is_peer_exist(BRIDGE) && legacyFallback() && !bridgeKnown);
   assert(mediaBootId != 0 && !bridgeKnown && !eventValid);
 
   // ---- Before any beacon: events still go out, by broadcast ----
@@ -95,6 +119,16 @@ int main() {
   assert(has(Serial.output, "MEDIA -> POINT 2 ON seq=1"));
   assert(has(Serial.output, "EVT TAG uid=04:60:35:4A:B6:21:91 cube=1 mac=AC:27:6E:80:37:BC zone=1"));
 
+  // ---- And the 2-byte fallback goes out alongside, for the bridge that is really there ----
+  // The TouchDesigner bridge is still the original listener-only board. Without this the cue
+  // would simply not arrive, for a reason that has nothing to do with the radio.
+  auto legacyFrames = legacyTo(BRIDGE, mark);
+  assert(legacyFrames.size() >= PRESHOW_BURST_COUNT && legacySent > 0);
+  for (auto &f : legacyFrames) assert(f == std::vector<uint8_t>({2, 1}) && "exactly the pre-2026 packet");
+  // The burst and the retries go unicast, for the MAC-layer acknowledgement and retries the
+  // old link never had; only the periodic rescue copy is broadcast.
+  assert(legacyFrames.size() > legacyTo(BROADCAST, mark).size());
+
   // ---- Unacknowledged: retried for the whole window, then reported ----
   Serial.output.clear();
   mark = sentFrames.size();
@@ -103,11 +137,13 @@ int main() {
   assert(retried >= 10 && "an unacknowledged edge is retried, not abandoned");
   assert(!has(Serial.output, "MEDIA FAIL") && "and not given up on early");
   run(PRESHOW_RETRY_WINDOW_MS);
-  assert(has(Serial.output, "MEDIA FAIL: point 2 ON seq=1 unacknowledged after 3000ms"));
-  assert(mediaFailures == 1 && queryStatus().sendFailCount >= 1);
+  // No bridge has ever announced itself, so there is nothing that could acknowledge this.
+  // Calling that a delivery failure would report the old bridge as broken on every cue.
+  assert(has(Serial.output, "MEDIA LEGACY: point 2 ON seq=1 (2-byte fallback, unacknowledged)"));
+  assert(!has(Serial.output, "MEDIA FAIL") && mediaFailures == 0 && queryStatus().sendFailCount == 0);
   Serial.output.clear();
   run(PRESHOW_RETRY_WINDOW_MS);
-  assert(!has(Serial.output, "MEDIA FAIL") && "reported once, not once per retry");
+  assert(!has(Serial.output, "MEDIA LEGACY") && "reported once, not once per retry");
 
   // ---- But the state keeps being re-asserted, so the link self-heals ----
   mark = sentFrames.size();
@@ -116,11 +152,21 @@ int main() {
   assert(repeats.size() >= 3 && repeats.size() <= 8 && "re-assert continues after the give-up, at a low rate");
   for (auto &e : repeats) assert(e.state == 1 && e.seq == 1 && "the same edge, verbatim");
 
+  // One broadcast copy of the legacy packet goes out periodically too, which covers the
+  // legacy bridge board having been swapped for another one.
+  assert(!legacyTo(BROADCAST, mark).empty());
+
   // ---- A beacon: the plate latches the address and unicasts from then on ----
+  Serial.output.clear();
   mark = sentFrames.size();
   beaconFrom(BRIDGE, 0);
   run(50);
   assert(bridgeKnown && bridgeFresh() && !memcmp(bridgeMac, BRIDGE, 6));
+  // A real bridge exists now, so the fallback switches itself off — for good.
+  assert(!legacyFallback() && has(Serial.output, "MEDIA: bridge found; 2-byte legacy fallback off"));
+  uint32_t legacyAtHandover = legacySent;
+  run(PRESHOW_STATE_REPEAT_MS * 3);
+  assert(legacySent == legacyAtHandover && "no more 2-byte frames, ever");
   assert(esp_now_is_peer_exist(BRIDGE) && "added on the loop task, from the beacon");
   assert(!bridgeSeesMe && "the beacon said it holds nothing");
   auto unicast = eventsTo(BRIDGE, mark);
@@ -225,8 +271,85 @@ int main() {
 
   // ---- The report ----
   std::string report = serial("?");
-  assert(has(report, "MEDIA: point=2") && has(report, "bridge_sees_me=") && has(report, "(unicast)"));
+  assert(has(report, "MEDIA: mode=modern point=2") && has(report, "bridge_sees_me=") && has(report, "(unicast)"));
   assert(has(report, "bridge_mac=02:EE:DD:CC:BB:AA"));
+
+  // ---- Host override: raising a cue by hand, for a plate with no reader attached ----
+  // Nothing happens until it is armed.
+  mark = sentFrames.size();
+  assert(has(serial("HOST ON"), "ERR HOST: send HOST ARM first") && events(mark).empty());
+  assert(has(serial("HOST ARM"), "\"armed\":true") && has(serial("HOST STATUS"), "\"mode\":\"modern\""));
+  seqBefore = mediaSeq;
+  mark = sentFrames.size();
+  serial("HOST ON");
+  run(60);
+  auto manual = events(mark);
+  assert(!manual.empty() && manual[0].state == 1 && manual[0].pointId == 2 && mediaSeq == seqBefore + 1);
+  assert(hostState && has(serial("HOST STATUS"), "\"state\":\"ON\""));
+  hostBridge(NEW_BRIDGE, 1000);
+  assert(eventAcked && "a hand-raised cue is delivered exactly like a tagged one");
+  mark = sentFrames.size();
+  serial("HOST OFF");
+  run(60);
+  manual = events(mark);
+  assert(!manual.empty() && manual.back().state == 0 && !hostState);
+
+  // Impersonating another point, so one bench board can exercise all four TD channels.
+  serial("HOST ON 4");
+  run(60);
+  assert(hostPoint == 4 && activePoint() == 4 && currentEvent.pointId == 4 && currentEvent.state == 1);
+  // Switching points while one is still ON is refused: each edge must get its own burst and
+  // retry window, and doing it implicitly would discard the OFF before a frame of it went out.
+  assert(has(serial("HOST ON 2"), "ERR HOST: point 4 is still ON"));
+  assert(has(serial("HOST ON 9"), "ERR HOST: point must be 1-4") && currentEvent.pointId == 4);
+  serial("HOST OFF");
+  run(60);
+  assert(currentEvent.state == 0 && currentEvent.pointId == 4 && "the OFF goes to the point that was ON");
+  serial("HOST ON 2");
+  run(60);
+  assert(currentEvent.pointId == 2 && currentEvent.state == 1);
+
+  // A forgotten arm must not leave TouchDesigner latched ON. Stop pinging and the lease
+  // expires, and the plate raises the OFF itself.
+  Serial.output.clear();
+  mark = sentFrames.size();
+  run(HOST_TIMEOUT_MS + 100);
+  assert(!hostArmed && !hostState && has(Serial.output, "EVENT override expired"));
+  manual = events(mark);
+  assert(!manual.empty() && manual.back().state == 0 && manual.back().pointId == 2);
+  assert(activePoint() == 2 && "and the plate goes back to its flashed point");
+  liveBridge(NEW_BRIDGE, 1000);
+
+  // A ping that arrives after the lease has gone cannot resurrect it.
+  serial("HOST ARM");
+  assert(hostArmed);
+  run(HOST_TIMEOUT_MS + 100);
+  assert(!hostArmed && "the lease lapses on its own, without the host having to say anything");
+  serial("HOST PING");
+  run(20);
+  assert(!hostArmed && "and a late keepalive cannot bring it back");
+  assert(has(serial("HOST ON"), "ERR HOST: send HOST ARM first"));
+  assert(has(serial("HOST NONSENSE"), "ERR HOST: ARM | PING | DISARM"));
+
+  // A real tag wins over the override, including its impersonated point: the cue the host was
+  // holding is released rather than left latched on a point nothing will ever turn off.
+  serial("HOST ARM");
+  serial("HOST ON 3");
+  run(60);
+  assert(hostState && currentEvent.pointId == 3 && currentEvent.state == 1);
+  mark = sentFrames.size();
+  Serial.output.clear();
+  presentedTag = FIRST_UID;
+  run(300);
+  assert(!hostArmed && !hostState && has(Serial.output, "EVENT override released to a real tag"));
+  auto afterTag = events(mark);
+  bool releasedPoint3 = false;
+  for (auto &e : afterTag) if (e.pointId == 3 && e.state == 0) releasedPoint3 = true;
+  assert(releasedPoint3 && "point 3 was turned off before the tag took over");
+  assert(currentEvent.pointId == 2 && currentEvent.state == 1 && "and the tag's cue is on the flashed point");
+  presentedTag.clear();
+  run(1000);
+  liveBridge(NEW_BRIDGE, 1000);
 
   // ---- Database update over ESP-NOW; the new cube then works without reflashing ----
   radio(V2_ANNOUNCE);

@@ -84,10 +84,20 @@ int main() {
   assert(preshowFrameType(unknownType.data(), int(unknownType.size())) == 0);
 
   // The legacy two-byte packet is not a preshow frame; the bridge matches it by length.
-  std::vector<uint8_t> legacy{2, 1};
+  // Both ends share this definition, so a plate sending it and a bridge reading it cannot
+  // drift apart the way they did when each carried its own copy.
+  static_assert(sizeof(PreshowLegacy) == 2, "legacy packet size");
+  static_assert(offsetof(PreshowLegacy, pointId) == 0 && offsetof(PreshowLegacy, state) == 1,
+                "legacy packet field order is the pre-2026 wire order");
+  PreshowLegacy twoByte{2, 1};
+  auto legacy = bytesOf(&twoByte, sizeof(twoByte));
+  assert(legacy.size() == PRESHOW_LEGACY_SIZE && legacy[0] == 2 && legacy[1] == 1);
   assert(preshowFrameType(legacy.data(), int(legacy.size())) == 0);
   assert(frameType(legacy.data(), int(legacy.size())) == 0);
   assert(poolFrameType(legacy.data(), int(legacy.size())) == 0);
+  // The fallback destination is the bridge PreshowZone used to hardcode, and it must be a
+  // unicast address or ESP-NOW would never acknowledge it.
+  assert(!(PRESHOW_LEGACY_BRIDGE_MAC[0] & 1) && "the legacy bridge address must be unicast");
 
   // ---- Validation ----
   assert(preshowEventValid(e));

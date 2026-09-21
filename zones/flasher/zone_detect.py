@@ -88,7 +88,12 @@ def from_flash(mac, db, read):
         row = db.get(mac)
         return dict(kind='cube', label=f'Neocube #{row["cube_id"]} (database)', mac=mac, profile=None, source='database')
     if role == 'station':
-        return dict(kind='station', label='Pairing station (protected)', mac=mac, profile=None, source='database')
+        # Both are refused, but they are not the same thing: an excluded device is a board
+        # deliberately taken out of cube service (a retired cube now carrying zone firmware,
+        # say), and calling it the pairing station sends whoever reads this the wrong way.
+        return dict(kind='station', mac=mac, profile=None, source='database',
+                    label='Pairing station (protected)' if mac in PROTECTED
+                          else 'Excluded from the cube registry')
     table = parse_partition_table(read(0x8000, 0xC00))
     if 'zcfg' in table and 'zdb_a' in table:
         zcfg = read(table['zcfg']['offset'], 0x80)

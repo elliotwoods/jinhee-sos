@@ -20,5 +20,7 @@ pairing_station/.venv/bin/python zones/mainshow/app.py [--cube 44] [--port /dev/
 - **Log**: every result, including triggers from the board's BOOT button or trigger input (D1 to GND), and
   refused triggers inside the 3 s lockout, and trigger-input dropouts (open for less than 1 s) that were ignored.
 
+The controller's own LEDs show a faint red scroll while waiting and a strong green scroll for 4:58 after any trigger.
+
 "Delivered" in the log is the cube radio's acknowledgement only. A broadcast has none.
 Tests: `zones/tests/test_mainshow.py`.

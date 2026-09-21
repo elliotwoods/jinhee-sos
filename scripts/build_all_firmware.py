@@ -66,7 +66,7 @@ def main():
         # Starts the cubes' main show (replaces the M5 Core2 show starter). Not a zone board either;
         # the Mainshow app (zones/mainshow) flashes this same build through zones/dbmanager/dongle.py.
         ('Mainshow controller', 'zones/firmware/MainshowController', 'zones/build/MainshowController', C3,
-         ('zones/firmware/libraries',)),
+         ('zones/firmware/libraries', 'live files/libraries')),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
         ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:

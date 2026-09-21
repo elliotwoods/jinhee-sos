@@ -72,11 +72,23 @@ constexpr uint32_t PRESHOW_BEACON_STALE_MS = 3000;  // no beacon for this long -
 // plus the repeat interval, or an ordinary quiet plate would keep resetting its own filter.
 constexpr uint32_t PRESHOW_SENDER_STALE_MS = 10000;
 
-// The pre-2026 packet: two bare bytes, {pointID, state}, no header and no magic. Still
-// accepted by the bridge so that a plate missed during a rollout keeps working instead of
-// going silent with no diagnosis. Length 2 is claimed by this protocol alone - see the
-// collision guards in NctZoneProtocol.h and NctPoolProtocol.h.
+// The pre-2026 packet: two bare bytes, {pointID, state}, no header and no magic. Length 2 is
+// claimed by this protocol alone - see the collision guards in NctZoneProtocol.h and
+// NctPoolProtocol.h.
+//
+// Both ends keep speaking it, in opposite directions, so the rollout can go either way round:
+//   - the bridge ACCEPTS it, so a plate missed during a rollout keeps working;
+//   - a plate SENDS it as well, until it has heard a beacon, so a plate can be replaced while
+//     the bridge is still the original listener-only board. That is not hypothetical: the
+//     TouchDesigner bridge is exactly that board today.
+// A plate stops sending it the moment a real PreshowBeacon arrives, and never resumes.
 constexpr int PRESHOW_LEGACY_SIZE = 2;
+
+// The original media bridge, as hardcoded in PreshowZone before this protocol existed. Used
+// only as the fallback destination while no beacon has ever been heard: unicast buys
+// MAC-layer acknowledgement and hardware retries, which the old link never had. A broadcast
+// copy goes out too, which covers this board having been swapped for another legacy one.
+constexpr uint8_t PRESHOW_LEGACY_BRIDGE_MAC[6] = {0xE8, 0x3D, 0xC1, 0x94, 0x6C, 0x9C};
 
 #pragma pack(push, 1)
 
@@ -109,9 +121,18 @@ struct PreshowBeacon {
   uint8_t flags;
 };
 
+// The pre-2026 packet, defined here so neither end can grow its own copy again - which is
+// exactly what it did before, once in the plate and once in the bridge.
+struct PreshowLegacy {
+  uint8_t pointId;
+  uint8_t state;
+};
+
 #pragma pack(pop)
 
 enum PreshowAckFlags : uint8_t { PRESHOW_ACK_APPLIED = 0x01 };
+
+static_assert(sizeof(PreshowLegacy) == PRESHOW_LEGACY_SIZE, "legacy media packet ABI changed");
 
 static_assert(sizeof(PreshowEvent) == 20, "preshow event layout");
 static_assert(sizeof(PreshowAck) == 12, "preshow ack layout");

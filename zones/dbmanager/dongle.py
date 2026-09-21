@@ -42,8 +42,9 @@ class Firmware:
 PAIRING = Firmware('pairing-station relay', 'nct-pairing-1.7-zones',  # 1.7 adds signal strength
                    ROOT / 'pairing_station/firmware/pairing_station', ROOT / 'pairing_station/build',
                    (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware/libraries'))
-MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.1.0', ROOT / 'zones/firmware/MainshowController',
-                    ROOT / 'zones/build/MainshowController', (ROOT / 'zones/firmware/libraries',))
+MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.2.0', ROOT / 'zones/firmware/MainshowController',
+                    ROOT / 'zones/build/MainshowController',
+                    (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))  # Adafruit_NeoPixel, as the cube build
 FIRMWARE = PAIRING.version
 
 

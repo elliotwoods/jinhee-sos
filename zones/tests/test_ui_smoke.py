@@ -25,6 +25,7 @@ def load(name, path):
 pairing_app = load('pairing_app', ROOT.parent / 'pairing_station/app.py')
 flasher_app = load('flasher_app', ROOT / 'flasher/app.py')
 manager_app = load('manager_app', ROOT / 'dbmanager/app.py')
+preshow_test_app = load('preshow_test_app', ROOT / 'preshow_test/app.py')
 
 STATION = dict(zones=1, channel=2, mac='3C:0F:02:AD:83:24')
 
@@ -176,6 +177,58 @@ class UiSmokeTests(unittest.TestCase):
             app.closing = True
             app.transport.port = None
             app.db.close()
+
+    def test_preshow_link_test_window(self):
+        # Never opens a port: with no --port and more than one candidate it waits to be told.
+        with patch.object(preshow_test_app, 'list_ports') as ports:
+            ports.comports.return_value = [MagicMock(device='/dev/cu.a', vid=0x303a),
+                                           MagicMock(device='/dev/cu.b', vid=0x303a)]
+            window = preshow_test_app.App(self.root)
+        self.assertIsNone(window.serial)
+        # Disarmed: the cue buttons do nothing at all, so a stray click cannot reach the show.
+        for button in window.buttons.values():
+            self.assertEqual(str(button['state']), 'disabled')
+        window.toggle(1)
+
+        # Telemetry from the plate drives the panel, including which point is lit.
+        window.handle('{"device":"PreshowZone","type":"host","armed":true,"state":"ON","point":3,'
+                      '"configured_point":1,"mode":"legacy","firmware":"preshow-3.2.0","seq":4,'
+                      '"acked":false,"ack_ms":0,"bridge_sees_me":false,"bridge_seen_ms":0,"sent":9,'
+                      '"legacy_sent":9,"retries":2,"acks":0,"failed":0,"errors":0,"nfc":false,'
+                      '"radio":true,"bridge_mac":""}')
+        self.assertTrue(window.armed)
+        self.assertEqual(window.held(), 3)
+        self.assertEqual(str(window.buttons[3]['text']), 'ON')
+        self.assertEqual(str(window.buttons[1]['text']), 'OFF')
+        self.assertIn('LEGACY MODE', window.detail.cget('text'))
+        self.assertIn('preshow-3.2.0', window.state.cget('text'))
+        # A cue that cannot be acknowledged must not be reported as acknowledged.
+        self.assertIn('n/a', window.link.cget('text'))
+
+        # Switching points is OFF then ON, spaced, because the firmware refuses an implicit
+        # switch — each edge has to get its own burst and retry window.
+        sent = []
+        window.send = lambda command: sent.append(command) or True
+        window.toggle(2)
+        self.assertEqual(sent, ['HOST OFF'])
+        self.assertEqual(window.pending_on, 2)
+        window.flush_pending()
+        self.assertEqual(sent, ['HOST OFF', 'HOST ON 2'])
+        # Pressing the lit point again is a plain release.
+        sent.clear()
+        window.toggle(3)
+        self.assertEqual(sent, ['HOST OFF'])
+
+        # Modern mode reports the real acknowledgement instead.
+        window.handle('{"device":"PreshowZone","type":"host","armed":true,"state":"OFF","point":1,'
+                      '"configured_point":1,"mode":"modern","firmware":"preshow-3.2.0","seq":5,'
+                      '"acked":true,"ack_ms":31,"bridge_sees_me":true,"bridge_seen_ms":120,"sent":12,'
+                      '"legacy_sent":9,"retries":2,"acks":1,"failed":0,"errors":0,"nfc":false,'
+                      '"radio":true,"bridge_mac":"E8:3D:C1:94:6C:9C"}')
+        self.assertIn('MODERN MODE', window.detail.cget('text'))
+        self.assertIn('31 ms', window.link.cget('text'))
+        self.assertIn('E8:3D:C1:94:6C:9C', window.bridge.cget('text'))
+        self.assertIsNone(window.held())
 
     def test_zone_flasher_window(self):
         station = dict(port='/dev/cu.station', key='s', description='USB JTAG', candidate=False, serial='3C:0F:02:AD:83:24')

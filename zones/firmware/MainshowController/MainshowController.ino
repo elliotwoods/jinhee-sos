@@ -28,10 +28,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <Adafruit_NeoPixel.h>
 #include <NctCubeProtocol.h>
 #include <NctZoneProtocol.h>
 
-constexpr const char *FIRMWARE_VERSION = "mainshow-1.1.0";
+constexpr const char *FIRMWARE_VERSION = "mainshow-1.2.0";
 constexpr const char *BANNER = "NCT MAINSHOW CONTROLLER";
 constexpr uint8_t CHANNEL = nctzone::ESPNOW_CHANNEL;
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -47,6 +48,24 @@ constexpr uint32_t LOCKOUT_MS = 3000;     // the Core2's SHOW_LOCK_MS
 constexpr int SHOW_REPEATS = 5;           // the Core2's burst: 5 sends, 30 ms apart
 constexpr uint32_t SHOW_REPEAT_GAP_MS = 30;
 constexpr uint32_t SEND_WAIT_MS = 100;    // wait for the MAC-layer result of one send
+
+// Status on the ex-cube's eight WS2812s (XIAO D10 = GPIO10): a faint red light scrolls while waiting
+// for a show start, a strong green one while the show runs. The controller hears nothing back from
+// the cubes, so "running" means within SHOW_LENGTH_MS of the last trigger: the length of the cube's
+// timeline (updateMainShowTimeline() in flashing_station/firmware/neocore_usb). `led_test` replaces
+// the status with a colour cycle, a bench check that every pixel and channel is alive.
+constexpr int LED_PIN = 10;
+constexpr int LED_COUNT = 8;
+constexpr uint32_t SHOW_LENGTH_MS = 298000;
+constexpr uint8_t WAIT_LEVEL = 12, RUN_LEVEL = 100;  // the cube caps its LEDs at 100 of 255
+constexpr uint32_t WAIT_PIXEL_MS = 180, RUN_PIXEL_MS = 60;  // scroll speed: time to move one pixel
+constexpr uint32_t SCROLL_TAIL = 3;                        // pixels of fading tail behind the head
+constexpr uint32_t LED_FRAME_MS = 20;
+constexpr uint8_t LED_LEVEL = 60;          // led_test
+constexpr uint32_t LED_COLOUR_MS = 1000, LED_CHASE_MS = 250;
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+bool ledTest = false;
+uint32_t ledStep = 0, ledStepAt = 0, ledFrameAt = 0;
 
 bool radioReady = false;
 volatile int sendStatus = -1;  // -1 pending, else esp_now_send_status_t (set on the Wi-Fi task)
@@ -173,6 +192,58 @@ void setZone(const char *id, const uint8_t *mac, uint8_t zone) {
   reply("zone_sent", id, fields);
 }
 
+// One step of the test cycle: red, green, blue, white (whole strip, 1 s each), then each pixel
+// alone in white (250 ms each), so a dead colour channel or a dead pixel is visible by eye.
+void showLedStep(uint32_t step) {
+  pixels.clear();
+  const uint8_t L = LED_LEVEL;
+  static const uint8_t COLOURS[4][3] = {{L, 0, 0}, {0, L, 0}, {0, 0, L}, {L, L, L}};
+  if (step < 4) {
+    for (int i = 0; i < LED_COUNT; i++) pixels.setPixelColor(i, COLOURS[step][0], COLOURS[step][1], COLOURS[step][2]);
+  } else {
+    pixels.setPixelColor(int(step - 4), L, L, L);
+  }
+  pixels.show();
+}
+
+bool showRunning(uint32_t now) { return triggered && uint32_t(now - lastTriggerAt) < SHOW_LENGTH_MS; }
+
+// A head moving round the ring with a fading tail, positioned in 1/256 pixel steps so it glides.
+void drawScroll(uint32_t now, uint8_t red, uint8_t green, uint32_t pixelMs) {
+  const uint32_t ring = LED_COUNT * 256, tail = SCROLL_TAIL * 256;
+  uint32_t head = uint32_t((uint64_t(now) * 256 / pixelMs) % ring);
+  for (int i = 0; i < LED_COUNT; i++) {
+    uint32_t behind = (head + ring - uint32_t(i) * 256) % ring;  // how far this pixel trails the head
+    uint32_t scale = behind < tail ? tail - behind : 0;
+    pixels.setPixelColor(i, uint8_t(red * scale / tail), uint8_t(green * scale / tail), 0);
+  }
+  pixels.show();
+}
+
+void pollLeds() {
+  uint32_t now = millis();
+  if (!ledTest) {
+    if (uint32_t(now - ledFrameAt) < LED_FRAME_MS) return;
+    ledFrameAt = now;
+    if (showRunning(now)) drawScroll(now, 0, RUN_LEVEL, RUN_PIXEL_MS);
+    else drawScroll(now, WAIT_LEVEL, 0, WAIT_PIXEL_MS);
+    return;
+  }
+  uint32_t hold = ledStep < 4 ? LED_COLOUR_MS : LED_CHASE_MS;
+  if (uint32_t(now - ledStepAt) < hold) return;
+  ledStep = (ledStep + 1) % (4 + LED_COUNT);
+  ledStepAt = now;
+  showLedStep(ledStep);
+}
+
+void setLedTest(bool on) {
+  ledTest = on;
+  ledStep = 0;
+  ledStepAt = millis();
+  ledFrameAt = 0;
+  if (on) showLedStep(0);  // off: the status scroll resumes on the next frame
+}
+
 uint32_t newShowId() {
   uint32_t id;
   do id = esp_random(); while (id == 0 || id == lastShowId);
@@ -215,12 +286,13 @@ bool startShow(const char *id, const char *source, const uint8_t *mac) {
 }
 
 void hello(const char *id) {
-  char fields[260];
+  char fields[400];
   snprintf(fields, sizeof(fields),
            "\"firmware\":\"%s\",\"mac\":\"%s\",\"channel\":%d,\"radio_ok\":%s,\"button_pin\":%d,\"trigger_pin\":%d,"
-           "\"lockout_ms\":%lu,\"rearm_ms\":%lu,\"last_show_id\":%lu,\"shows\":%lu",
+           "\"lockout_ms\":%lu,\"rearm_ms\":%lu,\"last_show_id\":%lu,\"shows\":%lu,\"led_pin\":%d,\"led_test\":%s,\"show_running\":%s,\"show_length_ms\":%lu",
            FIRMWARE_VERSION, WiFi.macAddress().c_str(), int(WiFi.channel()), radioReady ? "true" : "false", BUTTON_PIN,
-           TRIGGER_PIN, (unsigned long)LOCKOUT_MS, (unsigned long)TRIGGER_REARM_MS, (unsigned long)lastShowId, (unsigned long)shows);
+           TRIGGER_PIN, (unsigned long)LOCKOUT_MS, (unsigned long)TRIGGER_REARM_MS, (unsigned long)lastShowId, (unsigned long)shows, LED_PIN,
+           ledTest ? "true" : "false", showRunning(millis()) ? "true" : "false", (unsigned long)SHOW_LENGTH_MS);
   reply("hello", id, fields);
 }
 
@@ -238,6 +310,15 @@ void command(char *line) {
   if (!jsonString(line, "cmd", cmd, sizeof(cmd))) { error(id, "Missing cmd"); return; }
   if (!strcmp(cmd, "ping")) { reply("pong", id); return; }
   if (!strcmp(cmd, "hello")) { hello(id); return; }
+  if (!strcmp(cmd, "led_test")) {
+    uint32_t on;
+    if (!jsonUint(line, "on", on) || on > 1) { error(id, "led_test needs on: 1 or 0"); return; }
+    setLedTest(on);
+    char fields[40];
+    snprintf(fields, sizeof(fields), "\"on\":%s,\"pin\":%d", on ? "true" : "false", LED_PIN);
+    reply("led_test", id, fields);
+    return;
+  }
   if (!radioReady) { error(id, "Radio unavailable; reset the controller"); return; }
   if (!strcmp(cmd, "set_zone")) {
     uint8_t mac[6];
@@ -283,6 +364,9 @@ void pollInputs() {
 
 void setup() {
   Serial.begin(115200);
+  pixels.begin();
+  pixels.clear();
+  pixels.show();  // WS2812s keep their last colour through a reflash: clear it before the status scroll
   for (Input &in : inputs) {
     pinMode(in.pin, INPUT_PULLUP);
     // Start from the current level, so an input already held low at boot does not fire.
@@ -323,5 +407,6 @@ void loop() {
     }
   }
   pollInputs();
+  pollLeds();
   delay(1);
 }

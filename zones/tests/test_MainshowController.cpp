@@ -39,9 +39,9 @@ int main() {
   assert(esp_now_is_peer_exist(BROADCAST) && espPeers.size() == 1);
   // The banner is what zone_detect.py identifies this board by, and the image must not
   // contain a legacy entrance-plate signature that would be matched first.
-  assert(has(Serial.output, "NCT MAINSHOW CONTROLLER") && has(Serial.output, "FW: mainshow-1.1.0"));
+  assert(has(Serial.output, "NCT MAINSHOW CONTROLLER") && has(Serial.output, "FW: mainshow-1.2.0"));
   assert(!has(Serial.output, "MAINSHOW ENTRANCE") && !has(Serial.output, "Cube READY"));
-  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"firmware\":\"mainshow-1.1.0\""));
+  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"firmware\":\"mainshow-1.2.0\""));
   assert(sentFrames.empty() && "nothing is sent until asked");
 
   // ---- Host protocol ----
@@ -52,7 +52,7 @@ int main() {
   assert(has(serial("{\"cmd\":\"ping\"}"), "Missing/invalid request id"));
   assert(has(serial("{\"cmd\":\"dance\",\"id\":\"x\"}"), "Unknown command"));
   assert(has(serial("hello"), "one JSON object per line"));
-  assert(has(serial("?"), "NCT MAINSHOW CONTROLLER\nFW: mainshow-1.1.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
+  assert(has(serial("?"), "NCT MAINSHOW CONTROLLER\nFW: mainshow-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
 
   // ---- Mainshow ready: one unicast SET_ZONE 4 ----
   size_t before = sentFrames.size();
@@ -163,6 +163,70 @@ int main() {
   assert(sentFrames.size() == before);
   pinLevels[TRIGGER_PIN] = HIGH;
 
-  puts("PASS: MainshowController sends SET_ZONE/SHOW_START (type 8, fresh showId x5), locks out, and debounces its inputs");
+  // ---- Status LEDs on the ex-cube strip (D10) ----
+  auto channel = [](uint32_t c, int shift) { return (c >> shift) & 0xFF; };
+  // Waiting: a faint red head scrolls round the ring; no green or blue.
+  auto frameCheck = [&](uint32_t maxRed, uint32_t maxGreen) {
+    uint32_t brightest = 0;
+    for (uint32_t c : neoShown) {
+      assert(channel(c, 16) <= maxRed && channel(c, 8) <= maxGreen && channel(c, 0) == 0);
+      brightest = std::max(brightest, std::max(channel(c, 16), channel(c, 8)));
+    }
+    return brightest;
+  };
+  auto brightestPixel = [&]() {
+    int best = 0;
+    for (int i = 1; i < 8; i++)
+      if ((neoShown[i] & 0xFFFF00) > (neoShown[best] & 0xFFFF00)) best = i;
+    return best;
+  };
+  // Long after the last trigger in the tests above: waiting.
+  run(300000);
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h2\"}"), "\"led_pin\":10,\"led_test\":false,\"show_running\":false,\"show_length_ms\":298000}"));
+  assert(frameCheck(12, 0) >= 8 && "waiting: dim red, clearly visible");
+  int at = brightestPixel();
+  run(180);
+  assert(brightestPixel() == (at + 1) % 8 && "waiting: the red head moves one pixel per 180 ms");
+  int lit = 0;
+  for (uint32_t c : neoShown) lit += c != 0;
+  assert(lit >= 2 && lit <= 4 && "a head with a fading tail, not the whole ring");
+
+  // Running: a trigger turns it strong green and fast, for the length of the cube's show.
+  hold(BUTTON_PIN, LOW, 400);
+  hold(BUTTON_PIN, HIGH, 100);
+  assert(frameCheck(0, 100) >= 66 && "running: strong green, capped at the cube's 100");
+  at = brightestPixel();
+  run(60);
+  assert(brightestPixel() == (at + 1) % 8 && "running: one pixel per 60 ms");
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h3\"}"), "\"show_running\":true"));
+  run(298000 - 700);
+  assert(frameCheck(0, 100) >= 66 && "still running just before the show ends");
+  run(600);
+  assert(frameCheck(12, 0) >= 8 && "back to waiting red when the cube's timeline has ended");
+
+  // The bench colour cycle overrides the status, then hands it back.
+  assert(has(serial("{\"cmd\":\"led_test\",\"id\":\"l0\"}"), "led_test needs on"));
+  out = serial("{\"cmd\":\"led_test\",\"id\":\"l1\",\"on\":1}", 1);
+  assert(has(out, "{\"event\":\"led_test\",\"id\":\"l1\",\"on\":true,\"pin\":10}"));
+  const uint32_t R = 60u << 16, G = 60u << 8, B = 60u, W = R | G | B;
+  for (uint32_t colour : {R, G, B, W}) {
+    assert(neoShown == std::vector<uint32_t>(8, colour));
+    run(1000);
+  }
+  for (int pixel = 0; pixel < 8; pixel++) {
+    std::vector<uint32_t> one(8, 0u);
+    one[pixel] = W;
+    assert(neoShown == one);
+    run(250);
+  }
+  assert(neoShown == std::vector<uint32_t>(8, R) && "the cycle repeats");
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h4\"}"), "\"led_test\":true"));
+  size_t sentBefore = sentFrames.size();
+  run(20000);
+  assert(sentFrames.size() == sentBefore && "the LED test sends nothing over the radio");
+  serial("{\"cmd\":\"led_test\",\"id\":\"l2\",\"on\":0}", 40);
+  assert(frameCheck(12, 0) >= 8 && "led_test off: the waiting scroll resumes");
+
+  puts("PASS: MainshowController sends SET_ZONE/SHOW_START (type 8, fresh showId x5), locks out, debounces and re-arms its inputs, scrolls red/green status LEDs, and cycles the LED test");
   return 0;
 }

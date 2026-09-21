@@ -72,12 +72,34 @@ class WebSyncTests(unittest.TestCase):
         self.assertEqual(self.sync('a')['download'], [mac])
         self.assertEqual(self.edit('a', lambda db: db.get(mac)['cube_id']), 101)
 
+    def test_bookkeeping_only_differences_resolve_to_newest(self):
+        self.sync('a'); self.sync('b')
+        mac = self.edit('a', lambda db: db.rows()[0]['mac'])
+        stamp = lambda name, when, status, detail: self.edit(name, lambda db: (db.conn.execute(
+            'UPDATE devices SET status=?, detail=?, updated_at=? WHERE mac=?', (status, detail, when, mac)), db.conn.commit()))
+        # Same cube, same number and tag: acknowledged on one computer, unconfirmed later on the other.
+        stamp('a', '2026-09-21T10:00:00+00:00', 'acknowledged', 'ACK on a')
+        stamp('b', '2026-09-21T11:00:00+00:00', 'unconfirmed', 'No ACK on b')
+        self.sync('a')
+        result = self.sync('b')
+        self.assertEqual((result['conflicts'], result['auto_resolved']), ([], [mac]))
+        self.assertEqual(self.web.records[mac]['record']['detail'], 'No ACK on b')  # newest wins
+        self.sync('a')
+        self.assertEqual(self.edit('a', lambda db: db.get(mac)['detail']), 'No ACK on b')
+        # A renumber beats a newer bookkeeping-only change: its status describes the new number.
+        stamp('b', '2099-01-01T00:00:00+00:00', 'acknowledged', 'seen again on b')
+        self.edit('a', lambda db: db.rename(mac, 100))
+        self.sync('a')
+        result = self.sync('b')
+        self.assertEqual((result['conflicts'], result['auto_resolved']), ([], [mac]))
+        self.assertEqual(self.edit('b', lambda db: db.get(mac)['cube_id']), 100)
+
     def test_concurrent_push_is_retried_against_new_records(self):
         self.sync('a'); self.sync('b')
         mac = self.edit('a', lambda db: db.rows()[0]['mac'])
         other = self.edit('a', lambda db: db.rows()[1]['mac'])
         self.edit('a', lambda db: db.rename(mac, 100))
-        self.web.before_push = lambda: self.web.edit(mac, detail='changed elsewhere')
+        self.web.before_push = lambda: self.web.edit(mac, cube_id=102, detail='renumbered elsewhere')
         result = self.sync('a')
         self.assertEqual(result['conflicts'], [mac])  # re-planned, not overwritten
         self.web.before_push = lambda: self.web.edit(other, detail='unrelated')

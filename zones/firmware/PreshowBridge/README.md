@@ -53,9 +53,15 @@ Timings and the wire format live in one place:
 
 ## Rollout
 
-**Flash the bridge first.** It still accepts the pre-2026 two-byte packet, so plates that have
-not been updated yet keep working while you do them one at a time. The plates and the bridge
-are a matched set in the same sense the pool radios and the pool central are.
+**Either order works.** This bridge accepts the pre-2026 two-byte packet, so plates that have not
+been updated yet keep working while you do them one at a time. And a `preshow-3.2.0` plate *sends*
+that packet as well until it has heard a beacon, so a plate can be replaced while this board is
+still the original listener-only sketch — which is how Preshow 1 was brought up. A plate stops
+sending the old packet the moment it hears a beacon from here, and never resumes.
+
+So: flash whichever end needs it, whenever. Only once both ends are current do you get
+acknowledged delivery, and a plate's `?` report tells you which mode it is in
+(`MEDIA: mode=legacy` or `mode=modern`).
 
 ## Build and flash
 

@@ -41,8 +41,12 @@ def plan(db, client, pulled, resolutions=None):
         baseline, saved = {}, False  # a different web inventory has no shared history with this one
     local = snapshot(db)
     merged, conflicts = merge(local, remote, baseline, saved, resolutions)
+    resolved = resolutions or {}
     return {
         'local': local, 'remote': remote, 'merged': merged, 'conflicts': conflicts,
+        # Both sides changed, only bookkeeping differed: merge picked the newest without asking.
+        'auto_resolved': sorted(mac for mac in merged if mac not in resolved and local.get(mac) != remote.get(mac)
+                                and baseline.get(mac) not in (local.get(mac), remote.get(mac))),
         'upload': sorted(mac for mac, row in merged.items() if remote.get(mac) != row),
         'download': sorted(mac for mac, row in merged.items() if local.get(mac) != row),
         'revisions': {mac: entry['revision'] for mac, entry in pulled['records'].items()},
@@ -135,7 +139,8 @@ def run(database, client, name, resolutions=None, retries=3, upload=True, downlo
                         'unapplied': unapplied})
         with db.conn:
             db.event(None, 'web_sync', f"revision {revision}; uploaded {len(result['upload']) if upload else 0}; "
-                     f"applied {len(result['download']) if applied else 0}; waiting {unapplied}")
+                     f"applied {len(result['download']) if applied else 0}; waiting {unapplied}; "
+                     f"auto-resolved {len(result['auto_resolved'])}")
     reported = report_sightings(database, client)  # after the locks and connection are released
     return dict(result, revision=revision, applied=applied, unapplied=unapplied, sightings=reported,
                 uploaded=result['upload'] if upload else [], waiting_upload=[] if upload else result['upload'])

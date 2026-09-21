@@ -321,6 +321,22 @@ struct Adafruit_PN532 {
   }
 };
 
+// ---- WS2812 strip (Adafruit_NeoPixel): the latest frame shown, as 0xRRGGBB per pixel ----
+constexpr int NEO_GRB = 0x52, NEO_KHZ800 = 0x0000;
+inline std::vector<uint32_t> neoShown;
+inline int neoShows = 0;
+struct Adafruit_NeoPixel {
+  std::vector<uint32_t> buffer;
+  Adafruit_NeoPixel(int count, int, int) : buffer(count, 0) {}
+  void begin() {}
+  void clear() { std::fill(buffer.begin(), buffer.end(), 0u); }
+  void setPixelColor(int i, uint8_t r, uint8_t g, uint8_t b) {
+    assert(i >= 0 && i < int(buffer.size()));
+    buffer[i] = (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
+  }
+  void show() { neoShown = buffer; ++neoShows; }
+};
+
 // ---- VL53L4CD time-of-flight sensor ----
 inline bool laserPresent = true;
 inline uint16_t laserDistance = 0;

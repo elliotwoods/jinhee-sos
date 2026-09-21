@@ -167,8 +167,12 @@ two computers pushing at once are re-checked rather than overwritten.
 
 **Sync now** uploads local changes at any time. Downloaded changes are applied
 only while the pairing and cube flasher apps are closed (same locks as Git sync);
-otherwise they wait and the apps' status line says so. Conflicts (same MAC changed
-on both sides) change nothing until a side is chosen explicitly in the app. The
+otherwise they wait and the apps' status line says so. When the same MAC changed on
+both sides but only its status/detail/timestamp differ, the newest record wins
+automatically (`inventory_sync.auto_resolve`; logged as `auto-resolved N`). A number,
+tag or role changed on one side only wins over the other side's bookkeeping change.
+Conflicts (number, tag or role changed differently on both sides) change nothing
+until a side is chosen explicitly in the app. The
 server rejects a push that would create a duplicate number or NFC tag, using the
 same rules as `inventory_sync.validate`. The first sync of a fresh database lets
 web records replace its untouched original seeds, as the Git sync does.

@@ -105,6 +105,26 @@ The serial format TouchDesigner reads (`PRESHOW,<n>,ON|OFF`) is unchanged from t
 
 Preshow frames are absent from `frameType()` for the same reason pool frames are.
 
+**The rollout works from either end.** The bridge accepts the pre-2026 2-byte packet, so a plate
+missed during an update keeps working. A plate *also sends* that packet until it has heard a beacon,
+so a plate can be replaced while the bridge is still the original listener-only board — which is the
+situation today. A plate stops sending it the moment a real bridge announces itself, and never
+resumes; `MEDIA:` on the plate's `?` report says `mode=legacy` or `mode=modern`. In legacy mode
+there is nothing that could acknowledge a cue, so the plate reports `MEDIA LEGACY` once per edge
+rather than pretending the link failed.
+
+### Bench-testing a plate with no reader — `preshow_test/Launch.command`
+
+`PreshowZone` has a leased host override (the same shape as PoolZone's): `HOST ARM`, `HOST PING`,
+`HOST ON [1-4]`, `HOST OFF`, `HOST DISARM`, `HOST STATUS`. [`preshow_test/`](preshow_test/app.py)
+is a small window that drives it — ON/OFF per point, plus mode, bridge address, acknowledgement
+latency and the send/retry/failure counters. It is how you check the TouchDesigner end without a
+cube, and how you compare one plate's radio reach against another's.
+
+The lease is 1.5 s and the app pings at 0.35 s, so closing the window, unplugging the laptop or
+losing the port all drop any held cue rather than latching it ON for the rest of the show. A real
+tag always takes the plate back from the override.
+
 ## Flash zones (zones/flasher/Launch.command)
 
 Boards are **identified automatically** when plugged in, using the first of these that works:

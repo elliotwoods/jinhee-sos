@@ -147,9 +147,11 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
   them there would swallow them. They reach the sketch through `TagPlate::onFrame`,
   which runs on the Wi-Fi task and may only hand the frame over.
 - The pool radios and the pool central are a **matched set**; reflash them together.
-- So are the preshow plates and the preshow bridge. Flash the **bridge first**: it still
-  accepts the old 2-byte packet, so the plates keep working while they are updated one
-  at a time.
+- The preshow plates and the preshow bridge update in **either order**: the bridge accepts the
+  old 2-byte packet, and a `preshow-3.2.0` plate also sends it until it has heard a beacon
+  (then never again). A plate's `?` report says `MEDIA: mode=legacy` or `mode=modern`.
+- `zones/preshow_test/` drives a plate's leased `HOST *` override to raise TouchDesigner cues
+  by hand, for a plate with no reader attached.
   The central still accepts the legacy 15-byte packet so a partial rollout does not go
   dark, but that shim is insurance, not a supported configuration.
 - Pairing station: ESP32-C3, PN532 I²C **SDA=4, SCL=3**; installed red PN532 board is
