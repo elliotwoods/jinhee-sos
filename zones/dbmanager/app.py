@@ -18,17 +18,15 @@ import time
 import tkinter as tk
 import uuid
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
 from database import Database  # noqa: E402
 from transport import Transport  # noqa: E402
-from web_client import DEFAULT_DATASET, DEFAULT_SERVER, Unauthorized, WebClient, client_name  # noqa: E402
-from web_status import WebStatus  # noqa: E402
+from sync_widget import SyncWidget  # noqa: E402
+from web_client import DEFAULT_DATASET, DEFAULT_SERVER  # noqa: E402
 from zone_registry import ZoneRegistry  # noqa: E402
-import web_sync  # noqa: E402
-import zone_publish  # noqa: E402
 import zonedb  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dongle  # noqa: E402  (adds flashing_station to the path: import it last)
@@ -36,13 +34,22 @@ import dongle  # noqa: E402  (adds flashing_station to the path: import it last)
 BG = '#101720'; CARD = '#1b2633'; FG = '#e9f0f7'; MUTED = '#9aafc4'
 GREEN = '#54d6a0'; BLUE = '#82b8fa'; AMBER = '#ffc16b'; RED = '#ff7b7b'
 DATA = ROOT / 'pairing_station' / 'data'
-COLUMNS = [('name', 'Zone', 130), ('kind', 'Type · point', 110), ('mac', 'MAC', 145), ('firmware', 'Firmware', 110),
+COLUMNS = [('name', 'Zone', 130), ('signal', 'Signal', 120), ('kind', 'Type · point', 110), ('mac', 'MAC', 145),
+           ('firmware', 'Firmware', 110),
            ('db', 'Database', 170), ('state', 'State', 120), ('staging', 'Update', 90), ('seen', 'Last seen', 90),
            ('error', 'Last error', 170)]
 STATE_TEXT = {'current': '✓ current', 'behind': '↑ out of date', 'updating': '… updating', 'ahead': '⚠ newer / differs',
               'unpublished': '— nothing published'}
 STATE_COLOR = {'current': GREEN, 'behind': AMBER, 'updating': BLUE, 'ahead': RED, 'unpublished': MUTED}
 QUIET_EVENTS = {'pong', 'tag_state', 'radio', 'nfc_i2c', 'nfc_init', 'nfc_error', 'nfc_poll', 'device', 'discover_sent'}
+
+
+def signal_text(rssi):
+    """Three-level bars from the dongle's RSSI (dBm); '—' when unknown (dongle firmware before 1.7)."""
+    if rssi is None:
+        return '—'
+    bars = '▂▄▆' if rssi >= -67 else '▂▄·' if rssi >= -80 else '▂··'
+    return f'{bars} {round(rssi)} dBm'
 
 
 def age_text(age):
@@ -58,19 +65,19 @@ class App:
         self.db = Database(self.database, recover_pending=False)
         self.transport = Transport()
         self.zones = ZoneRegistry(self.db, self.send, self.log, auto_refresh=True)
-        # The web password is asked for when needed and kept in memory only (never saved).
-        self.web = WebClient(server, None, dataset, client=client_name('Zone DB Manager'))
+        self.server, self.dataset = server, dataset
         self.events = queue.Queue()
         self.station, self.connected = {}, False
         self.opened_at = self.last_rx = self.last_ping = self.last_hello = 0
         self.no_reply_warned = False
         self.expect_dongle_firmware = False
-        self.busy = None  # 'pull' | 'publish' | 'flash'
+        self.link_lost = None       # reason, set when a send finds the USB link gone (handled in poll)
+        self.reconnect_to = None    # the dongle to reopen when it reappears after an unexpected drop
+        self.last_reconnect_scan = 0
+        self.busy = None  # 'flash' while a dongle is being written
         self.last_render = 0
         self.closing = False
         self.setup_ui()
-        self.web_status = WebStatus(self.database, app='Zone DB Manager').bind(
-            root, self.web_label, {'ok': GREEN, 'warn': AMBER, 'muted': MUTED})
         self.scan_ports(prefer=port)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.poll)
@@ -105,7 +112,7 @@ class App:
 
         outer = ttk.Frame(r, padding=18); outer.pack(fill='both', expand=True)
         ttk.Label(outer, text='NCT / ZONE DATABASE', font=('Helvetica', 22, 'bold')).pack(anchor='w')
-        ttk.Label(outer, foreground=MUTED, text=f'{self.web.server} · dataset {self.web.dataset} · local {self.database}'
+        ttk.Label(outer, foreground=MUTED, text=f'{self.server} · dataset {self.dataset} · local {self.database}'
                   ).pack(anchor='w', pady=(2, 10))
 
         cards = ttk.Frame(outer); cards.pack(fill='x')
@@ -133,15 +140,10 @@ class App:
         self.published_label.pack(anchor='w', pady=(4, 0))
         self.local_label = ttk.Label(card, text='', style='CardMuted.TLabel', wraplength=560, justify='left')
         self.local_label.pack(anchor='w')
-        self.web_label = ttk.Label(card, text='', style='CardMuted.TLabel', wraplength=560, justify='left')
-        self.web_label.pack(anchor='w')
-        row = ttk.Frame(card, style='Card.TFrame'); row.pack(fill='x', pady=(6, 0))
-        self.pull_button = ttk.Button(row, text='Pull from web', command=lambda: self.action(lambda: self.start_web('pull')))
-        self.pull_button.pack(side='left')
-        self.publish_button = ttk.Button(row, text='Push & publish new version…', style='Accent.TButton',
-                                         command=lambda: self.action(lambda: self.start_web('publish')))
-        self.publish_button.pack(side='left', padx=6)
-        ttk.Button(row, text='Web Sync (conflicts)…', command=lambda: self.action(self.open_web_sync)).pack(side='left')
+        # One Sync control: uploads/downloads the inventory and publishes/pulls the zone database.
+        self.sync = SyncWidget(card, self.database, 'Zone DB Manager', bg=CARD, muted=MUTED, server=self.server,
+                               dataset=self.dataset, on_synced=self.synced)
+        self.sync.pack(fill='x', pady=(8, 0))
 
         self.status = tk.StringVar(value='Connect a dongle to find zones in range.')
         self.status_label = tk.Label(outer, textvariable=self.status, bg=CARD, fg=BLUE, font=('Helvetica', 15, 'bold'),
@@ -154,37 +156,43 @@ class App:
         self.auto_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(toolbar, text='Auto-refresh', variable=self.auto_var,
                         command=lambda: self.action(self.toggle_auto)).pack(side='left', padx=8)
-        self.update_button = ttk.Button(toolbar, text='Update selected', style='Accent.TButton',
-                                        command=lambda: self.action(self.update_selected))
-        self.update_button.pack(side='left', padx=(8, 0))
         self.walk_var = tk.BooleanVar(value=False)
         self.walk_check = ttk.Checkbutton(toolbar, text='Walkaround', variable=self.walk_var,
                                           command=lambda: self.action(self.toggle_walkaround))
         self.walk_check.pack(side='left', padx=12)
         self.stop_button = ttk.Button(toolbar, text='Stop', command=lambda: self.action(self.stop))
         self.stop_button.pack(side='left')
-        self.reboot_button = ttk.Button(toolbar, text='Reboot', command=lambda: self.action(self.reboot))
-        self.reboot_button.pack(side='right', padx=(6, 0))
-        self.log_button = ttk.Button(toolbar, text='Show log', command=lambda: self.action(self.show_log))
-        self.log_button.pack(side='right', padx=(6, 0))
-        self.identify_button = ttk.Button(toolbar, text='Identify (10 s)', command=lambda: self.action(self.identify))
-        self.identify_button.pack(side='right', padx=(6, 0))
         self.all_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(toolbar, text='Show out of range', variable=self.all_var,
                         command=lambda: self.render(force=True)).pack(side='right', padx=12)
 
         self.summary = ttk.Label(outer, text='', font=('Helvetica', 13, 'bold'))
         self.summary.pack(anchor='w', pady=(10, 0))
-        middle = ttk.Frame(outer); middle.pack(fill='both', expand=True, pady=(4, 10))
+        middle = ttk.Frame(outer); middle.pack(fill='both', expand=True, pady=(4, 6))
         self.tree = ttk.Treeview(middle, columns=[c[0] for c in COLUMNS], show='headings', height=12)
         for key, title, width in COLUMNS:
             self.tree.heading(key, text=title)
             self.tree.column(key, width=width, anchor='w', stretch=key in ('name', 'db', 'error'))
+        self.tree.heading('signal', text='Signal')
         for state, color in STATE_COLOR.items():
             self.tree.tag_configure(state, foreground=color)
         self.tree.tag_configure('far', foreground='#65778a')
         self.tree.pack(fill='both', expand=True)
         self.tree.bind('<<TreeviewSelect>>', lambda _: self.render(force=True))
+
+        # Actions for the zone selected in the list, directly beneath it.
+        selection = ttk.Frame(outer); selection.pack(fill='x', pady=(0, 8))
+        self.selected_label = ttk.Label(selection, text='Selected: —', font=('Helvetica', 12, 'bold'))
+        self.selected_label.pack(side='left', padx=(0, 12))
+        self.update_button = ttk.Button(selection, text='Update selected', style='Accent.TButton',
+                                        command=lambda: self.action(self.update_selected))
+        self.update_button.pack(side='left')
+        self.identify_button = ttk.Button(selection, text='Identify (10 s)', command=lambda: self.action(self.identify))
+        self.identify_button.pack(side='left', padx=(6, 0))
+        self.log_button = ttk.Button(selection, text='Show log', command=lambda: self.action(self.show_log))
+        self.log_button.pack(side='left', padx=(6, 0))
+        self.reboot_button = ttk.Button(selection, text='Reboot', command=lambda: self.action(self.reboot))
+        self.reboot_button.pack(side='left', padx=(6, 0))
 
         bottom = ttk.Frame(outer); bottom.pack(fill='x')
         self.detail = tk.Text(bottom, height=8, width=70, bg=CARD, fg=FG, relief='flat', font=('Menlo', 10), state='disabled')
@@ -237,6 +245,7 @@ class App:
         return self.port_rows.get(self.port.get()) if hasattr(self, 'port_rows') else None
 
     def toggle_connection(self):
+        self.reconnect_to = None  # an explicit Connect/Disconnect ends automatic reconnection
         if self.transport.port:
             self.disconnect('Disconnected')
         else:
@@ -265,7 +274,33 @@ class App:
         self.log(reason)
 
     def send(self, message):
-        self.transport.send(message)
+        try:
+            self.transport.send(message)
+        except ValueError:
+            # The USB link went away between polls: handled as a drop-out in poll(), not as an error
+            # (an error would switch walkaround off). The registry times the relay out and carries on.
+            self.link_lost = self.link_lost or 'Dongle USB connection lost'
+
+    def lost(self, reason):
+        """Unexpected drop-out: stop the running update (zones keep their staging for 60 s), keep walkaround
+        armed, and reconnect automatically when the same dongle reappears."""
+        port = self.selected_port()
+        self.disconnect(reason + ' — reconnecting automatically when the dongle is back')
+        self.reconnect_to = port
+        self.link_lost = None
+
+    def try_reconnect(self, now):
+        if not self.reconnect_to or self.transport.port or self.busy == 'flash' or now - self.last_reconnect_scan < 2:
+            return
+        self.last_reconnect_scan = now
+        back = next((p for p in dongle.ports() if p['key'] == self.reconnect_to['key']), None)
+        if back:
+            self.scan_ports(prefer=back['port'])
+            try:
+                self.connect()
+                self.log(f'Dongle back on {back["port"]}; reconnected')
+            except Exception as exc:  # e.g. the port is not ready yet: try again shortly
+                self.log(f'Reconnect to {back["port"]} failed: {exc}')
 
     def on_hello(self, event):
         self.station = event
@@ -280,9 +315,13 @@ class App:
                        'firmware has no zone relay; use Flash dongle…')
             self.radio_status.configure(text=f'{event.get("mac")} · {firmware}: {problem}', foreground=RED)
             return
-        self.radio_status.configure(text=f'Connected · {event.get("mac")} · {firmware} · channel 2', foreground=GREEN)
+        old = firmware != dongle.FIRMWARE
+        self.radio_status.configure(text=f'Connected · {event.get("mac")} · {firmware} · channel 2' +
+                                    (f' · no signal bars: Flash dongle… updates it to {dongle.FIRMWARE}' if old else ''),
+                                    foreground=AMBER if old else GREEN)
         if not was:
             self.log(f'Dongle ready: {event.get("mac")} · {firmware}')
+            self.set_status('Dongle connected: zones in range appear below (select one for its actions)', GREEN)
             self.zones.set_auto_refresh(self.auto_var.get())
             self.zones.query()
         if self.expect_dongle_firmware:
@@ -319,6 +358,7 @@ class App:
             raise ValueError('Plug in the ESP32-C3 and Rescan first')
         if self.busy:
             raise ValueError('Wait for the current operation to finish')
+        self.reconnect_to = None
         if self.transport.port:
             self.disconnect('Disconnected to flash the dongle')
         if not messagebox.askokcancel('Flash ESP-NOW dongle', (
@@ -427,81 +467,20 @@ class App:
             self.zones.reboot(zone['mac'])
 
     # ---------- web ----------
-    def ask_password(self):
-        password = simpledialog.askstring('Web inventory password', 'Enter the shared web inventory password:',
-                                          show='•', parent=self.root)
-        self.web.password = password or None
-        return bool(password)
-
-    def start_web(self, job):
-        if self.busy:
-            raise ValueError('Wait for the current operation to finish')
-        if job == 'publish' and not messagebox.askokcancel('Publish zone database', (
-                'Upload this computer\'s inventory changes, then publish the cube mappings as a new zone database '
-                'version (only if they changed).\n\nThe web allocates the version, so it is higher than on every zone '
-                'and every other computer. Zones are updated afterwards with Update selected or Walkaround.'),
-                parent=self.root):
-            return
-        if not self.web.password and not self.ask_password():
-            self.set_status('No web password entered', AMBER)
-            return
-        self.busy = job
-        self.set_status({'pull': 'Pulling the published zone database…', 'publish': 'Synchronizing and publishing…'}[job])
-        threading.Thread(target=self.web_worker, args=(job,), daemon=True).start()
-
-    def web_worker(self, job):
-        try:
-            if job == 'pull':
-                published, updated = zone_publish.pull(self.database, self.web)
-                result = dict(published=published, updated=updated, check=web_sync.check(self.database, self.web))
-            else:
-                result = zone_publish.publish(self.database, self.web, client_name('Zone DB Manager'))
-            self.events.put(('web_done', job, result, None))
-        except Exception as exc:  # reported in the UI
-            self.events.put(('web_done', job, None, exc))
-
-    def web_done(self, job, result, error):
-        self.busy = None
-        self.web_status.refresh()
-        if isinstance(error, Unauthorized):
-            self.web.password = None
-            self.set_status('The web inventory rejected the password; try again', RED)
-            return
-        if error:
-            self.set_status(f'{"Pull" if job == "pull" else "Publish"} stopped: {error}', RED)
-            self.log(f'{job} failed: {error}')
-            return
-        v = result['published']['version']
-        if job == 'pull':
-            check = result['check']
-            notes = []
-            if check['conflicts']:
-                notes.append(f'{len(check["conflicts"])} inventory conflict(s)')
-            if check['upload']:
-                notes.append(f'{len(check["upload"])} local change(s) not uploaded')
-            if check['download']:
-                notes.append(f'{len(check["download"])} web inventory change(s) not applied here')
-            if not v:
-                text = 'Nothing is published on the web yet; use Push & publish'
-            elif result['updated']:
-                text = f'Pulled zone database v{v}'
-            else:
-                text = f'Zone database v{v} is already the latest here'
-            self.set_status(text + (' · ' + ' · '.join(notes) if notes else ''), AMBER if notes else GREEN)
-            self.log(text)
-        else:
-            sync = result['sync']
-            text = (f'Published zone database v{v}' if result['changed'] else f'No mapping changes; zone database stays v{v}')
-            text += f' · uploaded {len(sync["upload"])} inventory change(s)'
-            if sync.get('unapplied'):
-                text += f' · {sync["unapplied"]} web change(s) wait until the pairing/flasher apps are closed'
-            self.set_status(text, GREEN)
-            self.log(text)
-
-    def open_web_sync(self):
-        import subprocess
-        subprocess.Popen([sys.executable, str(ROOT / 'inventory_web' / 'app.py'), '--database', str(self.database)],
-                         start_new_session=True)
+    def synced(self, result):
+        """After a Sync: the published zone database may have changed; show it and log what moved."""
+        inventory, zone = result['sync'], result.get('zone')
+        text = f'Synced: uploaded {len(inventory.get("uploaded", inventory["upload"]))} inventory change(s)'
+        if inventory.get('applied'):
+            text += f', applied {len(inventory["download"])}'
+        elif inventory.get('unapplied'):
+            text += f', {inventory["unapplied"]} web change(s) wait for the pairing/cube-flasher apps'
+        if zone:
+            v = zone['published']['version']
+            text += f' · zone database v{v}' + (' published (new mappings)' if zone['changed'] else '')
+        self.set_status(text, GREEN)
+        self.log(text)
+        self.render(force=True)
 
     # ---------- loop ----------
     def poll(self):
@@ -516,7 +495,7 @@ class App:
                 self.last_rx = time.monotonic()
                 kind = event.get('event')
                 if kind == 'disconnected':
-                    self.disconnect('Dongle disconnected: ' + str(event.get('detail', '')))
+                    self.lost('Dongle disconnected')
                     break
                 if self.zones.event(event):
                     continue
@@ -543,9 +522,10 @@ class App:
                         self.log(value)
                 elif item[0] == 'flash_done':
                     self.flash_done(*item[1:])
-                elif item[0] == 'web_done':
-                    self.web_done(*item[1:])
+            if self.link_lost:
+                self.lost(self.link_lost)
             now = time.monotonic()
+            self.try_reconnect(now)
             self.heartbeat(now)
             before = self.zones.message
             self.zones.tick(self.transport.port is not None and self.connected, self.station)
@@ -569,22 +549,26 @@ class App:
             self.published_label.configure(text=f'Published v{published["version"]} · {published["count"]} cubes · '
                                                 f'CRC {published["crc"]:08X}')
             origin = (f'from the web · {published["published_by"] or "?"} · {published["published_at"] or "?"}'
-                      if published['universal'] else 'legacy local version (not on the web yet): Push & publish')
+                      if published['universal'] else 'legacy local version (not on the web yet): Sync to publish')
         else:
             self.published_label.configure(text='No zone database published')
-            origin = 'Pull from web, or Push & publish the inventory'
+            origin = 'Sync to publish or pull the zone database'
         differs = store.local_differs()
         self.local_label.configure(foreground=AMBER if differs else MUTED, text=origin + (
-            ' · this computer\'s mappings changed since: Push & publish' if differs and published['version'] else ''))
+            ' · this computer\'s mappings changed since: Sync publishes them' if differs and published['version'] else ''))
 
         rows = self.zones.zone_rows()
         shown = sorted((z for z in rows if self.all_var.get() or z['in_range']), key=lambda z: not z['in_range'])
         in_range = [z for z in rows if z['in_range']]
         busy = self.busy is not None
-        for button, enabled in [(self.refresh_button, self.connected), (self.update_button, self.connected),
-                                (self.identify_button, self.connected), (self.log_button, self.connected),
-                                (self.reboot_button, self.connected), (self.stop_button, bool(self.zones.publication or self.walk_var.get())),
-                                (self.pull_button, not busy), (self.publish_button, not busy),
+        selection = self.tree.selection()
+        chosen = next((z for z in rows if selection and z['mac'] == selection[0]), None)
+        on_air = self.connected and chosen is not None
+        self.selected_label.configure(text=f'Selected: {chosen["name"] or chosen["mac"]}' if chosen else 'Selected: —')
+        for button, enabled in [(self.refresh_button, self.connected),
+                                (self.update_button, on_air and chosen['state'] == 'behind' and not self.zones.publication),
+                                (self.identify_button, on_air), (self.log_button, on_air), (self.reboot_button, on_air),
+                                (self.stop_button, bool(self.zones.publication or self.walk_var.get())),
                                 (self.flash_button, not busy), (self.connect_button, self.busy != 'flash'),
                                 (self.rescan_button, self.busy != 'flash')]:
             button.state(['!disabled'] if enabled else ['disabled'])
@@ -604,7 +588,7 @@ class App:
             self.tree.delete(mac)
         for index, z in enumerate(shown):
             values = dict(
-                name=z['name'] or '—', kind=f'{z["zone_label"]} · {z["point_id"]}', mac=z['mac'], firmware=z['firmware'] or '—',
+                name=z['name'] or '—', signal=signal_text(z.get('rssi')) if z['in_range'] else '—', kind=f'{z["zone_label"]} · {z["point_id"]}', mac=z['mac'], firmware=z['firmware'] or '—',
                 db=f'v{z["db_version"]} · {z["db_count"]} rec · {z["db_crc"] or 0:08X}',
                 state=STATE_TEXT.get(z['state'], z['state']),
                 staging=(f'v{z["staging_version"]} {z["staging_chunks"]}/{z["staging_total"]}' if z['staging_version'] else '—'),
@@ -619,7 +603,8 @@ class App:
 
         if selected and selected[0] in wanted:
             z = next(z for z in shown if z['mac'] == selected[0])
-            lines = [f'{z["name"] or "—"} · {z["mac"]} · {z["zone_label"]} point {z["point_id"]} · {z["firmware"]}',
+            lines = [f'{z["name"] or "—"} · {z["mac"]} · {z["zone_label"]} point {z["point_id"]} · {z["firmware"]} · '
+                     f'signal {signal_text(z.get("rssi"))}',
                      f'Database v{z["db_version"]} · {z["db_count"]} records · CRC {z["db_crc"] or 0:08X} · slot '
                      f'{"-AB"[z["active_slot"] or 0]} · state {STATE_TEXT.get(z["state"], z["state"])}',
                      f'Uptime {z["uptime"]} s · channel {z["channel"]} · config {"valid" if z["config_valid"] else "INVALID"} · '
@@ -644,7 +629,7 @@ class App:
                                                               'A dongle flash is running. Quit anyway?', parent=self.root):
             return
         self.closing = True
-        self.web_status.stop()
+        self.sync.stop()
         self.zones.stop('Closing')
         self.transport.close()
         self.db.close()

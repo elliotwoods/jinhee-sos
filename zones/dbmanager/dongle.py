@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / 'flashing_station'))
 from backend import MAC_RE, Runner, ports, tool_command  # noqa: E402
 from core import PROTECTED, PortLock  # noqa: E402
 
-FIRMWARE = 'nct-pairing-1.6-zones'  # what the dongle must report in `hello`
+FIRMWARE = 'nct-pairing-1.7-zones'  # what the dongle must report in `hello` (1.7 adds signal strength)
 SKETCH = ROOT / 'pairing_station/firmware/pairing_station'
 BUILD = ROOT / 'pairing_station/build'
 BOARD = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'  # same recipe as scripts/build_all_firmware.py
@@ -22,6 +22,7 @@ LIBRARIES = (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware
 IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 SEGMENTS = [(0x0, 'bootloader'), (0x8000, 'partitions'), (0xE000, 'boot_app0'), (0x10000, 'app')]
 BOOT_APP0 = slice(0xE000, 0x10000)  # taken from the merged image the build also produces
+BACKUPS = ROOT / 'pairing_station/data/dongle/backups'  # full 4 MB image before the first write to a board
 
 
 def artifacts():
@@ -63,7 +64,7 @@ def segment_files(folder):
     out = []
     for offset, name in SEGMENTS:
         data = merged[BOOT_APP0] if name == 'boot_app0' else files[name].read_bytes()
-        path = folder / f'{name}.bin'
+        path = (folder / f"{name}.bin").resolve()  # esptool runs with another working directory
         path.write_bytes(data)
         out.append((offset, path))
     return out
@@ -127,10 +128,20 @@ def flash(port, known, folder, emit, force_build=False):
         reason = refusal(mac, known)
         if reason:
             raise RuntimeError(reason + '; nothing was written')
+        backup = BACKUPS / f'{mac.replace(":", "")}.bin'
+        if not backup.is_file():
+            emit('stage', f'Back up {mac} (full flash, first time only)')
+            BACKUPS.mkdir(parents=True, exist_ok=True)
+            partial = backup.with_suffix('.partial')
+            tool('read-flash', '0x0', '0x400000', str(partial), timeout=300)
+            if not partial.is_file() or partial.stat().st_size != 0x400000:
+                raise RuntimeError('Backup incomplete; nothing was written')
+            partial.rename(backup)
         emit('stage', f'Write relay firmware to {mac}')
         args = ['write-flash', '--flash-mode', 'keep', '--flash-freq', 'keep', '--flash-size', 'keep']
         for offset, path in segments:
             args += [hex(offset), str(path)]
-        tool(*args, after='hard-reset')
+        # As zone_flash: an RTS hard reset can leave native USB-Serial/JTAG boards in download mode.
+        tool(*args, after='watchdog-reset' if 'USB-Serial/JTAG' in identity else 'hard-reset')
     return mac
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Web inventory sync: keep local SQLite and the shared web inventory in step.
+"""Web Sync view: the universal Sync control plus the manual operations behind it.
+
+Manual: Check, Sync with conflict decisions, Upload only, Download only, Publish / Pull the zone
+database. The password is stored on this computer and shared by every app (web_client).
 Network I/O runs on worker threads."""
 import argparse
 import queue
@@ -13,8 +16,10 @@ from tkinter import ttk, messagebox, simpledialog
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
 import web_client  # noqa: E402
+from sync_widget import SyncWidget  # noqa: E402
 from web_client import DEFAULT_DATASET, DEFAULT_SERVER, Unauthorized, WebClient  # noqa: E402
 import web_sync  # noqa: E402
+import zone_publish  # noqa: E402
 
 BG = '#101720'; CARD = '#1b2633'; FG = '#e9f0f7'; MUTED = '#9aafc4'
 GREEN = '#54d6a0'; BLUE = '#82b8fa'; AMBER = '#ffc16b'; RED = '#ff7b7b'
@@ -33,8 +38,9 @@ def describe(record):
 class App:
     def __init__(self, root, database, server=DEFAULT_SERVER, dataset=DEFAULT_DATASET):
         self.root, self.database = root, Path(database)
-        # The password is asked for, kept in memory for this session only, never saved.
-        self.web = WebClient(server, None, dataset, client=web_client.client_name('Web Sync'))
+        # The stored password (shared by every app); asked for and saved only when missing or rejected.
+        self.web = WebClient(server, dataset=dataset, client=web_client.client_name('Web Sync'))
+        self.prompted = False
         self.server, self.dataset = self.web.server, self.web.dataset
         self.events = queue.Queue()
         self.busy = False
@@ -65,19 +71,32 @@ class App:
         self.status_label = tk.Label(outer, textvariable=self.status, bg=CARD, fg=BLUE, font=('Helvetica', 16, 'bold'),
                                      anchor='w', padx=16, pady=14, wraplength=1000, justify='left')
         self.status_label.pack(fill='x')
+        self.sync_widget = SyncWidget(outer, self.database, 'Web Sync', manual=False, bg=BG, muted=MUTED,
+                                      server=self.server, dataset=self.dataset, on_synced=lambda _: self.start('check'))
+        self.sync_widget.pack(fill='x', pady=(10, 0))
 
         controls = ttk.Frame(outer); controls.pack(fill='x', pady=12)
         self.check_button = ttk.Button(controls, text='Check', command=lambda: self.start('check'))
         self.check_button.pack(side='left', padx=(0, 8))
-        self.sync_button = ttk.Button(controls, text='Sync now', command=lambda: self.start('sync'))
+        self.sync_button = ttk.Button(controls, text='Sync with decisions', command=lambda: self.start('sync'))
         self.sync_button.pack(side='left')
+        self.upload_button = ttk.Button(controls, text='Upload only', command=lambda: self.start('upload'))
+        self.upload_button.pack(side='left', padx=(8, 0))
+        self.download_button = ttk.Button(controls, text='Download only', command=lambda: self.start('download'))
+        self.download_button.pack(side='left', padx=(8, 0))
+        self.publish_button = ttk.Button(controls, text='Publish zone DB', command=lambda: self.start('publish'))
+        self.publish_button.pack(side='left', padx=(16, 0))
+        self.pull_button = ttk.Button(controls, text='Pull zone DB', command=lambda: self.start('pull'))
+        self.pull_button.pack(side='left', padx=(8, 0))
         self.take_web = ttk.Button(controls, text='Conflict: take web', command=lambda: self.resolve('remote'))
         self.keep_local = ttk.Button(controls, text='Conflict: keep local', command=lambda: self.resolve('local'))
         self.keep_local.pack(side='right'); self.take_web.pack(side='right', padx=8)
         ttk.Label(outer, foreground=MUTED, wraplength=1000, text=(
-            'Sync uploads local changes and downloads web changes. Web changes are written to this computer only '
-            'while the pairing and cube-flasher apps are closed; otherwise they wait for the next sync. '
-            'Conflicts are never resolved automatically: select them and choose which side to keep.')).pack(anchor='w')
+            'The Sync button above does everything (inventory both ways, then the zone database). The manual '
+            'operations here do one part each. Web changes are written to this computer only while the pairing and '
+            'cube-flasher apps are closed or idle; otherwise they wait for the next sync. Conflicts are never resolved '
+            'automatically: select them, choose which side to keep, then "Sync with decisions". A new zone database '
+            'version is created only when the cube mappings changed.')).pack(anchor='w')
 
         middle = ttk.Frame(outer); middle.pack(fill='both', expand=True, pady=(12, 0))
         self.tree = ttk.Treeview(middle, columns=('change', 'mac', 'local', 'web', 'choice'), show='headings', height=10)
@@ -105,7 +124,8 @@ class App:
 
     def update_buttons(self):
         idle = not self.busy
-        for button, ok in ((self.check_button, idle), (self.sync_button, idle)):
+        for button, ok in ((self.check_button, idle), (self.sync_button, idle), (self.upload_button, idle),
+                           (self.download_button, idle), (self.publish_button, idle), (self.pull_button, idle)):
             button.state(['!disabled'] if ok else ['disabled'])
         conflicts = bool(self.plan and self.plan['conflicts']) and idle
         for button in (self.take_web, self.keep_local):
@@ -116,6 +136,7 @@ class App:
         password = simpledialog.askstring('Web inventory password', 'Enter the shared web inventory password:',
                                           show='•', parent=self.root)
         self.web.password = password or None
+        self.prompted = bool(password)  # saved once the web accepts it
         return bool(password)
 
     def start(self, job):
@@ -125,15 +146,24 @@ class App:
             self.set_status('No password entered — click Check to enter it', AMBER)
             return
         self.busy = True; self.update_buttons()
-        self.set_status({'check': 'Checking web inventory…', 'sync': 'Synchronizing…'}[job])
+        self.set_status({'check': 'Checking web inventory…', 'sync': 'Synchronizing…', 'upload': 'Uploading local changes…',
+                         'download': 'Downloading web changes…', 'publish': 'Publishing the zone database…',
+                         'pull': 'Pulling the zone database…'}[job])
         threading.Thread(target=self.worker, args=(job, dict(self.resolutions)), daemon=True).start()
 
     def worker(self, job, resolutions):
         try:
+            name = web_client.client_name('Web Sync')
             if job == 'check':
                 result = web_sync.check(self.database, self.web)
+            elif job == 'publish':
+                result = zone_publish.publish(self.database, self.web, name)
+            elif job == 'pull':
+                published, status = zone_publish.pull(self.database, self.web)
+                result = dict(published=published, status=status)
             else:
-                result = web_sync.run(self.database, self.web, web_client.client_name(), resolutions)
+                result = web_sync.run(self.database, self.web, name, resolutions,
+                                      upload=job != 'download', download=job != 'upload')
             self.events.put(('done', (job, result, None)))
         except Exception as exc:  # reported in the UI
             self.events.put(('done', (job, None, exc)))
@@ -142,6 +172,8 @@ class App:
         self.busy = False
         if isinstance(error, Unauthorized):
             self.web.password = None  # ask again on the next Check / Sync
+            self.prompted = False
+            web_client.forget_password()
             self.set_status('The web inventory rejected the password — click Check to enter it again', RED)
             self.log(str(error)); self.update_buttons()
             return
@@ -149,7 +181,17 @@ class App:
             self.set_status(f'{job.capitalize()} stopped: {error}', RED); self.log(f'{job} failed: {error}')
             self.update_buttons()
             return
+        if self.prompted:
+            web_client.save_password(self.web.password)  # accepted: every app can use it now
+            self.prompted = False
+        self.sync_widget.refresh()
+        if job in ('publish', 'pull'):
+            self.zone_finished(job, result)
+            self.update_buttons()
+            return
         self.plan = result
+        if result.get('sightings') is not None:
+            self.log(f"Reported last-seen data for {result['sightings']} cubes")
         self.resolutions = {mac: side for mac, side in self.resolutions.items() if mac in result['conflicts']}
         self.show_plan()
         up, down, conflicts = len(result['upload']), len(result['download']), len(result['conflicts'])
@@ -162,8 +204,15 @@ class App:
                 self.set_status(f"Up to date with web revision {result['revision']}", GREEN)
             self.log(f"Checked revision {result['revision']}: upload {up}, download {down}, conflicts {conflicts}")
         else:
+            if job == 'upload':
+                up = len(result.get('uploaded', result['upload']))
+            elif job == 'download':
+                up = 0
             if conflicts:
                 self.set_status(f'Nothing changed: {conflicts} conflict(s) need a decision, then Sync again', RED)
+            elif job == 'upload':
+                self.set_status(f"Uploaded {up}. {result['unapplied']} web change(s) not downloaded (Download only or "
+                                'Sync to take them)', AMBER if result['unapplied'] else GREEN)
             elif result['unapplied']:
                 self.set_status(f"Uploaded {up}. {result['unapplied']} web change(s) wait until the pairing and "
                                 'flasher apps are closed — then Sync again', AMBER)
@@ -175,10 +224,22 @@ class App:
             if not conflicts:
                 # List only what remains: web changes still waiting for the apps to close.
                 self.resolutions = {}
-                self.plan = dict(result, upload=[], download=[] if result['applied'] or not result['unapplied']
-                                 else result['download'])
+                self.plan = dict(result, upload=result.get('waiting_upload', []),
+                                 download=[] if result['applied'] or not result['unapplied'] else result['download'])
                 self.show_plan()
         self.update_buttons()
+
+    def zone_finished(self, job, result):
+        v = result['published']['version']
+        if job == 'publish':
+            text = f'Published zone database v{v}' if result['changed'] else f'No mapping changes: zone database stays v{v}'
+        else:
+            text = {'none': 'Nothing is published on the web yet', 'updated': f'Pulled zone database v{v}',
+                    'current': f'Zone database v{v} is already the latest here',
+                    'legacy_ahead': f'This computer\'s legacy v{v} is above the web version: Publish to lift the web above it'
+                    }[result['status']]
+        self.set_status(text, GREEN)
+        self.log(text)
 
     def show_plan(self):
         self.tree.delete(*self.tree.get_children())

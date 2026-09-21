@@ -13,6 +13,7 @@ class FakeWebInventory:
         self.records = {}   # mac -> {'record', 'revision'}
         self.revision = 0
         self.password = 'test-password'
+        self.sightings = {}  # computer -> last report
         self.offline = False
         self.before_push = None  # hook to simulate a concurrent writer
         self.zonedb = dict(version=0, hash='', count=0, crc=0, records_b64='', published_at=None, published_by='',
@@ -45,6 +46,9 @@ class FakeWebInventory:
                     self.close_connection = True
                     return
                 url = urlparse(self.path)
+                if url.path == '/api/zonedb/head' and not owner.zonedb_missing:  # public: no records
+                    with owner.lock:
+                        return self.reply(200, {k: owner.zonedb[k] for k in ('version', 'hash', 'count', 'published_at')})
                 if not self.authorized():
                     return
                 assert parse_qs(url.query).get('dataset') == ['jinhee-sos']
@@ -63,6 +67,9 @@ class FakeWebInventory:
                 path = urlparse(self.path).path
                 if not self.authorized():
                     return
+                if path == '/api/sightings':
+                    owner.sightings[self.headers.get('X-Inventory-Client', '').split(' · ')[0]] = body
+                    return self.reply(200, {'cubes': len(body.get('cubes', {}))})
                 if path == '/api/inventory/push':
                     if owner.before_push:
                         hook, owner.before_push = owner.before_push, None

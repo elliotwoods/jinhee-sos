@@ -55,6 +55,12 @@ export function validateImage(body: Uint8Array): number {
   return count;
 }
 
+/** What the public head route reveals: no records (UIDs/MACs stay behind the password). */
+export async function head(store: Store, dataset: string) {
+  const { version, hash, count, published_at } = (await store.readZoneDb(dataset)).doc;
+  return { version, hash, count, published_at };
+}
+
 export async function current(store: Store, dataset: string): Promise<ZoneDbDoc> {
   return (await store.readZoneDb(dataset)).doc;
 }

@@ -2,6 +2,7 @@
 import time
 import uuid
 from database import hex_bytes
+import sightings
 
 class Controller:
     def __init__(self, db, send, log=print, clock=time.monotonic):
@@ -10,6 +11,7 @@ class Controller:
         self.hello_request = None
         self.nfc_poll_request = None
         self.discovered = {}
+        self.radio_seen = sightings.RadioThrottle(clock)
         self.telemetry = {}
         self.station = {}
         self.mode = self.phase = ''
@@ -309,6 +311,8 @@ class Controller:
             self.discovered[mac] = self.clock()
             if not self.db.excluded(mac) and mac != self.station.get('mac'):
                 self.db.reserve(mac, source='discovered')
+                if self.radio_seen.due(mac):  # web "last seen"; throttled, never affects pairing
+                    sightings.record(self.db.conn, mac, 'radio', 'discovery reply')
             self.choose()
             return
         if kind == 'tag_state':

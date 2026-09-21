@@ -31,6 +31,10 @@ STATION = dict(zones=1, channel=2, mac='3C:0F:02:AD:83:24')
 
 class UiSmokeTests(unittest.TestCase):
     def setUp(self):
+        # The Sync widget's background status check must not reach the real web from tests.
+        self.offline = patch('sync_widget.sync_all.status', return_value=dict(state='offline'))
+        self.offline.start()
+        self.addCleanup(self.offline.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = tk.Tk()
         self.root.withdraw()
@@ -59,8 +63,7 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_zone_database_manager(self):
         dongle_port = dict(port='/dev/cu.dongle', key='d', description='USB JTAG', candidate=True, serial='AA:BB:CC:00:11:22')
-        with patch.object(manager_app.dongle, 'ports', return_value=[dongle_port]), \
-                patch.object(manager_app, 'WebStatus', MagicMock()):
+        with patch.object(manager_app.dongle, 'ports', return_value=[dongle_port]):
             app = manager_app.App(self.root, Path(self.tmp.name) / 'devices.sqlite3')
         try:
             store = app.zones.store
@@ -86,19 +89,31 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(app.connected)
             self.assertTrue(any(m.get('cmd') == 'zone_send' and bytes.fromhex(m['hex'])[3] == zonedb.ZONE_QUERY for m in sent))
             zone, current = '14:63:93:C0:EC:14', '14:63:93:C0:EC:15'
-            app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(2, 0x1234)))
+            app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(2, 0x1234), rssi=-62))
             app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=self.status(3, p.crc, 'Desert 1', p.count)))
             app.poll()
             app.render(force=True)
             self.assertEqual(set(app.tree.get_children()), {zone, current})
-            self.assertIn('out of date', app.tree.item(zone, 'values')[5])
+            column = lambda mac, key: app.tree.item(mac, 'values')[[c[0] for c in manager_app.COLUMNS].index(key)]
+            self.assertIn('out of date', column(zone, 'state'))
+            self.assertEqual(column(zone, 'signal'), '▂▄▆ -62 dBm')
+            self.assertEqual(column(current, 'signal'), '—')  # no rssi reported (dongle firmware 1.6)
+            self.assertEqual(manager_app.signal_text(-75), '▂▄· -75 dBm')
+            self.assertEqual(manager_app.signal_text(-88), '▂·· -88 dBm')
+            self.assertIn('Flash dongle', app.radio_status['text'])  # 1.6 dongle: hint to update for signal bars
             self.assertIn('1 out of date', app.summary['text'])
             self.assertIn('Published v3', app.published_label['text'])
+            app.render(force=True)
+            self.assertEqual(app.selected_label['text'], 'Selected: —')
+            self.assertTrue(app.identify_button.instate(['disabled']))  # nothing selected
             app.tree.selection_set(current)
-            with patch.object(manager_app.messagebox, 'showerror') as error:
-                app.update_button.invoke()
-            self.assertIn('already has database v3', error.call_args[0][1])
+            app.render(force=True)
+            self.assertEqual(app.selected_label['text'], 'Selected: Desert 1')
+            self.assertTrue(app.update_button.instate(['disabled']))  # already current
+            self.assertFalse(app.identify_button.instate(['disabled']))
             app.tree.selection_set(zone)
+            app.render(force=True)
+            self.assertFalse(app.update_button.instate(['disabled']))
             app.update_button.invoke()
             self.assertEqual(app.zones.publish_target, zone)
             app.poll()
@@ -117,6 +132,30 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(app.zones.walkaround and app.zones.auto_refresh and app.auto_var.get())
             app.stop_button.invoke()
             self.assertFalse(app.zones.walkaround or app.walk_var.get())
+            # USB drop-out during a walkaround update: the update stops, walkaround stays armed, and the
+            # same dongle is reopened automatically when it reappears (a failed send is not an error).
+            app.walk_var.set(True); app.toggle_walkaround()
+            app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(2, 0x1234)))
+            app.poll()
+            self.assertTrue(app.zones.walk_run)
+            app.transport.send = MagicMock(side_effect=ValueError('Serial port is disconnected'))
+            app.send = manager_app.App.send.__get__(app)
+            app.zones.send = app.send
+            app.zones.queue.insert(0, 0); app.zones.inflight = None
+            app.poll()  # the send fails: recorded, not raised
+            self.assertIsNotNone(app.link_lost)
+            app.poll()  # next poll handles the drop-out
+            self.assertIsNone(app.zones.publication)
+            self.assertIsNone(app.transport.port)
+            self.assertTrue(app.walk_var.get() and app.zones.walkaround)
+            self.assertIn('reconnecting automatically', app.radio_status['text'])
+            reopened = []
+            with patch.object(manager_app.dongle, 'ports', return_value=[dongle_port]), \
+                    patch.object(app.transport, 'open', side_effect=lambda port: (reopened.append(port),
+                                                                             setattr(app.transport, 'port', MagicMock()))):
+                app.last_reconnect_scan = 0
+                app.poll()
+            self.assertEqual(reopened, ['/dev/cu.dongle'])
         finally:
             app.closing = True
             app.transport.port = None

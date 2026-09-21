@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless web inventory sync: `status` or `sync`. Asks for the password each run.
+"""Headless web inventory sync: `status` or `sync`. Uses the stored password (asks once and saves it).
 
 `sync` never resolves conflicts; use inventory_web/app.py to choose a side.
 """
@@ -23,19 +23,31 @@ def main():
     parser.add_argument('--server', default=DEFAULT_SERVER)
     parser.add_argument('--dataset', default=DEFAULT_DATASET)
     args = parser.parse_args()
-    password = getpass('Web inventory password: ')  # asked every run, never stored
-    client = WebClient(args.server, password, args.dataset, client=web_client.client_name('CLI'))
+    client = WebClient(args.server, dataset=args.dataset, client=web_client.client_name('CLI'))
+    prompted = not client.password
+    if prompted:
+        client.password = getpass('Web inventory password (stored on this computer): ')
     try:
         if args.command == 'status':
             print(web_status.summarize(args.database, client)[1])
+            if prompted:
+                client.head()
+                web_client.save_password(client.password)
             return
         result = web_sync.run(args.database, client, web_client.client_name('CLI'))
+        if prompted:
+            web_client.save_password(client.password)
         if result['conflicts']:
             raise SystemExit('Nothing changed. Resolve conflicts in the Web Sync app: ' + ', '.join(result['conflicts']))
         print(f"Revision {result['revision']}: uploaded {len(result['upload'])}, "
               f"applied {len(result['download']) if result['applied'] else 0}, waiting {result['unapplied']}.")
+        if result.get('sightings') is not None:
+            print(f"Reported last-seen data for {result['sightings']} cubes.")
         if result['unapplied']:
             print('Close the pairing and flashing apps, then sync again to apply the waiting web changes.')
+    except web_client.Unauthorized as exc:
+        web_client.forget_password()
+        raise SystemExit('Web sync stopped: ' + str(exc) + ' (stored password cleared; run again to enter it)')
     except (WebError, ValueError, OSError) as exc:
         raise SystemExit('Web sync stopped: ' + str(exc))
 

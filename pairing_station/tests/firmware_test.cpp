@@ -85,6 +85,10 @@ int main() {
  { uint8_t status[80]={'N','Z',1,0x21}; uint8_t zmac[6]={2,0,0,0,0,9}; esp_now_recv_info_t zi{zmac};
    serialOutput.clear(); receiveCallback(&zi,status,sizeof(status)); pollRadio();
    assert(serialOutput.find("\"event\":\"zone_frame\"")!=std::string::npos && serialOutput.find("4E5A0121")!=std::string::npos);
+   assert(serialOutput.find("\"rssi\"")==std::string::npos);  // no rx_ctrl: no signal reported
+   wifi_pkt_rx_ctrl_t rx{}; rx.rssi=-71; esp_now_recv_info_t zr{zmac,nullptr,&rx};
+   serialOutput.clear(); receiveCallback(&zr,status,sizeof(status)); pollRadio();
+   assert(serialOutput.find("\"rssi\":-71")!=std::string::npos);  // signal strength for the zone manager
    uint8_t query[9]={'N','Z',1,0x20}; serialOutput.clear(); receiveCallback(&zi,query,sizeof(query)); pollRadio();
    assert(serialOutput.find("zone_frame")==std::string::npos); }
  puts("PASS: zone relay validation,  actual firmware fresh-tag gating, ACK filters, retries, flash timing, heartbeat, reconnect cleanup, UID rejection, peer cleanup");

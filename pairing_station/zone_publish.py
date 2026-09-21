@@ -25,24 +25,34 @@ def records_from_inventory(records):
 
 
 def pull(database, client):
-    """Fetch the web publication into the local cache. Returns (published dict, updated bool)."""
+    """Fetch the web publication into the local cache.
+
+    Returns (published dict, status): 'updated', 'current', 'none' (nothing on the web yet) or
+    'legacy_ahead' (a legacy local version is above the web's: Push & publish lifts the web above it).
+    """
     doc = client.zonedb_pull()
     db = Database(database, recover_pending=False)
     try:
         store = ZoneStore(db)
-        updated = bool(doc.get('version')) and store.cache(doc)
-        return store.published(), updated
+        if not doc.get('version'):
+            return store.published(), 'none'
+        if store.cache(doc):
+            return store.published(), 'updated'
+        published = store.published()
+        return published, 'current' if published['hash'] == doc['hash'] else 'legacy_ahead'
     finally:
         db.close()
 
 
-def publish(database, client, name, seen_versions=()):
+def publish(database, client, name, seen_versions=(), sync=None):
     """Sync the inventory, then publish its zone records as the next universal version.
 
     `seen_versions`: database versions reported on air this session, so the new version is higher
-    than anything a zone already runs (legacy local counters). Returns a result dict.
+    than anything a zone already runs (legacy local counters). `sync`: an already-run web_sync.run
+    result (the inventory is then not synchronized again). Identical content keeps the current
+    version, and the returned publication is cached either way (so this is also a pull).
     """
-    sync = web_sync.run(database, client, name)
+    sync = sync or web_sync.run(database, client, name)
     if sync['conflicts']:
         raise PublishBlocked(f'{len(sync["conflicts"])} inventory conflict(s) need a decision in Web Inventory Sync first')
     records = records_from_inventory(sync['merged'])

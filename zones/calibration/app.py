@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'flasher'))
 from zone_monitor import MonitorState
 import firmware
-from web_status import WebStatus  # read-only web inventory comparison; never blocks
+from sync_widget import SyncWidget  # universal web Sync (inventory + zone database); never blocks
 import recording as rec
 
 BG, PANEL, FG, DIM, GREEN, GOLD = '#101820', '#1c2833', '#eff7fa', '#9bb2c2', '#52e0bd', '#ffc56b'
@@ -172,9 +172,9 @@ class App:
         self.database_detail = self.label(database_panel, 'Board — · Local master —', 11)
         self.database_detail.configure(wraplength=900)
         self.database_detail.pack(anchor='w')
-        web = self.label(database_panel, 'Web inventory: checking…', 11)
-        web.pack(anchor='w')
-        self.web_status = WebStatus(firmware.DEFAULT_DATABASE, app='Pool calibration').bind(root, web, {'ok': GREEN, 'warn': GOLD, 'muted': DIM})
+        self.web_status = SyncWidget(database_panel, firmware.DEFAULT_DATABASE, 'Pool calibration', bg=PANEL, muted=DIM,
+                                     on_synced=lambda _: self.update_firmware_status())
+        self.web_status.pack(anchor='w', fill='x', pady=(2, 0))
         db_row = tk.Frame(database_panel, bg=PANEL)
         db_row.pack(anchor='w', pady=6)
         self.database_check_button = ttk.Button(db_row, text='Check master database', command=self.check_firmware)

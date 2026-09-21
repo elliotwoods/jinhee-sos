@@ -20,7 +20,7 @@ import zonedb
 
 sys.path.insert(0, str(WORKSPACE / 'flashing_station'))
 from core import Scheduler  # noqa: E402  (armed intake with reconnect debounce)
-from web_status import WebStatus  # noqa: E402  (read-only web inventory comparison)
+from sync_widget import SyncWidget  # noqa: E402  (universal web Sync: inventory + zone database)
 
 BG, CARD, FG, MUTED = '#101720', '#1b2633', '#e9f0f7', '#9aafc4'
 GREEN, AMBER, RED, BLUE = '#54d6a0', '#ffc16b', '#ff7a8a', '#82b8fa'
@@ -133,9 +133,8 @@ class App:
         ttk.Label(outer, text='ZONES / FLASHER', font=('Helvetica', 24, 'bold')).pack(anchor='w')
         self.info = tk.StringVar()
         ttk.Label(outer, textvariable=self.info, foreground=MUTED).pack(anchor='w', pady=(4, 0))
-        web = ttk.Label(outer, foreground=MUTED)
-        web.pack(anchor='w', pady=(2, 10))
-        self.web_status = WebStatus(self.database, app='Zone flasher').bind(root, web, {'ok': GREEN, 'warn': AMBER, 'muted': MUTED})
+        self.web_status = SyncWidget(outer, self.database, 'Zone flasher', on_synced=lambda _: self.refresh_info())
+        self.web_status.pack(anchor='w', fill='x', pady=(2, 10))
         self.tabs = ttk.Notebook(outer)
         self.tabs.pack(fill='both', expand=True)
         self.build_flash_tab()

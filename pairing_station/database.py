@@ -40,6 +40,9 @@ class Database:
         CREATE TABLE IF NOT EXISTS events (
           id INTEGER PRIMARY KEY, time TEXT NOT NULL, mac TEXT, action TEXT NOT NULL, detail TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS sightings (
+          mac TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', PRIMARY KEY (mac, kind)
+        );
         ''')
         # Existing installations required a number even before a tag was scanned.
         if next(r for r in self.conn.execute('PRAGMA table_info(devices)') if r['name']=='cube_id')['notnull']:

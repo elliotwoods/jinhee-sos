@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'zones' / 'tools'))
 import zonedb  # noqa: E402
+import sightings  # noqa: E402
 
 BROADCAST = 'FF:FF:FF:FF:FF:FF'
 ZONE_COLUMNS = ['name', 'zone_type', 'point_id', 'firmware', 'db_version', 'db_count', 'db_crc', 'staging_version',
@@ -149,6 +150,7 @@ class ZoneRegistry:
         self.backoff = {}  # mac -> clock time before walkaround retries it
         self.requests = {}
         self.logs = {}
+        self.rssi = {}  # mac -> smoothed RSSI (dBm) reported by the dongle (pairing-station firmware 1.7+)
         self.publication = None
         self.publish_target = None
         self.publish_force = False
@@ -178,7 +180,7 @@ class ZoneRegistry:
         if not connected:
             raise ValueError('Connect the station first')
         if station.get('zones') != zonedb.PROTO:
-            raise ValueError('Station firmware has no zone support; reflash the pairing station (nct-pairing-1.6-zones)')
+            raise ValueError('Station firmware has no zone support; reflash the pairing station (nct-pairing-1.7-zones)')
 
     def publish(self, target=None, force=False, expected=None, timeout=None):
         """Broadcast the published database until the expected zones confirm it.
@@ -262,6 +264,7 @@ class ZoneRegistry:
             z['error_text'] = zonedb.ERRORS.get(z['last_error'] or 0, f'error {z["last_error"]}')
             z['zone_label'] = zonedb.ZONE_TYPES.get(z['zone_type'], 'unconfigured' if not z['config_valid'] else str(z['zone_type']))
             z['log'] = self.logs.get(z['mac'])
+            z['rssi'] = self.rssi.get(z['mac'])
             rows.append(z)
         return rows
 
@@ -289,11 +292,16 @@ class ZoneRegistry:
             try:
                 data = bytes.fromhex(e.get('hex', ''))
                 frame = zonedb.frame_kind(data)
+                if isinstance(e.get('rssi'), int) and -127 <= e['rssi'] < 0:
+                    previous = self.rssi.get(e['mac'])
+                    self.rssi[e['mac']] = e['rssi'] if previous is None else 0.7 * previous + 0.3 * e['rssi']
                 if frame == zonedb.ZONE_STATUS:
                     self._status(e['mac'], zonedb.parse_status(data))
                 elif frame == zonedb.ZONE_LOG:
                     self.logs[e['mac']] = dict(zonedb.parse_log(data), received=_now_iso())
                     self.log(f'Zone {e["mac"]} log: {len(self.logs[e["mac"]]["entries"])} recent tag(s)')
+                    # Cube "last seen" at this zone for the web inventory (best effort).
+                    sightings.zone_taps(self.store.db.conn, e['mac'], self.logs[e['mac']]['entries'], self.wall())
             except (ValueError, KeyError) as exc:
                 self.log(f'Ignored malformed zone frame: {exc}')
             return True

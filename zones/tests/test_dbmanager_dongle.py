@@ -35,12 +35,14 @@ class DongleTests(unittest.TestCase):
         self.calls.append(args)
         if args[-1] == 'version':
             return 'esptool v5.3.1'
+        if 'read-flash' in args:
+            Path(args[-1]).write_bytes(b'\xff' * 0x400000)
         if 'flash-id' in args:
-            return f'Chip type: ESP32-C3\nMAC: {self.mac}\n'
+            return f'Chip type: ESP32-C3\nUSB mode: USB-Serial/JTAG\nMAC: {self.mac}\n'
         return 'ok'
 
     def flash(self, state='current'):
-        with patch.object(dongle, 'BUILD', self.build), patch.object(dongle, 'build_state', return_value=state), \
+        with patch.object(dongle, 'BUILD', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), patch.object(dongle, 'build_state', return_value=state), \
                 patch.object(dongle, 'build') as build, patch('backend.Runner.__call__', side_effect=self.fake_tool), \
                 patch.object(dongle, 'ports', return_value=[PORT]), \
                 patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()):
@@ -58,8 +60,14 @@ class DongleTests(unittest.TestCase):
         self.assertEqual(offsets, ['0x0', '0x8000', '0xe000', '0x10000'])  # NVS 0x9000-0xDFFF untouched
         boot_app0 = Path(write[write.index('0xe000') + 1]).read_bytes()
         self.assertEqual(boot_app0, b'\x01' * 0x2000)
-        self.assertEqual(write[write.index('--after') + 1], 'hard-reset')
+        self.assertEqual(write[write.index('--after') + 1], 'watchdog-reset')
         self.assertNotIn('erase-flash', sum(self.calls, []))
+        self.assertTrue((self.build / 'backups' / 'AABBCC001122.bin').is_file())
+        self.assertLess([i for i, c in enumerate(self.calls) if 'read-flash' in c][0],
+                        [i for i, c in enumerate(self.calls) if 'write-flash' in c][0])
+        self.calls.clear()
+        self.flash()
+        self.assertFalse(any('read-flash' in c for c in self.calls))  # backup kept, not repeated
 
     def test_builds_when_stale(self):
         _, build = self.flash('stale')
@@ -74,7 +82,7 @@ class DongleTests(unittest.TestCase):
             self.assertIsInstance(error, RuntimeError)
             self.assertIn(text, str(error))
             self.assertIn('nothing was written', str(error))
-            self.assertFalse(any('write-flash' in c for c in self.calls))
+            self.assertFalse(any('write-flash' in c or 'read-flash' in c for c in self.calls))
 
     def test_known_boards_snapshot(self):
         sys.path.insert(0, str(ROOT.parent / 'pairing_station'))

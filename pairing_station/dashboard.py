@@ -184,7 +184,7 @@ class Dashboard:
         footer = ttk.Frame(frame); footer.pack(fill='x', pady=(10,6))
         app.progress = tk.StringVar()
         ttk.Label(footer, textvariable=app.progress, style='Muted.TLabel').pack(side='left')
-        app.web_label = ttk.Label(footer, style='Muted.TLabel'); app.web_label.pack(side='left', padx=(14,0))
+        app.sync_slot = ttk.Frame(footer); app.sync_slot.pack(side='left', padx=(14,0))
         self.button(footer, 'Zones…', app.open_zones).pack(side='right', padx=(6,0))
         self.button(footer, 'Export reader table', app.export_header).pack(side='right')
         self.button(footer, 'Export CSV', app.export_csv).pack(side='right', padx=6)

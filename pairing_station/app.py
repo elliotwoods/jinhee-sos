@@ -16,7 +16,8 @@ from database import Database, ROOT
 from controller import Controller
 from transport import Transport
 from usb_identify import UsbIdentifier
-from web_status import WebStatus
+from sync_widget import SyncWidget
+import sightings
 
 class App:
     def __init__(self, root, database, api_port=8765):
@@ -40,7 +41,10 @@ class App:
         root.title('NCT · NFC Pairing Station')
         self.dashboard = Dashboard(self)
         # Read-only web inventory comparison; never blocks or fails the station.
-        self.web_status = WebStatus(database, app='Pairing app').bind(root, self.web_label, {'ok': '#54d6a0', 'warn': '#ffc16b', 'muted': '#a5b5c8'})
+        # Universal Sync: this app holds the pairing lock itself, so web changes apply only while it is idle.
+        self.web_status = SyncWidget(self.sync_slot, database, 'Pairing app', held=('.lock',),
+                                     can_apply=lambda: not self.controller.mode, on_synced=lambda _: self.render())
+        self.web_status.pack(side='left')
         # Native menus expose the same actions to keyboard/accessibility users.
         menubar = tk.Menu(root)
         station_menu = tk.Menu(menubar, tearoff=False)
@@ -188,6 +192,7 @@ class App:
                     self.controller.stop()
             elif event['kind'] == 'firmware':
                 self.usb_firmware[event['mac']] = event['firmware']
+                sightings.record(self.db.conn, event['mac'], 'usb', event['firmware'].get('version') or event['firmware'].get('status', ''))
                 self.log(f"USB firmware {event['mac']}: {event['firmware']}")
                 fw = event['firmware']
                 if fw['status'] == 'different':

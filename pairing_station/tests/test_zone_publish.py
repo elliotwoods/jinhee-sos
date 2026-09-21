@@ -8,6 +8,7 @@ from database import Database  # noqa: E402
 from fake_web_inventory import FakeWebInventory  # noqa: E402
 from web_client import WebClient, WebError  # noqa: E402
 from zone_registry import ZoneStore  # noqa: E402
+import web_status  # noqa: E402
 import zone_publish  # noqa: E402
 import zonedb  # noqa: E402
 
@@ -70,14 +71,24 @@ class ZonePublishTests(unittest.TestCase):
 
     def test_pull_caches_web_publication(self):
         self.publish('a')
-        published, updated = zone_publish.pull(self.paths['b'], self.client())
-        self.assertTrue(updated)
-        self.assertEqual(published['version'], 1)
+        published, status = zone_publish.pull(self.paths['b'], self.client())
+        self.assertEqual((published['version'], status), (1, 'updated'))
         self.assertEqual(self.store('b', lambda s: s.current().crc), self.web.zonedb['crc'])
-        self.assertFalse(zone_publish.pull(self.paths['b'], self.client())[1])
+        self.assertEqual(zone_publish.pull(self.paths['b'], self.client())[1], 'current')
+
+    def test_pull_reports_legacy_local_version_above_web(self):
+        self.publish('a')
+
+        def legacy(store):
+            with store.conn:
+                store.conn.execute("INSERT OR REPLACE INTO metadata VALUES ('zone_db_version','20')")
+        self.store('b', legacy)
+        published, status = zone_publish.pull(self.paths['b'], self.client())
+        self.assertEqual((published['version'], status), (20, 'legacy_ahead'))
+        self.assertEqual(self.publish('b')['published']['version'], 21)  # publishing lifts the web above it
 
     def test_pull_when_nothing_published_or_server_too_old(self):
-        self.assertEqual(zone_publish.pull(self.paths['a'], self.client()), (self.store('a', lambda s: s.published()), False))
+        self.assertEqual(zone_publish.pull(self.paths['a'], self.client()), (self.store('a', lambda s: s.published()), 'none'))
         self.web.zonedb_missing = True
         with self.assertRaises(WebError):
             zone_publish.pull(self.paths['a'], self.client())
@@ -95,6 +106,32 @@ class ZonePublishTests(unittest.TestCase):
         with self.assertRaises(zone_publish.PublishBlocked):
             self.publish('b')
         self.assertEqual(self.web.zonedb['version'], 0)
+
+    def test_status_line_warns_about_unpublished_and_newer_web_versions(self):
+        anonymous = WebClient(self.web.url, None, 'jinhee-sos', timeout=2)  # status lines have no password
+        summary = lambda name: web_status.zone_summary(self.paths[name], anonymous)
+        self.assertIn('never published', summary('a')[1])
+        self.publish('a')
+        self.assertIsNone(summary('a'))
+        self.assertIn('v1 on the web, this computer has v0 — Pull', summary('b')[1])
+        zone_publish.pull(self.paths['b'], self.client())
+        self.assertIsNone(summary('b'))
+        db = Database(self.paths['a'], recover_pending=False)
+        db.reserve(MAC)
+        db.rename(MAC, 100)
+        db.prepare(MAC, '04:0A:0B:0C')
+        db.result(MAC, True, 'ack')
+        db.close()
+        self.assertIn('1 mapping change not published', summary('a')[1])
+        self.publish('a')
+        self.assertIsNone(summary('a'))
+        self.assertIn('v2 on the web, this computer has v1', summary('b')[1])
+        # Offline (or a server without the route): local comparison only, never an exception.
+        self.web.zonedb_missing = True
+        self.assertIsNone(summary('a'))
+        self.web.close()
+        self.assertIsNone(summary('b'))
+        self.web = FakeWebInventory()  # tearDown closes it
 
     def test_records_from_inventory_matches_local_rule(self):
         db = Database(self.paths['a'], recover_pending=False)

@@ -29,7 +29,8 @@ struct WifiT {
 using esp_err_t = int;
 constexpr int ESP_OK=0, WIFI_STA=1, WIFI_IF_STA=0, WIFI_SECOND_CHAN_NONE=0;
 const char* esp_err_to_name(int) { return "mock error"; }
-struct esp_now_recv_info_t { const uint8_t* src_addr; };
+struct wifi_pkt_rx_ctrl_t { signed rssi:8; };
+struct esp_now_recv_info_t { const uint8_t* src_addr; const uint8_t* des_addr=nullptr; wifi_pkt_rx_ctrl_t* rx_ctrl=nullptr; };
 struct esp_now_send_info_t {};
 enum esp_now_send_status_t { ESP_NOW_SEND_SUCCESS, ESP_NOW_SEND_FAIL };
 struct esp_now_peer_info_t { uint8_t peer_addr[6]; int channel, ifidx; bool encrypt; };

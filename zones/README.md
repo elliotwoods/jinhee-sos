@@ -151,7 +151,7 @@ The monitor connects by itself to a detected zone on USB (untick *Connect automa
 `zones/dbmanager/app.py` (Finder: `zones/dbmanager/Launch.command`, VS Code: *Zone Database Manager*;
 the pairing app's **Zones → Zone Database Manager…** opens it too). Zone firmware is unchanged.
 
-- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.6-zones**. Its zone
+- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.7-zones** (1.6 works without signal bars). Its zone
   relay needs no NFC reader. **Flash dongle…** builds that firmware if it is missing or stale, identifies the board
   and writes bootloader, partitions, boot selector and app separately, so NVS is kept. It refuses known cubes, known
   zone boards and the installed station (3C:0F:02:AD:83:24). It then records the dongle MAC as an `excluded` role so
@@ -168,15 +168,25 @@ the pairing app's **Zones → Zone Database Manager…** opens it too). Zone fir
   reports the new version and CRC (45 s limit).
 - **Walkaround** needs auto-refresh. When no update is running, it starts one broadcast run for every in-range zone
   that is out of date. A zone that does not confirm is retried after 30 s. It never touches newer/different zones.
-- **Pull from web** caches the published zone database and reports inventory differences. Distributing the cached
-  version works offline.
-- **Push & publish new version** runs the web inventory sync (upload local changes, download web changes; conflicts
-  stop it, and they are resolved in *Web Sync*). It then publishes the committed mappings of the synchronized
-  inventory. The **web allocates the version**: identical content keeps the current version; otherwise it becomes
+- **Signal** column: the dongle's RSSI for each zone, smoothed. `▂▄▆` at −67 dBm or better, `▂▄·` down to
+  −80 dBm, `▂··` below that. Requires dongle firmware 1.7.
+- **Actions for the selected zone** sit beneath the list: Update selected (only for an out-of-date zone),
+  Identify, Show log, Reboot.
+- **Sync** (the same widget as in every app) uploads local inventory changes, downloads web changes and pulls or
+  publishes the zone database. `↑` and `↓` count what is pending. Conflicts stop it and open **Web Sync…**. The
+  **web allocates the version**: identical content keeps the current version; otherwise it becomes
   `max(current, min_version) + 1`, where `min_version` is the highest version this computer has seen on any zone
-  or published locally. Versions are therefore universal and only increase, whichever computer publishes.
-- **Identify**, **Show log** and **Reboot** act on the selected zone.
-- The web password is asked for when needed and kept in memory only.
+  or published locally. Versions are therefore universal and only increase, whichever computer publishes. Every
+  computer must run this software: an old pairing-station app still publishes from its own counter.
+- **Drop-outs.** If the dongle's USB drops mid-update, the update stops and Walkaround stays on. The same dongle
+  is reopened automatically when it reappears. Zones keep a partial update for 60 s, and a repeated announce
+  for the same version resumes it. If the dongle stops answering, the app re-handshakes and does not replay the
+  interrupted command. A zone that leaves range times out (45 s) and discards its partial update itself.
+- **Status line in every app** (pairing, both flashers, calibration, this manager). It warns when this computer's
+  cube mappings are not in the published zone database (*N mapping changes not published*). It also warns when the
+  web has a newer publication than this computer (*vN on the web … — Pull*), using the public
+  `/api/zonedb/head` (no password). When offline it compares locally only and never blocks an app.
+- The web password is asked for once and stored on this computer (`pairing_station/data/web_password`).
 
 The zone flasher and PoolZone calibration write the **published** image (`ZoneStore.current()`). They warn when
 this computer's mappings differ from it; they never allocate a version. Before the first web publication, a legacy

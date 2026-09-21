@@ -71,6 +71,12 @@ system interpreter. Python 3.14 with Tk is the tested Mac configuration.
 - `web_client.py`, `web_sync.py`, `web_status.py`: stdlib client for `web/`, web
   three-way sync (own baseline), and the background read-only status line the apps
   show. Status must never block, raise into, or write from a host app.
+- `sightings.py`: per-cube "last seen" evidence for the web page (`sightings` table:
+  latest per MAC and kind, plus `events`/`flash_runs`/`zones`). Hooks in the controller
+  (radio discovery, throttled), `app.py` (USB identify) and `zone_registry.py` (zone tap
+  logs) are best effort and must never affect pairing. Uploaded by Web Sync only;
+  sightings are not inventory records and never enter the three-way merge.
+- `sync_all.py`, `sync_widget.py`: the universal Sync (inventory both ways plus zone database publish/pull) and its Tk widget, used by every app on the device database. Apps holding an instance lock pass `held` and `can_apply`. The web password is stored in `data/web_password` (0600, gitignored) via `web_client`; never put it in git.
 - `zone_registry.py`: zone discovery, classification and database distribution (used by the Zone
   Database Manager); `zone_publish.py`: web-allocated zone database versions. Zone database versions
   are universal and only increase: never allocate one locally. `web/src/lib/zonedb.ts` mirrors

@@ -24,7 +24,7 @@ static_assert(sizeof(Packet)==24 && offsetof(Packet,type)==0 && offsetof(Packet,
               offsetof(Packet,mac)==8 && offsetof(Packet,uidLength)==14 &&
               offsetof(Packet,uid)==15 && offsetof(Packet,success)==22, "Cube ABI changed");
 struct Received { Packet packet; uint8_t sender[6]; };
-struct ZoneReceived { uint8_t sender[6]; uint8_t length; uint8_t data[250]; };
+struct ZoneReceived { uint8_t sender[6]; int8_t rssi; uint8_t length; uint8_t data[250]; };
 enum Mode { IDLE, IDENTIFY, REGISTERING, ACK_PAUSE };
 constexpr uint8_t CHANNEL=2, DISCOVER=1, DISCOVER_REPLY=2, REGISTER=3, REGISTER_ACK=4, SET_ZONE=6;
 constexpr uint32_t HEARTBEAT_TIMEOUT=5000;
@@ -63,6 +63,7 @@ void receiveCallback(const esp_now_recv_info_t *info,const uint8_t *data,int len
   if(nctzone::frameType(data,len)) {
     if(!zoneQueue) return;
     ZoneReceived z; memcpy(z.sender,info->src_addr,6); z.length=len; memcpy(z.data,data,len);
+    z.rssi=info->rx_ctrl ? int8_t(info->rx_ctrl->rssi) : 0;  // signal strength for the zone manager
     xQueueSend(zoneQueue,&z,0); return;
   }
   if(len!=sizeof(Packet) || (data[0]!=DISCOVER_REPLY && data[0]!=REGISTER_ACK)) return;
@@ -131,7 +132,7 @@ void releaseTarget() {
 }
 void hello(const String &id) {
   JsonDocument d; d["event"]="hello"; d["id"]=id; d["protocol"]=1;
-  d["firmware"]="nct-pairing-1.6-zones"; d["zones"]=nctzone::PROTO; d["mac"]=WiFi.macAddress(); d["channel"]=WiFi.channel();
+  d["firmware"]="nct-pairing-1.7-zones"; d["zones"]=nctzone::PROTO; d["mac"]=WiFi.macAddress(); d["channel"]=WiFi.channel();
   d["radio_ok"]=radioOK; d["nfc_ok"]=nfcOK;
   d["nfc_polling"]=nfcPolling; d["nfc_firmware"]=nfcFirmware; d["nfc_i2c_status"]=nfcI2cStatus; d["tag_present"]=tagPresent; output(d);
 }
@@ -257,6 +258,7 @@ void pollRadio() {
     uint8_t kind=nctzone::frameType(z.data,z.length);
     if(kind!=nctzone::ZONE_STATUS && kind!=nctzone::ZONE_LOG) continue;  // other registries' traffic
     JsonDocument d; d["event"]="zone_frame"; d["mac"]=hexString(z.sender,6); d["kind"]=kind;
+    if(z.rssi) d["rssi"]=z.rssi;
     d["hex"]=plainHex(z.data,z.length); output(d);
   }
   Received r;

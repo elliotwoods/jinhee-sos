@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { MemoryStore } from "./store";
-import { crc32, publish, RECORD_SIZE, validateImage, ZoneDbError } from "./zonedb";
+import { crc32, head, publish, RECORD_SIZE, validateImage, ZoneDbError } from "./zonedb";
 
 function record(cubeId: number, uid: number[], mac = [0x02, 0, 0, 0, 0, cubeId]): Uint8Array {
   const out = new Uint8Array(RECORD_SIZE);
@@ -48,6 +48,14 @@ describe("zone database publish", () => {
     expect(second.doc.version).toBe(2);
     // A stale laptop republishing old content still moves forward, never back.
     expect((await publish(db, "d", pack(A), 0, 2, "laptop A")).doc.version).toBe(3);
+  });
+
+  it("head reveals the version but no records", async () => {
+    expect(await head(db, "d")).toEqual({ version: 0, hash: "", count: 0, published_at: null });
+    await publish(db, "d", pack(A, B), 0, 1, "x");
+    const h = await head(db, "d");
+    expect(h).toMatchObject({ version: 1, count: 2 });
+    expect(Object.keys(h).sort()).toEqual(["count", "hash", "published_at", "version"]);
   });
 
   it("lifts the version above min_version (versions already on zones)", async () => {

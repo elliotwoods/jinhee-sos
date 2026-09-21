@@ -27,11 +27,16 @@ class AppsOpen(RuntimeError):
 
 
 @contextmanager
-def app_locks(database):
-    """Hold the pairing and cube-flasher instance locks; raise AppsOpen if either app runs."""
+def app_locks(database, skip=()):
+    """Hold the pairing and cube-flasher instance locks; raise AppsOpen if either app runs.
+
+    `skip`: lock suffixes the calling app already holds itself (it vouches that it is idle).
+    """
     handles = []
     try:
         for suffix in ('.lock', '.flasher.lock'):
+            if suffix in skip:
+                continue
             handle = Path(database).with_suffix(suffix).open('a')
             handles.append(handle)
             try:

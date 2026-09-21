@@ -200,6 +200,15 @@ class ZoneRegistryTests(unittest.TestCase):
         self.assertFalse(any(z['in_range'] for z in self.zones.zone_rows()))
         self.assertEqual(self.zones.store.highest_seen(), p.version + 4)
 
+    def test_signal_strength_is_smoothed_and_optional(self):
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(1, 2)))  # firmware 1.6: no rssi
+        self.assertIsNone(self.zones.zone_rows()[0]['rssi'])
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(1, 2), rssi=-60))
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(1, 2), rssi=-80))
+        self.assertAlmostEqual(self.zones.zone_rows()[0]['rssi'], -66)
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(1, 2), rssi=0))  # invalid: ignored
+        self.assertAlmostEqual(self.zones.zone_rows()[0]['rssi'], -66)
+
     def test_auto_refresh_interval(self):
         self.zones.tick(True, STATION)
         self.ack_all()

@@ -54,6 +54,46 @@ def summarize(database, client=None, app='status line'):
     return 'ok', 'Web inventory: up to date'
 
 
+def zone_summary(database, client=None):
+    """Return (level, text) for the zone database, or None when there is nothing to say.
+
+    Warns when this computer's committed mappings are not in the published zone database, and when the
+    web has a newer publication than this computer (public head: no password). Offline: local only.
+    """
+    import base64
+    from zone_registry import zonedb  # zone_registry puts zones/tools on the path
+    conn = sqlite3.connect(Path(database).resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
+    try:
+        conn.row_factory = sqlite3.Row
+        meta = {r[0]: r[1] for r in conn.execute("SELECT key, value FROM metadata WHERE key LIKE 'zone_db_%'")}
+        rows = [dict(r) for r in conn.execute(
+            "SELECT d.* FROM devices d LEFT JOIN device_roles r ON r.mac=d.mac WHERE COALESCE(r.role,'auto')!='excluded'")]
+    finally:
+        conn.close()
+    version = int(meta.get('zone_db_version', 0))
+    notes = []
+    try:
+        local = zonedb.records_from_rows(rows)
+    except ValueError as exc:
+        return 'warn', f'Zone database: local mappings invalid ({exc})'
+    if meta.get('zone_db_hash') != zonedb.content_hash(local):
+        if meta.get('zone_db_records') is not None:
+            published = set(zonedb.unpack_records(base64.b64decode(meta['zone_db_records'])))
+            changed = len(published ^ set(local))
+            notes.append(f'{changed} mapping change{"s" if changed != 1 else ""} not published')
+        else:
+            notes.append('local mappings not published' if version else 'never published')
+    try:
+        head = (client or WebClient(timeout=3, client=client_name('status line'))).zonedb_head()
+        if head.get('version', 0) > version and head.get('hash') != meta.get('zone_db_hash'):
+            notes.insert(0, f'v{head["version"]} on the web, this computer has v{version} — Pull')
+    except Exception:  # offline or older server: local comparison only
+        pass
+    if not notes:
+        return None
+    return 'warn', 'Zone database: ' + ' · '.join(notes) + ' (Zone Database Manager)'
+
+
 class WebStatus:
     def __init__(self, database, interval=300, start=True, app='status line'):
         self.database = Path(database)
@@ -77,6 +117,12 @@ class WebStatus:
             result = summarize(self.database, app=self.app)
         except Exception as exc:  # status only: never disturb the host app
             result = ('muted', f'Web inventory status unavailable ({type(exc).__name__})')
+        try:
+            zone = zone_summary(self.database, WebClient(timeout=3, client=client_name(self.app)))
+        except Exception:
+            zone = None
+        if zone:
+            result = ('warn', result[1] + '  ·  ' + zone[1])
         self.status = result
         return result
 

@@ -14,7 +14,7 @@ from backend import Flasher, Runner, ports
 from build import build
 from audio import Audio
 from identity import describe, usb_mac
-from web_status import WebStatus
+from sync_widget import SyncWidget
 
 BG='#101720'; CARD='#1b2633'; FG='#e9f0f7'; MUTED='#9aafc4'; GREEN='#54d6a0'; BLUE='#82b8fa'; AMBER='#ffc16b'
 
@@ -53,8 +53,9 @@ class App:
         self.status_label=tk.Label(outer,textvariable=self.status,bg=CARD,fg=BLUE,font=('Helvetica',17,'bold'),anchor='w',padx=16,pady=15)
         self.status_label.pack(fill='x')
         self.firmware=tk.StringVar();ttk.Label(outer,textvariable=self.firmware,foreground=MUTED).pack(anchor='w',pady=(10,0))
-        web=ttk.Label(outer,foreground=MUTED);web.pack(anchor='w',pady=(2,10))
-        self.web_status=WebStatus(self.path,app='Cube flasher').bind(self.root,web,{'ok':GREEN,'warn':AMBER,'muted':MUTED})
+        # Universal Sync: this app holds the cube-flasher lock itself, so web changes apply only while idle.
+        self.web_status=SyncWidget(outer,self.path,'Cube flasher',held=('.flasher.lock',),can_apply=lambda:not self.busy)
+        self.web_status.pack(anchor='w',fill='x',pady=(2,10))
         controls=ttk.Frame(outer);controls.pack(fill='x',pady=(0,10))
         self.auto=ttk.Button(controls,text='▶ Arm Auto',command=self.arm);self.auto.pack(side='left',padx=(0,7))
         self.manual=ttk.Button(controls,text='Flash selected / Retry',command=self.manual_flash);self.manual.pack(side='left',padx=7)

@@ -15,6 +15,16 @@ export type ZoneDbDoc = {
 /** Last contact from one computer/app. Stored per client so it never contends with the inventory. */
 export type Presence = { client: string; action: string; at: string; ip: string };
 
+/** One computer's evidence of when each cube (and zone board) was last physically seen. */
+export type Sighting = { at: string; detail: string };
+export type ZoneSighting = {
+  mac: string; name: string | null; zone_type: number | null; point_id: number | null; profile: string | null;
+  firmware: string | null; db_version: number | null; tags: number | null; source: string | null; last_seen: string | null;
+};
+export type SightingsReport = {
+  computer: string; reported_at: string; cubes: Record<string, Record<string, Sighting>>; zones: ZoneSighting[];
+};
+
 /** The document changed between read and write; re-read and try again. */
 export class StoreConflict extends Error {}
 
@@ -27,6 +37,9 @@ export interface Store {
   writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null): Promise<void>;
   touch(dataset: string, presence: Presence): Promise<void>;
   presence(dataset: string): Promise<Presence[]>;
+  /** Replace one computer's sightings report (one blob per computer: no contention). */
+  reportSightings(dataset: string, report: SightingsReport): Promise<void>;
+  sightings(dataset: string): Promise<SightingsReport[]>;
 }
 
 export const emptyDoc = (): InventoryDoc => ({ revision: 0, records: {}, changes: [] });
@@ -36,6 +49,7 @@ export const emptyZoneDb = (): ZoneDbDoc => ({
 const pathFor = (dataset: string) => `inventory/${dataset}.json`;
 const zoneDbPath = (dataset: string) => `zonedb/${dataset}.json`;
 const presencePrefix = (dataset: string) => `presence/${dataset}/`;
+const sightingsPrefix = (dataset: string) => `sightings/${dataset}/`;
 const slug = (client: string) => client.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "unknown";
 
 export class BlobStore implements Store {
@@ -85,17 +99,31 @@ export class BlobStore implements Store {
     });
   }
 
-  async presence(dataset: string) {
-    const { blobs } = await list({ prefix: presencePrefix(dataset), limit: 200 });
+  private async readAll<T>(prefix: string): Promise<T[]> {
+    const { blobs } = await list({ prefix, limit: 200 });
     const entries = await Promise.all(blobs.map(async (b) => {
       try {
         const result = await get(b.pathname, { access: "private", useCache: false });
-        return result?.statusCode === 200 ? (JSON.parse(await new Response(result.stream).text()) as Presence) : null;
+        return result?.statusCode === 200 ? (JSON.parse(await new Response(result.stream).text()) as T) : null;
       } catch {
         return null;
       }
     }));
-    return entries.filter((e): e is Presence => e !== null);
+    return entries.filter((e): e is Awaited<T> => e !== null) as T[];
+  }
+
+  presence(dataset: string) {
+    return this.readAll<Presence>(presencePrefix(dataset));
+  }
+
+  async reportSightings(dataset: string, report: SightingsReport) {
+    await put(sightingsPrefix(dataset) + slug(report.computer) + ".json", JSON.stringify(report), {
+      access: "private", contentType: "application/json", addRandomSuffix: false, allowOverwrite: true,
+    });
+  }
+
+  sightings(dataset: string) {
+    return this.readAll<SightingsReport>(sightingsPrefix(dataset));
   }
 }
 
@@ -143,12 +171,23 @@ export class MemoryStore implements Store {
   async presence(dataset: string) {
     return [...this.seen].filter(([k]) => k.startsWith(presencePrefix(dataset))).map(([, v]) => v);
   }
+
+  private reports = new Map<string, string>();
+
+  async reportSightings(dataset: string, report: SightingsReport) {
+    this.reports.set(sightingsPrefix(dataset) + slug(report.computer), JSON.stringify(report));
+  }
+
+  async sightings(dataset: string) {
+    return [...this.reports].filter(([k]) => k.startsWith(sightingsPrefix(dataset))).map(([, v]) => JSON.parse(v) as SightingsReport);
+  }
 }
 
-let store: Store | null = null;
+// On globalThis so every route bundle shares one store (dev bundles each route separately).
+const shared = globalThis as unknown as { nctInventoryStore?: Store };
 export function getStore(): Store {
-  if (!store) {
-    store = process.env.INVENTORY_STORE === "memory" && process.env.NODE_ENV !== "production" ? new MemoryStore() : new BlobStore();
+  if (!shared.nctInventoryStore) {
+    shared.nctInventoryStore = process.env.INVENTORY_STORE === "memory" && process.env.NODE_ENV !== "production" ? new MemoryStore() : new BlobStore();
   }
-  return store;
+  return shared.nctInventoryStore;
 }
