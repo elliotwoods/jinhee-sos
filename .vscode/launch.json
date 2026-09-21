@@ -60,6 +60,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Zone Database Manager",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/zones/dbmanager/app.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Install prerequisites (both apps)",
       "type": "debugpy",
       "request": "launch",

@@ -5,6 +5,8 @@ from collections import deque
 from http_api import AppAPI
 from dashboard import Dashboard
 import queue
+import subprocess
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -14,7 +16,6 @@ from database import Database, ROOT
 from controller import Controller
 from transport import Transport
 from usb_identify import UsbIdentifier
-from zone_registry import ZoneRegistry
 from web_status import WebStatus
 
 class App:
@@ -25,8 +26,6 @@ class App:
         self.db = Database(database)
         self.transport = Transport()
         self.controller = Controller(self.db, self.transport.send, self.log)
-        self.zones = ZoneRegistry(self.db, self.transport.send, self.log)
-        self.zones_window = None
         self.last_ping = 0
         self.last_hello_retry = 0
         self.last_rx = 0
@@ -54,9 +53,7 @@ class App:
             station_menu.add_command(label=label, command=lambda cb=callback: self.action(cb))
         menubar.add_cascade(label='Station', menu=station_menu)
         zones_menu = tk.Menu(menubar, tearoff=False)
-        zones_menu.add_command(label='Zones…', command=lambda: self.action(self.open_zones))
-        zones_menu.add_command(label='Publish zone database', command=lambda: self.action(
-            lambda: (self.zones.require(self.controller.station, self.controller.connected), self.zones.publish())))
+        zones_menu.add_command(label='Zone Database Manager…', command=lambda: self.action(self.open_zones))
         menubar.add_cascade(label='Zones', menu=zones_menu)
         root.configure(menu=menubar)
         root.bind('<Escape>', lambda _: self.action(self.controller.stop))
@@ -244,16 +241,18 @@ class App:
         if path: self.db.export_header(path); self.log('Exported '+path+'; pending replacement UIDs excluded')
 
     def open_zones(self):
-        from zones_window import ZonesWindow
-        if self.zones_window:
-            self.zones_window.window.lift()
-        else:
-            self.zones_window = ZonesWindow(self)
+        """Zone databases are managed by their own app (zones/dbmanager), over its own ESP-NOW dongle."""
+        if self.transport.port and not messagebox.askokcancel('Zone Database Manager',
+                'The manager needs its own ESP-NOW dongle (an ESP32-C3 with the pairing-station firmware).\n\n'
+                'To use this station as the dongle instead, disconnect it here first.\n\nOpen the manager now?',
+                parent=self.root):
+            return
+        subprocess.Popen([sys.executable, str(ROOT.parent / 'zones' / 'dbmanager' / 'app.py'),
+                          '--database', str(self.db.path)], start_new_session=True)
+        self.log('Opened the Zone Database Manager')
 
     def render(self):
         self.dashboard.render()
-        if self.zones_window:
-            self.zones_window.render()
 
     def recover_station_connection(self, now):
         # Logical disconnection can leave a healthy USB handle open (e.g. a
@@ -277,8 +276,8 @@ class App:
                     self.transport.close()
                 else:
                     was_connected = self.controller.connected
-                    if self.zones.event(event):
-                        continue
+                    if kind in ('zone_frame', 'zone_sent'):
+                        continue  # zone traffic belongs to the Zone Database Manager
                     self.controller.event(event)
                     if kind == 'hello' and self.controller.connected and not was_connected:
                         self.controller.discover()
@@ -295,7 +294,6 @@ class App:
             if self.api: self.api.drain()
             self.poll_usb()
             self.controller.tick()
-            self.zones.tick(self.transport.port is not None and self.controller.connected, self.controller.station, bool(self.controller.mode))
             self.render()
         except Exception as exc:
             self.log('Operation paused: '+str(exc))

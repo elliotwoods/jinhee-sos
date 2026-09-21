@@ -146,26 +146,43 @@ The monitor connects by itself to a detected zone on USB (untick *Connect automa
   - A real tap always wins over a test flash.
   - The same commands work on the zone's serial console: `cube|zone|clear|flash <cubeID>`, `stop`.
 
-## Update zones over the air
+## Update zones over the air: Zone Database Manager
 
-Open the pairing station app and click **Zones…** (or use the **Zones** menu).
+`zones/dbmanager/app.py` (Finder: `zones/dbmanager/Launch.command`, VS Code: *Zone Database Manager*;
+the pairing app's **Zones → Zone Database Manager…** opens it too). Zone firmware is unchanged.
 
-- **Publish database** snapshots the committed mappings (the same rows as *Export reader table*: UID and cube ID, not pending, not excluded).
-  - The version increases only when the content changed.
-  - The station broadcasts an announce followed by all chunks, repeating about once a second.
-  - It stops when every zone seen in the last 15 minutes reports the new version and CRC, or after 3 minutes.
-  - Zones that answer during publishing are added to the wait list.
-- **Query zones** broadcasts a status request. This also happens automatically every 30 s.
-  - The table shows each zone's name, point, firmware and database version: green when current, amber when behind.
-  - It also shows update progress, last seen, tag/unknown/failed-delivery counters and the last error.
-- **Show log** fetches the zone's last 8 tags: UID, cube, and whether delivery was acknowledged.
-- **Identify** blinks the zone's onboard LED. **Reboot** restarts it.
-- Through the HTTP API (`zones` in the execute namespace; `/status` includes `zones`) you can also force a single zone back to an older version:
-  `zones.publish(target='<zone MAC>', force=True)`. Forcing only works when targeted at one zone.
+- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.6-zones**. Its zone
+  relay needs no NFC reader. **Flash dongle…** builds that firmware if it is missing or stale, identifies the board
+  and writes bootloader, partitions, boot selector and app separately, so NVS is kept. It refuses known cubes, known
+  zone boards and the installed station (3C:0F:02:AD:83:24). It then records the dongle MAC as an `excluded` role so
+  the cube and zone flashers leave it alone. Afterwards it reconnects and requires the `hello` to report that firmware.
+  The real pairing station also works as the dongle when the pairing app is not holding its port.
+- **Refresh / Auto-refresh (default on).** A broadcast status query, every 3 s with auto-refresh (30 s without).
+  Zones that answered in the last 20 s are *in range*. States:
+  - **current**: version and CRC match.
+  - **out of date**: lower version.
+  - **updating**: staging the published version.
+  - **newer / differs**: a higher or equal version with different content, typically a legacy per-computer counter.
+    Only a new publication fixes it.
+- **Update selected** sends a unicast (never forced) announce to that zone, then broadcast chunks, until the zone
+  reports the new version and CRC (45 s limit).
+- **Walkaround** needs auto-refresh. When no update is running, it starts one broadcast run for every in-range zone
+  that is out of date. A zone that does not confirm is retried after 30 s. It never touches newer/different zones.
+- **Pull from web** caches the published zone database and reports inventory differences. Distributing the cached
+  version works offline.
+- **Push & publish new version** runs the web inventory sync (upload local changes, download web changes; conflicts
+  stop it, and they are resolved in *Web Sync*). It then publishes the committed mappings of the synchronized
+  inventory. The **web allocates the version**: identical content keeps the current version; otherwise it becomes
+  `max(current, min_version) + 1`, where `min_version` is the highest version this computer has seen on any zone
+  or published locally. Versions are therefore universal and only increase, whichever computer publishes.
+- **Identify**, **Show log** and **Reboot** act on the selected zone.
+- The web password is asked for when needed and kept in memory only.
+
+The zone flasher and PoolZone calibration write the **published** image (`ZoneStore.current()`). They warn when
+this computer's mappings differ from it; they never allocate a version. Before the first web publication, a legacy
+local publication is still used while the local mappings match its hash.
 
 Serial commands on a zone (115200 baud): `?` report, `db` records, `log` recent tags, `help`.
-
-The pairing station needs firmware **nct-pairing-1.6-zones** (see *Build* below). Older station firmware is reported as having no zone support.
 
 ## How updates stay safe
 
@@ -185,7 +202,8 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 | `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone` sketches, each with the same `partitions.csv` |
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
-| `tools/zonedb.py` | Python definition of every image/frame (used by the pairing app, flasher and tests) |
+| `tools/zonedb.py` | Python definition of every image/frame (used by the database manager, flasher and tests) |
+| `dbmanager/` | Zone Database Manager (`app.py`) and ESP-NOW dongle flashing (`dongle.py`) |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
 | `tests/` | Host-compiled firmware tests and Python tests |
 | `ZONE_PORTING_NOTES.md` | How to move the other zone firmwares onto this system |

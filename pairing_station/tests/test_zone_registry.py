@@ -1,3 +1,4 @@
+import base64
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,13 @@ def status_hex(version, crc, count=32, name='Preshow 1', staging=(0, 0, 0), erro
     return frame.hex().upper()
 
 
+def web_doc(records, version):
+    """A web zone-database document as web/src/lib/zonedb.ts returns it."""
+    p = zonedb.Publication(version, records)
+    return dict(version=version, hash=zonedb.content_hash(records), count=p.count, crc=p.crc,
+                records_b64=base64.b64encode(p.body).decode(), published_at='2026-09-21T00:00:00Z', published_by='test')
+
+
 class ZoneRegistryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -27,6 +35,7 @@ class ZoneRegistryTests(unittest.TestCase):
         self.sent, self.logs = [], []
         self.now, self.wall = 1000.0, 1_700_000_000.0
         self.zones = ZoneRegistry(self.db, self.sent.append, self.logs.append, lambda: self.now, lambda: self.wall)
+        self.zones.store.cache(web_doc(self.zones.store.records(), 1))
 
     def tearDown(self):
         self.db.close()
@@ -44,20 +53,44 @@ class ZoneRegistryTests(unittest.TestCase):
     def frames(self):
         return [(m['mac'], bytes.fromhex(m['hex'])) for m in self.sent]
 
-    def test_version_bumps_only_on_content_change(self):
-        p1 = self.zones.store.publish()
+    def test_cached_web_publication(self):
+        store = self.zones.store
+        p1 = store.current()
         self.assertEqual((p1.version, p1.count), (1, 32))
-        self.assertEqual(self.zones.store.publish().version, 1)
+        self.assertFalse(store.local_differs())
+        self.assertTrue(store.published()['universal'])
         self.db.reserve('02:00:00:00:00:99')
-        self.assertEqual(self.zones.store.publish().version, 1)  # no UID yet: not a zone mapping
-        row = self.db.get('02:00:00:00:00:99')
-        self.db.prepare(row['mac'], '04:0A:0B:0C')
-        self.db.result(row['mac'], True, 'ack')
-        p2 = self.zones.store.publish()
-        self.assertEqual((p2.version, p2.count), (2, 33))
-        self.assertEqual(self.zones.store.published()['crc'], p2.crc)
-        self.db.set_role(row['mac'], 'excluded')
-        self.assertEqual(self.zones.store.publish().count, 32)
+        self.assertFalse(store.local_differs())  # no UID yet: not a zone mapping
+        self.db.prepare('02:00:00:00:00:99', '04:0A:0B:0C')
+        self.db.result('02:00:00:00:00:99', True, 'ack')
+        self.assertTrue(store.local_differs())
+        self.assertEqual(store.current().version, 1)  # nothing is allocated locally
+        self.assertTrue(store.cache(web_doc(store.records(), 2)))
+        self.assertEqual((store.current().version, store.current().count), (2, 33))
+        self.assertFalse(store.cache(web_doc(store.records()[:5], 1)))  # never goes back
+        self.assertFalse(store.cache(web_doc(store.records(), 2)))  # already cached
+        bad = dict(web_doc(store.records(), 3), crc=1)
+        with self.assertRaises(ValueError):
+            store.cache(bad)
+        self.assertEqual(store.current().version, 2)
+
+    def test_legacy_local_publication_until_first_web_publish(self):
+        with self.db.conn:
+            self.db.conn.execute("DELETE FROM metadata WHERE key LIKE 'zone_db_%'")
+        store = self.zones.store
+        with self.assertRaises(ValueError):
+            store.current()
+        records = store.records()
+        p = zonedb.Publication(7, records)
+        with self.db.conn:
+            for key, value in [('zone_db_version', 7), ('zone_db_hash', zonedb.content_hash(records)),
+                               ('zone_db_count', p.count), ('zone_db_crc', p.crc)]:
+                self.db.conn.execute('INSERT INTO metadata VALUES (?,?)', (key, str(value)))
+        self.assertEqual(store.current().version, 7)
+        self.assertFalse(store.cache(web_doc(records, 3)))  # web must be lifted above v7 by publishing
+        self.db.set_role(self.db.rows()[0]['mac'], 'excluded')
+        with self.assertRaises(ValueError):
+            store.current()
 
     def test_requires_zone_capable_station(self):
         with self.assertRaises(ValueError):
@@ -106,6 +139,8 @@ class ZoneRegistryTests(unittest.TestCase):
         self.assertEqual(self.zones.expected, set())
         self.zones.event(dict(event='zone_frame', mac=ZONE2, hex=status_hex(0, 0)))
         self.assertEqual(self.zones.expected, {ZONE2})
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(5, 0)))
+        self.assertEqual(self.zones.expected, {ZONE2})  # a zone ahead of this version never joins
         self.run_ticks(1, busy=True)
         self.run_ticks(1, busy=True)
         publish_frames = [f for _, f in self.frames() if zonedb.frame_kind(f) in (zonedb.DB_ANNOUNCE, zonedb.DB_CHUNK)]
@@ -150,6 +185,77 @@ class ZoneRegistryTests(unittest.TestCase):
         self.zones.request_log(ZONE)
         kinds = [(mac, zonedb.frame_kind(f)) for mac, f in self.frames()]
         self.assertEqual(kinds, [(ZONE, zonedb.ZONE_IDENTIFY), (ZONE, zonedb.ZONE_REBOOT), (ZONE, zonedb.ZONE_QUERY)])
+
+    def test_classification_and_in_range(self):
+        p = self.zones.store.current()
+        for mac, version, crc in [(ZONE, p.version, p.crc), (ZONE2, 0, 0), ('14:63:93:C0:EC:16', p.version, 123),
+                                  ('14:63:93:C0:EC:17', p.version + 4, 9)]:
+            self.zones.event(dict(event='zone_frame', mac=mac, hex=status_hex(version, crc)))
+        self.zones.event(dict(event='zone_frame', mac='14:63:93:C0:EC:18', hex=status_hex(0, 0, staging=(p.version, 1, 3))))
+        states = {z['mac']: z['state'] for z in self.zones.zone_rows()}
+        self.assertEqual(states, {ZONE: 'current', ZONE2: 'behind', '14:63:93:C0:EC:16': 'ahead',
+                                  '14:63:93:C0:EC:17': 'ahead', '14:63:93:C0:EC:18': 'updating'})
+        self.assertTrue(all(z['in_range'] for z in self.zones.zone_rows()))
+        self.wall += ZoneRegistry.IN_RANGE + 1
+        self.assertFalse(any(z['in_range'] for z in self.zones.zone_rows()))
+        self.assertEqual(self.zones.store.highest_seen(), p.version + 4)
+
+    def test_auto_refresh_interval(self):
+        self.zones.tick(True, STATION)
+        self.ack_all()
+        self.now += ZoneRegistry.AUTO_QUERY_INTERVAL
+        self.zones.tick(True, STATION)
+        self.assertEqual(len(self.sent), 1)  # manual mode: every 30 s
+        self.zones.set_auto_refresh(True)
+        self.zones.tick(True, STATION)
+        self.ack_all()
+        self.now += ZoneRegistry.AUTO_QUERY_INTERVAL
+        self.zones.tick(True, STATION)
+        self.assertEqual([zonedb.frame_kind(f) for _, f in self.frames()], [zonedb.ZONE_QUERY] * 3)
+
+    def test_update_selected_zone_is_unicast_and_never_forced(self):
+        p = self.zones.update(ZONE)
+        self.run_ticks(5)
+        mac, announce = self.frames()[0]
+        self.assertEqual((mac, zonedb.ANNOUNCE.unpack(announce)[7]), (ZONE, 0))
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(p.version, p.crc)))
+        self.zones.tick(True, STATION)
+        self.assertIsNone(self.zones.publication)
+
+    def test_walkaround_updates_behind_zones_in_range_only(self):
+        p = self.zones.store.current()
+        far, ahead = '14:63:93:C0:EC:16', '14:63:93:C0:EC:17'
+        self.zones.event(dict(event='zone_frame', mac=far, hex=status_hex(0, 0)))
+        self.wall += ZoneRegistry.IN_RANGE + 1  # `far` walked out of range
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(0, 0)))
+        self.zones.event(dict(event='zone_frame', mac=ZONE2, hex=status_hex(p.version, p.crc)))
+        self.zones.event(dict(event='zone_frame', mac=ahead, hex=status_hex(p.version + 3, 1)))
+        self.zones.set_walkaround(True)
+        self.zones.tick(True, STATION)
+        self.assertEqual(self.zones.expected, {ZONE})
+        self.assertTrue(self.zones.walk_run)
+        self.run_ticks(6)
+        self.assertEqual(self.frames()[0][0], BROADCAST)
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(p.version, p.crc)))
+        self.run_ticks(1)
+        self.assertIsNone(self.zones.publication)
+        self.assertIn('confirmed on 1 zone', self.zones.message)
+        # A zone that does not confirm is backed off rather than hammered.
+        self.zones.event(dict(event='zone_frame', mac=far, hex=status_hex(0, 0)))
+        self.run_ticks(1)
+        self.assertEqual(self.zones.expected, {far})
+        self.now += ZoneRegistry.WALK_TIMEOUT + 1
+        self.zones.event(dict(event='zone_frame', mac=far, hex=status_hex(0, 0)))
+        self.run_ticks(1)
+        self.assertIn('timed out', self.zones.message)
+        self.run_ticks(1)
+        self.assertIsNone(self.zones.publication)
+        self.now += ZoneRegistry.WALK_BACKOFF + 1
+        self.zones.event(dict(event='zone_frame', mac=far, hex=status_hex(0, 0)))
+        self.run_ticks(1)
+        self.assertEqual(self.zones.expected, {far})
+        self.zones.set_walkaround(False)
+        self.assertIsNone(self.zones.publication)
 
     def test_log_and_errors(self):
         entry = zonedb.LOG_ENTRY.pack(7, bytes.fromhex('0460354AB62191'), 1, 1, 3)

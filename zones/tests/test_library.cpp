@@ -304,6 +304,38 @@ static void testUpdates() {
   assert(!link.handleSerialCommand("nope"));
 }
 
+// What the Zone Database Manager sends (unchanged zone firmware): a non-forced UNICAST announce
+// ("Update selected") or broadcast announce (walkaround), then broadcast chunks, at a web-allocated
+// version far above a legacy per-computer counter.
+static void testUniversalVersionUpdate() {
+  for (bool unicast : {true, false}) {
+    load("zdb_a", SLOT_V1);
+    wipe("zdb_b");
+    load("zcfg", CONFIG_POINT2);
+    PartitionStorage a("zdb_a"), b("zdb_b"), cfgStorage("zcfg");
+    ZoneConfig cfg;
+    bool cfgOk = loadConfig(cfgStorage, cfg);
+    ZoneDb db;
+    db.begin(&a, &b);
+    ZoneLink link;
+    radioChannel = 2;
+    assert(link.begin(db, cfg, cfgOk, "test-fw", 8, true));
+    deliver(link, UNIVERSAL_ANNOUNCE, !unicast);
+    link.poll();
+    assert(link.stagingActive() && link.stagingVersion() == 100000);
+    for (auto &chunk : UNIVERSAL_CHUNKS) deliver(link, chunk);
+    link.poll();
+    assert(!link.stagingActive() && db.version() == 100000 && db.count() == UNIVERSAL_COUNT && db.crc() == UNIVERSAL_CRC);
+    repliesAfter(link);
+    ZoneStatus s = lastStatus();
+    assert(s.dbVersion == 100000 && s.dbCrc == UNIVERSAL_CRC);
+    // A lower (legacy) version afterwards is ignored.
+    deliver(link, V2_ANNOUNCE);
+    link.poll();
+    assert(!link.stagingActive() && db.version() == 100000);
+  }
+}
+
 static void testPeers() {
   espPeers.clear();
   ZoneDb db;
@@ -331,6 +363,7 @@ int main() {
   testProtocol();
   testStorage();
   testUpdates();
+  testUniversalVersionUpdate();
   testPeers();
-  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), log, identify, reboot, peers");
+  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), universal versions, log, identify, reboot, peers");
 }

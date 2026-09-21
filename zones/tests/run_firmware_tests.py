@@ -65,6 +65,8 @@ def fixtures():
     text += frames('V2', zonedb.Publication(2, v2))
     text += frames('V3SMALL', zonedb.Publication(3, v2, per_chunk=5))
     text += frames('ROLLBACK', zonedb.Publication(1, rollback))
+    # Zone DB Manager: a web-allocated universal version far above a legacy local counter.
+    text += frames('UNIVERSAL', zonedb.Publication(100000, v2))
     text += array('FRAME_QUERY_STATUS', zonedb.query_frame(zonedb.QUERY_STATUS, 0xABCDEF01))
     text += array('FRAME_QUERY_LOG', zonedb.query_frame(zonedb.QUERY_LOG, 7))
     text += array('IDENTIFY_5', zonedb.identify_frame(5))

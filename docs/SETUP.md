@@ -86,6 +86,7 @@ If inventory sync reports conflicts, follow section 4 instead of deleting the DB
 | Cube USB flasher | `pairing_station/.venv/bin/python flashing_station/app.py` |
 | Cube flasher simulation | `pairing_station/.venv/bin/python flashing_station/app.py --simulate` |
 | Zone flasher | `pairing_station/.venv/bin/python zones/flasher/app.py` |
+| Zone Database Manager | `pairing_station/.venv/bin/python zones/dbmanager/app.py` |
 | Pool calibration | `pairing_station/.venv/bin/python zones/calibration/app.py` |
 | Pool light test | `pairing_station/.venv/bin/python poolzone_test/app.py` |
 

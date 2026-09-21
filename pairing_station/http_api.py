@@ -15,7 +15,7 @@ from pathlib import Path
 class AppAPI:
     def __init__(self, app, directory, port=8765):
         self.app = app
-        self.namespace = dict(app=app, controller=app.controller, db=app.db, root=app.root, zones=getattr(app, 'zones', None))
+        self.namespace = dict(app=app, controller=app.controller, db=app.db, root=app.root)
         self.owner = threading.get_ident()
         self.pending = queue.Queue(maxsize=32)
         self.jobs = {}
@@ -117,8 +117,7 @@ class AppAPI:
                     active=c.active, message=c.message, tag_present=c.tag_present,
                     discovered=c.discovered, devices=self.app.db.rows(),
                     roles=self.app.db.roles(), telemetry=c.telemetry, station=c.station, feedback=c.feedback,
-                    recent_events=list(self.app.recent_events), logs=list(self.app.recent_logs),
-                    zones=self.app.zones.snapshot() if getattr(self.app, 'zones', None) else None)
+                    recent_events=list(self.app.recent_events), logs=list(self.app.recent_logs))
 
     def drain(self):
         assert threading.get_ident() == self.owner, 'Execute only on the app thread'

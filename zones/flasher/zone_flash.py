@@ -95,7 +95,7 @@ class ZoneFlasher:
             if not port.get('candidate'):
                 raise RuntimeError('This USB device is not a flashable ESP32 (or is the protected pairing station)')
             store = ZoneStore(db)
-            publication = store.publish()
+            publication = store.current()  # the web-published database; versions are never allocated here
             slot = zonedb.slot_image(publication.records, publication.version)
             record.update(db_version=publication.version, db_count=publication.count, db_crc=publication.crc)
             (folder / 'zcfg.bin').write_bytes(config)

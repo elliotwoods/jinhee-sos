@@ -87,3 +87,13 @@ class WebClient:
         return self.request('POST', '/api/inventory/push', {
             'dataset': self.dataset, 'records': records,
             'base_revisions': base_revisions, 'client': name})
+
+    def zonedb_pull(self):
+        """The published zone database: {version, hash, count, crc, records_b64, published_at, published_by, ...}."""
+        return self.request('GET', f'/api/zonedb?dataset={quote(self.dataset)}')
+
+    def zonedb_publish(self, records_b64, min_version, inventory_revision, name):
+        """The server allocates the next universal version (or returns the current one for identical content)."""
+        return self.request('POST', '/api/zonedb/publish', {
+            'dataset': self.dataset, 'records_b64': records_b64, 'min_version': min_version,
+            'inventory_revision': inventory_revision, 'client': name})

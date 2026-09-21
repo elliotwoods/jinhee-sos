@@ -1,4 +1,5 @@
 """Zone flasher pipeline with a fake esptool (mirrors flashing_station/tests/test_flasher.py)."""
+import base64
 import sys
 import tempfile
 import unittest
@@ -24,7 +25,9 @@ class ZoneFlasherTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db_path = self.root / 'devices.sqlite3'
-        Database(self.db_path).close()
+        db = Database(self.db_path)
+        self.publish_web(db)
+        db.close()
         self.build = self.root / 'build'
         self.build.mkdir()
         (self.build / 'app.bin').write_bytes(b'firmware')
@@ -37,6 +40,15 @@ class ZoneFlasherTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    @staticmethod
+    def publish_web(db, version=1):
+        """Cache a web publication of the current mappings (versions come from the web, never locally)."""
+        store = ZoneStore(db)
+        records = store.records()
+        p = zonedb.Publication(version, records)
+        store.cache(dict(version=version, hash=zonedb.content_hash(records), count=p.count, crc=p.crc,
+                         records_b64=base64.b64encode(p.body).decode(), published_at='', published_by='test'))
 
     def fake_tool(self, args, timeout=90):
         args = [str(a) for a in args]
@@ -59,7 +71,7 @@ class ZoneFlasherTests(unittest.TestCase):
 
     def boot(self, port, runner):
         db = Database(self.db_path)
-        publication = ZoneStore(db).publish()
+        publication = ZoneStore(db).current()
         db.close()
         if self.report is None:
             return None
@@ -102,6 +114,16 @@ class ZoneFlasherTests(unittest.TestCase):
         self.calls.clear()
         self.assertEqual(self.execute()['result'], 'success')
         self.assertFalse(any('0x400000' in c for c in self.calls))  # backup kept, not repeated
+
+    def test_refuses_without_a_published_database(self):
+        db = Database(self.db_path)
+        with db.conn:
+            db.conn.execute("DELETE FROM metadata WHERE key LIKE 'zone_db_%'")
+        db.close()
+        record = self.execute()
+        self.assertEqual(record['result'], 'failed')
+        self.assertIn('Zone Database Manager', record['detail'])
+        self.assertFalse(any('write-flash' in c for c in self.calls))
 
     def test_refuses_registered_cube_and_bad_input(self):
         db = Database(self.db_path)

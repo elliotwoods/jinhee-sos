@@ -67,3 +67,17 @@ vercel deploy --prod --scope kimchiandchips
 Point desktop tools at a local server with `--server http://localhost:3100`, and use
 `--dataset <name>` for throwaway test data (delete it afterwards with
 `vercel blob del inventory/<name>.json`).
+
+## Zone database
+
+`zonedb/<dataset>.json` holds the published zone database: `{version, hash, count, crc, records_b64,
+published_at, published_by, inventory_revision}`. Writes use the same ETag compare-and-swap as the inventory.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/zonedb?dataset=` | The current publication (version 0 = nothing published) |
+| `POST /api/zonedb/publish` | `{dataset, records_b64, min_version, inventory_revision, client}`. The packed records are validated as the zone firmware would (`src/lib/zonedb.ts`). Identical content returns the current document; otherwise the version becomes `max(current, min_version) + 1`. The version never goes down |
+
+Zones accept only a higher version, so this server is the only place versions are allocated
+(see `pairing_station/zone_publish.py` and `zones/README.md`). `src/lib/zonedb.ts` mirrors
+`zones/tools/zonedb.py` and the NctZone `validRecords()`; change them together.

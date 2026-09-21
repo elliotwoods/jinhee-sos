@@ -20,6 +20,7 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
 | Preshow media bridge | `zones/firmware/PreshowBridge/` | Receives `PreshowEvent` from the four preshow plates, acknowledges each one, writes `PRESHOW,<n>,ON|OFF` to the TouchDesigner Serial DAT. Not a zone board |
 | Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
+| Zone Database Manager | `zones/dbmanager/app.py` | Wireless zone discovery/version view, targeted and walkaround database updates over an ESP-NOW dongle (pairing-station firmware), dongle flashing, web publish/pull |
 | Web inventory | `web/` (Next.js on Vercel), `inventory_web/app.py`, `scripts/web_sync.py` | Shared web copy of device records (one private Vercel Blob document, shared password), desktop sync app |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
 | Pool light diagnostics | `poolzone_test/` | USB bridge emulating all six pool radios on the current protocol, light-test GUI. The central test firmware moved to `zones/firmware/PoolCentral/` |
@@ -70,7 +71,10 @@ system interpreter. Python 3.14 with Tk is the tested Mac configuration.
 - `web_client.py`, `web_sync.py`, `web_status.py`: stdlib client for `web/`, web
   three-way sync (own baseline), and the background read-only status line the apps
   show. Status must never block, raise into, or write from a host app.
-- `zone_registry.py`, `zones_window.py`: zone discovery and publication from the GUI.
+- `zone_registry.py`: zone discovery, classification and database distribution (used by the Zone
+  Database Manager); `zone_publish.py`: web-allocated zone database versions. Zone database versions
+  are universal and only increase: never allocate one locally. `web/src/lib/zonedb.ts` mirrors
+  `zonedb.py` record validation; change them together.
 
 Do not access Tk widgets or the SQLite connection from a worker thread. Workers
 report through queues; the Tk poll callback consumes events. Do not block that

@@ -1,11 +1,12 @@
-"""Construct the real Tk windows (pairing app Zones window, zone flasher) against temporary databases."""
+"""Construct the real Tk windows (Zone Database Manager, pairing app, zone flasher) against temporary databases."""
+import base64
 import sys
 import importlib.util
 import tempfile
 import tkinter as tk
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'flasher'))
@@ -23,6 +24,7 @@ def load(name, path):
 
 pairing_app = load('pairing_app', ROOT.parent / 'pairing_station/app.py')
 flasher_app = load('flasher_app', ROOT / 'flasher/app.py')
+manager_app = load('manager_app', ROOT / 'dbmanager/app.py')
 
 STATION = dict(zones=1, channel=2, mac='3C:0F:02:AD:83:24')
 
@@ -37,36 +39,87 @@ class UiSmokeTests(unittest.TestCase):
         self.root.destroy()
         self.tmp.cleanup()
 
-    def test_pairing_app_zones_window(self):
+    def test_pairing_app_launches_manager(self):
         app = pairing_app.App(self.root, Path(self.tmp.name) / 'devices.sqlite3', api_port=0)
         try:
-            sent = []
-            app.zones.send = sent.append
-            app.controller.connected = True
-            app.controller.station = STATION
-            app.open_zones()
-            status = zonedb.STATUS.pack(b'NZ', 1, zonedb.ZONE_STATUS, 0, 1, 1, b'Preshow 1'.ljust(16, b'\0'),
-                                        b'preshow-2.0.0'.ljust(16, b'\0'), 0, 0, 0, 0, 0, 0, 5, 1, 1, 0, 3, 2, 1, 0)
-            self.assertTrue(app.zones.event(dict(event='zone_frame', mac='14:63:93:C0:EC:14', hex=status.hex())))
-            window = app.zones_window
-            window.render()
-            self.assertEqual(window.tree.get_children(), ('14:63:93:C0:EC:14',))
-            self.assertIn('NFC reader not found', window.tree.item('14:63:93:C0:EC:14', 'values'))
-            window.tree.selection_set('14:63:93:C0:EC:14')
-            window.render()
-            self.assertIn('Show log', window.detail.get('1.0', 'end'))
-            buttons = {b['text']: b for b in window.window.winfo_children()[0].winfo_children()[2].winfo_children()}
-            buttons['Publish database'].invoke()
-            self.assertEqual(app.zones.publication.version, 1)
-            buttons['Identify (10 s)'].invoke()
-            self.assertEqual(bytes.fromhex(sent[-1]['hex'])[3], zonedb.ZONE_IDENTIFY)
-            app.zones.tick(True, STATION)
-            self.assertTrue(any(bytes.fromhex(m['hex'])[3] == zonedb.DB_ANNOUNCE for m in sent))
-            window.close()
-            self.assertIsNone(app.zones_window)
+            self.assertFalse(hasattr(app, 'zones'))
+            with patch.object(pairing_app.subprocess, 'Popen') as popen:
+                app.open_zones()
+            args = popen.call_args[0][0]
+            self.assertTrue(args[1].endswith('zones/dbmanager/app.py'))
+            self.assertEqual(args[2:], ['--database', str(app.db.path)])
         finally:
             app.closing = True
             app.transport.close()
+            app.db.close()
+
+    def status(self, version, crc, name='Preshow 1', count=32):
+        return zonedb.STATUS.pack(b'NZ', 1, zonedb.ZONE_STATUS, 0, 1, 1, name.encode().ljust(16, b'\0'),
+                                  b'preshow-2.0.0'.ljust(16, b'\0'), version, count, crc, 0, 0, 0, 5, 1, 1, 0, 0, 2, 1, 0).hex()
+
+    def test_zone_database_manager(self):
+        dongle_port = dict(port='/dev/cu.dongle', key='d', description='USB JTAG', candidate=True, serial='AA:BB:CC:00:11:22')
+        with patch.object(manager_app.dongle, 'ports', return_value=[dongle_port]), \
+                patch.object(manager_app, 'WebStatus', MagicMock()):
+            app = manager_app.App(self.root, Path(self.tmp.name) / 'devices.sqlite3')
+        try:
+            store = app.zones.store
+            records = store.records()
+            p = zonedb.Publication(3, records)
+            store.cache(dict(version=3, hash=zonedb.content_hash(records), count=p.count, crc=p.crc,
+                             records_b64=base64.b64encode(p.body).decode(), published_at='now', published_by='laptop'))
+            self.assertEqual(app.selected_port()['port'], '/dev/cu.dongle')
+            sent = []
+            app.zones.send = sent.append
+            app.send = sent.append
+            app.transport.port = MagicMock()
+            app.opened_at = app.last_rx = manager_app.time.monotonic()
+            # Wrong firmware: hello without zone support is not a usable dongle.
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, mac='AA:BB:CC:00:11:22',
+                                         firmware='nct-pairing-1.5'))
+            app.poll()
+            self.assertFalse(app.connected)
+            self.assertIn('no zone relay', app.radio_status['text'])
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, mac='AA:BB:CC:00:11:22',
+                                         firmware='nct-pairing-1.6-zones', nfc_ok=False))
+            app.poll()
+            self.assertTrue(app.connected)
+            self.assertTrue(any(m.get('cmd') == 'zone_send' and bytes.fromhex(m['hex'])[3] == zonedb.ZONE_QUERY for m in sent))
+            zone, current = '14:63:93:C0:EC:14', '14:63:93:C0:EC:15'
+            app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(2, 0x1234)))
+            app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=self.status(3, p.crc, 'Desert 1', p.count)))
+            app.poll()
+            app.render(force=True)
+            self.assertEqual(set(app.tree.get_children()), {zone, current})
+            self.assertIn('out of date', app.tree.item(zone, 'values')[5])
+            self.assertIn('1 out of date', app.summary['text'])
+            self.assertIn('Published v3', app.published_label['text'])
+            app.tree.selection_set(current)
+            with patch.object(manager_app.messagebox, 'showerror') as error:
+                app.update_button.invoke()
+            self.assertIn('already has database v3', error.call_args[0][1])
+            app.tree.selection_set(zone)
+            app.update_button.invoke()
+            self.assertEqual(app.zones.publish_target, zone)
+            app.poll()
+            announce = next(m for m in sent if m.get('cmd') == 'zone_send' and bytes.fromhex(m['hex'])[3] == zonedb.DB_ANNOUNCE)
+            self.assertEqual(announce['mac'], zone)
+            app.transport.inbox.put(dict(event='zone_frame', mac=zone, hex=self.status(3, p.crc, count=p.count)))
+            for _ in range(8):  # announce + 3 chunks, one relay in flight at a time
+                for m in [m for m in sent if m.get('cmd') == 'zone_send']:
+                    app.transport.inbox.put(dict(event='zone_sent', id=m['id'], status='delivered'))
+                app.poll()
+            self.assertIsNone(app.zones.publication)
+            self.assertIn('confirmed', app.status.get())
+            # Walkaround needs a published database and turns auto-refresh on.
+            app.auto_var.set(False); app.toggle_auto()
+            app.walk_var.set(True); app.walk_check.invoke(); app.walk_check.invoke()
+            self.assertTrue(app.zones.walkaround and app.zones.auto_refresh and app.auto_var.get())
+            app.stop_button.invoke()
+            self.assertFalse(app.zones.walkaround or app.walk_var.get())
+        finally:
+            app.closing = True
+            app.transport.port = None
             app.db.close()
 
     def test_zone_flasher_window(self):

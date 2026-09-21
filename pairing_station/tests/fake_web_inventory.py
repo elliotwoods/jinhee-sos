@@ -1,8 +1,11 @@
 """Loopback stand-in for the web inventory API (web/), mirroring its push semantics."""
+import base64
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 from urllib.parse import parse_qs, urlparse
+import zlib
 
 
 class FakeWebInventory:
@@ -12,6 +15,9 @@ class FakeWebInventory:
         self.password = 'test-password'
         self.offline = False
         self.before_push = None  # hook to simulate a concurrent writer
+        self.zonedb = dict(version=0, hash='', count=0, crc=0, records_b64='', published_at=None, published_by='',
+                           inventory_revision=0)
+        self.zonedb_missing = False  # simulate a server deployed before /api/zonedb existed
         self.lock = threading.Lock()
         owner = self
 
@@ -47,6 +53,8 @@ class FakeWebInventory:
                         self.reply(200, {'revision': owner.revision, 'count': len(owner.records)})
                     elif url.path == '/api/inventory':
                         self.reply(200, {'revision': owner.revision, 'records': json.loads(json.dumps(owner.records))})
+                    elif url.path == '/api/zonedb' and not owner.zonedb_missing:
+                        self.reply(200, dict(owner.zonedb))
                     else:
                         self.reply(404, {'error': 'not found'})
 
@@ -68,6 +76,20 @@ class FakeWebInventory:
                         for mac, record in body['records'].items():
                             owner.records[mac] = {'record': record, 'revision': owner.revision}
                         return self.reply(200, {'revision': owner.revision})
+                if path == '/api/zonedb/publish' and not owner.zonedb_missing:
+                    body_bytes = base64.b64decode(body['records_b64'])
+                    if not body_bytes or len(body_bytes) % 18:
+                        return self.reply(400, {'error': 'Invalid zone database'})
+                    digest = hashlib.sha256(body_bytes).hexdigest()
+                    with owner.lock:
+                        doc = owner.zonedb
+                        if doc['hash'] == digest and doc['version'] >= body['min_version']:
+                            return self.reply(200, dict(doc, changed=False))
+                        owner.zonedb = dict(version=max(doc['version'], body['min_version']) + 1, hash=digest,
+                                            count=len(body_bytes) // 18, crc=zlib.crc32(body_bytes) & 0xFFFFFFFF,
+                                            records_b64=body['records_b64'], published_at='2026-09-21T00:00:00Z',
+                                            published_by=body['client'], inventory_revision=body['inventory_revision'])
+                        return self.reply(200, dict(owner.zonedb, changed=True))
                 self.reply(404, {'error': 'not found'})
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)

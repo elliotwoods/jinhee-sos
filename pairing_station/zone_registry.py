@@ -1,8 +1,12 @@
-"""Zone database publishing and zone monitoring over the pairing station's ESP-NOW relay.
+"""Zone database distribution and zone monitoring over an ESP-NOW relay (pairing-station firmware).
 
 The station firmware only validates and relays frames (`zone_send` / `zone_frame`); every frame is
 built and parsed here with zones/tools/zonedb.py so byte layouts have a single Python definition.
+
+Versions are universal: the web inventory allocates them (zone_publish.py) and this computer caches
+the published image in metadata. Zones accept only a higher version, so nothing here allocates one.
 """
+import base64
 import sys
 import time
 import uuid
@@ -43,27 +47,70 @@ class ZoneStore:
     def published(self):
         return dict(version=int(self._meta('zone_db_version', 0)), hash=self._meta('zone_db_hash', ''),
                     count=int(self._meta('zone_db_count', 0)), crc=int(self._meta('zone_db_crc', 0)),
-                    published_at=self._meta('zone_db_published_at', ''))
+                    published_at=self._meta('zone_db_published_at', ''), published_by=self._meta('zone_db_published_by', ''),
+                    universal=self._meta('zone_db_records') is not None)
 
     def records(self):
+        """Committed mappings on this computer (what the next publication would contain)."""
         rows = [r for r in self.db.rows() if not self.db.excluded(r['mac'])]
         return zonedb.records_from_rows(rows)
 
-    def publish(self):
-        """Returns a Publication of the current mappings, bumping the version only when content changed."""
+    def current(self):
+        """The published database as a Publication, from the cached web copy.
+
+        Before the first web publication, a legacy local publication is still usable when this
+        computer's mappings still match its hash. Raises ValueError when nothing is available.
+        """
+        cached = self._meta('zone_db_records')
+        published = self.published()
+        if cached is not None:
+            records = zonedb.unpack_records(base64.b64decode(cached))
+        elif published['version'] and published['hash']:
+            records = self.records()
+            if zonedb.content_hash(records) != published['hash']:
+                raise ValueError(f'Local mappings changed since database v{published["version"]}; '
+                                 'publish a new version in the Zone Database Manager')
+        else:
+            raise ValueError('No zone database published yet; publish one in the Zone Database Manager')
+        publication = zonedb.Publication(published['version'], records)
+        if publication.crc != published['crc'] or publication.count != published['count']:
+            raise ValueError('Cached zone database is inconsistent; pull it again from the web')
+        return publication
+
+    def local_differs(self):
+        """True when this computer's mappings differ from the published database."""
+        try:
+            return zonedb.content_hash(self.records()) != self.published()['hash']
+        except ValueError:
+            return True
+
+    def cache(self, doc):
+        """Store a web zone-database document (see web/src/lib/zonedb.ts) as the published database."""
+        body = base64.b64decode(doc['records_b64'])
+        records = zonedb.unpack_records(body)
+        publication = zonedb.Publication(int(doc['version']), records)
+        if (publication.count, publication.crc, zonedb.content_hash(records)) != (doc['count'], doc['crc'], doc['hash']):
+            raise ValueError('Web zone database failed verification')
         with self.conn:
             self.conn.execute('BEGIN IMMEDIATE')
-            records = self.records()
-            digest = zonedb.content_hash(records)
-            version = int(self._meta('zone_db_version', 0))
-            if digest != self._meta('zone_db_hash'):
-                version += 1
-                publication = zonedb.Publication(version, records)
-                for key, value in [('zone_db_version', version), ('zone_db_hash', digest), ('zone_db_count', len(records)),
-                                   ('zone_db_crc', publication.crc), ('zone_db_published_at', _now_iso())]:
-                    self.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (key, str(value)))
-                self.db.event(None, 'zone_db_published', f'version {version}: {len(records)} records')
-        return zonedb.Publication(version, records)
+            if int(self._meta('zone_db_version', 0)) >= publication.version and self._meta('zone_db_hash') == doc['hash'] \
+                    and self._meta('zone_db_records') is not None:
+                return False  # already cached
+            if int(self._meta('zone_db_version', 0)) > publication.version:
+                return False  # never go back (also above a legacy local counter: publish to lift the web version)
+            for key, value in [('zone_db_version', publication.version), ('zone_db_hash', doc['hash']),
+                               ('zone_db_count', publication.count), ('zone_db_crc', publication.crc),
+                               ('zone_db_published_at', doc.get('published_at') or ''),
+                               ('zone_db_published_by', doc.get('published_by') or ''),
+                               ('zone_db_records', base64.b64encode(body).decode())]:
+                self.conn.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (key, str(value)))
+            self.db.event(None, 'zone_db_cached', f'version {publication.version}: {publication.count} records')
+        return True
+
+    def highest_seen(self):
+        """Highest database version any known zone has reported."""
+        row = self.conn.execute('SELECT MAX(db_version) FROM zones').fetchone()
+        return int(row[0] or 0)
 
     def seen(self, mac, status, source='radio'):
         values = [status.get(c) for c in ZONE_COLUMNS]
@@ -85,20 +132,29 @@ class ZoneStore:
 
 class ZoneRegistry:
     QUERY_INTERVAL = 30
+    AUTO_QUERY_INTERVAL = 3
+    IN_RANGE = 20  # seconds since a zone last answered
     CYCLE_PAUSE = 1.0
     PUBLISH_TIMEOUT = 180
+    WALK_TIMEOUT = 45
+    WALK_BACKOFF = 30
     RECENT_ZONE = 15 * 60
     ACK_TIMEOUT = 1.0  # one relay command at a time: bursts overrun the station's USB serial buffer
 
-    def __init__(self, db, send, log=print, clock=time.monotonic, wall=time.time):
+    def __init__(self, db, send, log=print, clock=time.monotonic, wall=time.time, auto_refresh=False):
         self.store = ZoneStore(db, wall)
         self.send, self.log, self.clock, self.wall = send, log, clock, wall
+        self.auto_refresh = auto_refresh
+        self.walkaround = False
+        self.backoff = {}  # mac -> clock time before walkaround retries it
         self.requests = {}
         self.logs = {}
         self.publication = None
         self.publish_target = None
         self.publish_force = False
         self.publish_started = 0
+        self.publish_timeout = self.PUBLISH_TIMEOUT
+        self.walk_run = False
         self.expected = set()
         self.queue = []
         self.next_cycle = 0
@@ -124,30 +180,50 @@ class ZoneRegistry:
         if station.get('zones') != zonedb.PROTO:
             raise ValueError('Station firmware has no zone support; reflash the pairing station (nct-pairing-1.6-zones)')
 
-    def publish(self, target=None, force=False):
-        """Broadcast the current database until every recently seen zone (or `target`) has it."""
+    def publish(self, target=None, force=False, expected=None, timeout=None):
+        """Broadcast the published database until the expected zones confirm it.
+
+        Expected zones: `target` alone, the given set, or every zone seen in the last 15 minutes.
+        """
         if force and not target:
             raise ValueError('Forced (rollback) publishing must target a single zone')
-        self.publication = self.store.publish()
+        self.publication = self.store.current()
         self.publish_target, self.publish_force = target, force
         self.publish_started = self.clock()
+        self.publish_timeout = timeout or self.PUBLISH_TIMEOUT
+        self.walk_run = False
         cutoff = self.wall() - self.RECENT_ZONE
-        self.expected = ({target} if target else
+        self.expected = ({target} if target else set(expected) if expected is not None else
                          {z['mac'] for z in self.store.zones() if (z['last_seen_epoch'] or 0) >= cutoff})
         self.queue, self.next_cycle, self.cycles, self.send_failures = [], 0, 0, 0
         p = self.publication
         self.message = f'Publishing database v{p.version} ({p.count} records, {p.chunk_count} chunks)'
-        self.log(self.message + (f' to {target}' if target else f'; waiting for {len(self.expected)} known zone(s)'))
+        self.log(self.message + (f' to {target}' if target else f'; waiting for {len(self.expected)} zone(s)'))
         return p
+
+    def set_auto_refresh(self, enabled):
+        self.auto_refresh = bool(enabled)
+        self.next_query = 0  # apply the new interval now
+
+    def set_walkaround(self, enabled):
+        self.walkaround = bool(enabled)
+        self.backoff.clear()
+        self.next_query = 0
+        if not enabled and self.walk_run:
+            self.stop('Walkaround stopped')
+
+    def update(self, mac):
+        """Update one zone (unicast announce; never forced, so a zone never goes back a version)."""
+        return self.publish(target=mac, timeout=self.WALK_TIMEOUT)
 
     def stop(self, reason='Publishing stopped'):
         if self.publication:
             self.message = reason
             self.log(reason)
-        self.publication, self.queue, self.expected = None, [], set()
+        self.publication, self.queue, self.expected, self.walk_run = None, [], set(), False
 
     def query(self, what=zonedb.QUERY_STATUS, mac=BROADCAST):
-        self.next_query = self.clock() + self.QUERY_INTERVAL
+        self.next_query = self.clock() + (self.AUTO_QUERY_INTERVAL if self.auto_refresh or self.walkaround else self.QUERY_INTERVAL)
         return self._emit(mac, zonedb.query_frame(what, int(self.wall()) & 0xFFFFFFFF), 'query')
 
     def request_log(self, mac):
@@ -160,6 +236,19 @@ class ZoneRegistry:
         return self._emit(mac, zonedb.reboot_frame(), 'reboot')
 
     # ---- progress ----
+    def classify(self, zone, published):
+        """current / behind / ahead / updating / unpublished. `ahead` covers a higher version or the same
+        version with different content (a legacy per-computer counter); only a new publication fixes it."""
+        if not published['version']:
+            return 'unpublished'
+        if zone['db_version'] == published['version'] and zone['db_crc'] == published['crc']:
+            return 'current'
+        if zone['staging_version'] == published['version'] and zone['staging_total']:
+            return 'updating'
+        if (zone['db_version'] or 0) < published['version']:
+            return 'behind'
+        return 'ahead'
+
     def zone_rows(self):
         published = self.store.published()
         now = self.wall()
@@ -167,7 +256,9 @@ class ZoneRegistry:
         for z in self.store.zones():
             z = dict(z)
             z['age_s'] = None if z['last_seen_epoch'] is None else max(0, now - z['last_seen_epoch'])
-            z['current'] = bool(published['version']) and z['db_version'] == published['version'] and z['db_crc'] == published['crc']
+            z['in_range'] = z['age_s'] is not None and z['age_s'] <= self.IN_RANGE and z['source'] == 'radio'
+            z['state'] = self.classify(z, published)
+            z['current'] = z['state'] == 'current'
             z['error_text'] = zonedb.ERRORS.get(z['last_error'] or 0, f'error {z["last_error"]}')
             z['zone_label'] = zonedb.ZONE_TYPES.get(z['zone_type'], 'unconfigured' if not z['config_valid'] else str(z['zone_type']))
             z['log'] = self.logs.get(z['mac'])
@@ -176,13 +267,13 @@ class ZoneRegistry:
 
     def snapshot(self):
         return dict(published=self.store.published(), publishing=self.publishing_state(), zones=self.zone_rows(),
-                    message=self.message)
+                    message=self.message, auto_refresh=self.auto_refresh, walkaround=self.walkaround)
 
     def publishing_state(self):
         if not self.publication:
             return None
         pending = sorted(self.expected - self._updated())
-        return dict(version=self.publication.version, target=self.publish_target, force=self.publish_force,
+        return dict(version=self.publication.version, target=self.publish_target, force=self.publish_force, walk=self.walk_run,
                     cycles=self.cycles, expected=sorted(self.expected), pending=pending,
                     elapsed_s=round(self.clock() - self.publish_started, 1), send_failures=self.send_failures)
 
@@ -226,8 +317,13 @@ class ZoneRegistry:
             self.log(f'Zone {status["name"] or mac}: database v{previous["db_version"]} → v{status["db_version"]}')
         if status['last_error'] and (not previous or previous['last_error'] != status['last_error']):
             self.log(f'Zone {status["name"] or mac}: {zonedb.ERRORS.get(status["last_error"], status["last_error"])}')
-        if self.publication and not self.publish_target:
-            self.expected.add(mac)
+        if self.publication and not self.publish_target and status['db_version'] < self.publication.version:
+            self.expected.add(mac)  # a zone that came into range and needs this version joins the run
+
+    def walk_candidates(self):
+        now = self.clock()
+        return sorted(z['mac'] for z in self.zone_rows()
+                      if z['in_range'] and z['state'] == 'behind' and self.backoff.get(z['mac'], 0) <= now)
 
     def tick(self, connected, station, busy=False):
         if not connected or station.get('zones') != zonedb.PROTO:
@@ -239,8 +335,11 @@ class ZoneRegistry:
             p = self.publication
             if self.cycles and self.expected and not (self.expected - self._updated()):
                 self.stop(f'Database v{p.version} confirmed on {len(self.expected)} zone(s)')
-            elif now - self.publish_started > self.PUBLISH_TIMEOUT:
+            elif now - self.publish_started > self.publish_timeout:
                 missing = sorted(self.expected - self._updated())
+                if self.walk_run:
+                    for mac in missing:
+                        self.backoff[mac] = now + self.WALK_BACKOFF
                 self.stop(f'Publishing v{p.version} timed out; not confirmed: {", ".join(missing) or "no zones answered"}')
             else:
                 if not self.queue and now >= self.next_cycle:
@@ -260,5 +359,12 @@ class ZoneRegistry:
                         self.next_cycle = now + self.CYCLE_PAUSE
                 pending = len(self.expected - self._updated())
                 self.message = f'Publishing v{p.version}: cycle {self.cycles + 1}, {pending} zone(s) pending'
+        elif self.walkaround and not self.inflight:
+            candidates = self.walk_candidates()
+            if candidates:
+                # One broadcast run updates every out-of-date zone in range at once.
+                self.publish(expected=candidates, timeout=self.WALK_TIMEOUT)
+                self.walk_run = True
+                self.message = f'Walkaround: updating {len(candidates)} zone(s) to v{self.publication.version}'
         if now >= self.next_query and not self.inflight:
             self.query()

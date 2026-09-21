@@ -1,4 +1,5 @@
 """PoolZone firmware + cube database updates; preserves calibration and zone identity."""
+import base64
 import json
 import re
 import sqlite3
@@ -103,13 +104,15 @@ def status(report, calibration):
 
 
 def local_database(publish=False, path=DEFAULT_DATABASE):
+    """The published zone database (web-allocated version, cached locally). Never allocates a version."""
     path=Path(path)
     if not path.is_file(): raise RuntimeError('Pairing database is missing; refusing to replace cube mappings.')
     if publish:
         db=Database(path,recover_pending=False)
-        try: return ZoneStore(db).publish()
+        try: return ZoneStore(db).current()
+        except ValueError as exc: raise RuntimeError(str(exc)) from None
         finally: db.close()
-    # Read-only preview: checking versions must not publish or modify the master database.
+    # Read-only preview: checking versions must not modify the master database.
     conn=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.3)
     try:
         conn.row_factory=sqlite3.Row
@@ -117,9 +120,13 @@ def local_database(publish=False, path=DEFAULT_DATABASE):
             conn.execute('BEGIN')
             rows=[dict(r) for r in conn.execute("SELECT d.* FROM devices d LEFT JOIN device_roles r ON r.mac=d.mac WHERE COALESCE(r.role,'auto')!='excluded'")]
             meta=dict(conn.execute('SELECT key,value FROM metadata'))
-        records=zonedb.records_from_rows(rows)
         version=int(meta.get('zone_db_version',0))
-        if zonedb.content_hash(records)!=meta.get('zone_db_hash'): version+=1
+        if meta.get('zone_db_records') is not None:
+            records=zonedb.unpack_records(base64.b64decode(meta['zone_db_records']))
+        else:
+            records=zonedb.records_from_rows(rows)
+            if not version or zonedb.content_hash(records)!=meta.get('zone_db_hash'):
+                raise RuntimeError('No current zone database published; publish one in the Zone Database Manager.')
         return zonedb.Publication(version,records)
     finally: conn.close()
 

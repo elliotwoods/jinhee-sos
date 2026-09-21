@@ -6,6 +6,12 @@ export type StoredRecord = { record: unknown; revision: number; updated_at: stri
 export type Change = { revision: number; mac: string; before: unknown; after: unknown; client: string; at: string };
 export type InventoryDoc = { revision: number; records: Record<string, StoredRecord>; changes: Change[] };
 
+/** The zone database image the zones run, with its universal version (see zonedb.ts). */
+export type ZoneDbDoc = {
+  version: number; hash: string; count: number; crc: number; records_b64: string;
+  published_at: string | null; published_by: string; inventory_revision: number;
+};
+
 /** Last contact from one computer/app. Stored per client so it never contends with the inventory. */
 export type Presence = { client: string; action: string; at: string; ip: string };
 
@@ -16,38 +22,61 @@ export interface Store {
   read(dataset: string): Promise<{ doc: InventoryDoc; etag: string | null }>;
   /** etag null = create only (fails if someone created it meanwhile). */
   write(dataset: string, doc: InventoryDoc, etag: string | null): Promise<void>;
+  readZoneDb(dataset: string): Promise<{ doc: ZoneDbDoc; etag: string | null }>;
+  /** Same compare-and-swap contract as write(). */
+  writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null): Promise<void>;
   touch(dataset: string, presence: Presence): Promise<void>;
   presence(dataset: string): Promise<Presence[]>;
 }
 
 export const emptyDoc = (): InventoryDoc => ({ revision: 0, records: {}, changes: [] });
+export const emptyZoneDb = (): ZoneDbDoc => ({
+  version: 0, hash: "", count: 0, crc: 0, records_b64: "", published_at: null, published_by: "", inventory_revision: 0,
+});
 const pathFor = (dataset: string) => `inventory/${dataset}.json`;
+const zoneDbPath = (dataset: string) => `zonedb/${dataset}.json`;
 const presencePrefix = (dataset: string) => `presence/${dataset}/`;
 const slug = (client: string) => client.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "unknown";
 
 export class BlobStore implements Store {
-  async read(dataset: string) {
-    const result = await get(pathFor(dataset), { access: "private", useCache: false });
-    if (!result || result.statusCode !== 200) return { doc: emptyDoc(), etag: null };
-    const doc = JSON.parse(await new Response(result.stream).text()) as InventoryDoc;
+  private async readPath<T>(path: string, empty: () => T) {
+    const result = await get(path, { access: "private", useCache: false });
+    if (!result || result.statusCode !== 200) return { doc: empty(), etag: null };
+    const doc = JSON.parse(await new Response(result.stream).text()) as T;
     // Uncached reads return a weak ETag (W/"…", same hash); conditional writes need the strong form.
     return { doc, etag: result.blob.etag.replace(/^W\//, "") };
   }
 
-  async write(dataset: string, doc: InventoryDoc, etag: string | null) {
+  private async writePath(path: string, doc: unknown, etag: string | null) {
     try {
-      await put(pathFor(dataset), JSON.stringify(doc), {
+      await put(path, JSON.stringify(doc), {
         access: "private",
         contentType: "application/json",
         addRandomSuffix: false,
         ...(etag ? { ifMatch: etag } : { allowOverwrite: false }),
       });
     } catch (error) {
-      if (error instanceof BlobPreconditionFailedError) throw new StoreConflict("Inventory changed during write");
-      // A create-only write fails if another push created the document first.
-      if (!etag && (await this.read(dataset)).etag) throw new StoreConflict("Inventory created during write");
+      if (error instanceof BlobPreconditionFailedError) throw new StoreConflict("Document changed during write");
+      // A create-only write fails if another writer created the document first.
+      if (!etag && (await this.readPath(path, () => null)).etag) throw new StoreConflict("Document created during write");
       throw error;
     }
+  }
+
+  read(dataset: string) {
+    return this.readPath(pathFor(dataset), emptyDoc);
+  }
+
+  write(dataset: string, doc: InventoryDoc, etag: string | null) {
+    return this.writePath(pathFor(dataset), doc, etag);
+  }
+
+  readZoneDb(dataset: string) {
+    return this.readPath(zoneDbPath(dataset), emptyZoneDb);
+  }
+
+  writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null) {
+    return this.writePath(zoneDbPath(dataset), doc, etag);
   }
 
   async touch(dataset: string, presence: Presence) {
@@ -76,17 +105,33 @@ export class MemoryStore implements Store {
   /** Test hook: runs once just before the next write, to simulate a concurrent writer. */
   beforeWrite: (() => Promise<void>) | null = null;
 
-  async read(dataset: string) {
-    const entry = this.docs.get(dataset);
-    return entry ? { doc: JSON.parse(entry.json) as InventoryDoc, etag: entry.etag } : { doc: emptyDoc(), etag: null };
+  private readPath<T>(key: string, empty: () => T) {
+    const entry = this.docs.get(key);
+    return entry ? { doc: JSON.parse(entry.json) as T, etag: entry.etag } : { doc: empty(), etag: null };
   }
 
-  async write(dataset: string, doc: InventoryDoc, etag: string | null) {
+  private async writePath(key: string, doc: unknown, etag: string | null) {
     const hook = this.beforeWrite;
     this.beforeWrite = null;
     if (hook) await hook();
-    if ((this.docs.get(dataset)?.etag ?? null) !== etag) throw new StoreConflict("Inventory changed during write");
-    this.docs.set(dataset, { json: JSON.stringify(doc), etag: `m${++this.counter}` });
+    if ((this.docs.get(key)?.etag ?? null) !== etag) throw new StoreConflict("Document changed during write");
+    this.docs.set(key, { json: JSON.stringify(doc), etag: `m${++this.counter}` });
+  }
+
+  async read(dataset: string) {
+    return this.readPath(pathFor(dataset), emptyDoc);
+  }
+
+  write(dataset: string, doc: InventoryDoc, etag: string | null) {
+    return this.writePath(pathFor(dataset), doc, etag);
+  }
+
+  async readZoneDb(dataset: string) {
+    return this.readPath(zoneDbPath(dataset), emptyZoneDb);
+  }
+
+  writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null) {
+    return this.writePath(zoneDbPath(dataset), doc, etag);
   }
 
   private seen = new Map<string, Presence>();

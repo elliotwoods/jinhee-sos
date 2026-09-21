@@ -66,6 +66,7 @@ If the same device changed on this computer and on the web, the app lists a conf
 - [Web inventory](web/README.md): shared web copy of the inventory; desktop sync app in `inventory_web/`.
 - [Pairing station](pairing_station/README.md): NFC registration and radio LED tests. Launch with `./pairing_station/Launch.command` after setup.
 - [Zone tools](zones/README.md): zone firmware, database distribution, and a separate zone flasher. Zone firmware needs its own build; only cube binaries are bundled here.
+- **Zone Database Manager**: `./zones/dbmanager/Launch.command`. Plug in an ESP32-C3 as an ESP-NOW dongle (**Flash dongle…** installs the relay firmware). The app shows every zone in range with its database version. Update a selected zone, or turn on **Walkaround** and walk the space to update everything out of date automatically. **Push & publish** syncs the web inventory and publishes a new zone database whose version the web allocates, so versions only increase across computers. Existing zone firmware is unchanged. See [zones/README.md](zones/README.md#update-zones-over-the-air-zone-database-manager).
 - [Registration console](registration_console/README.md): firmware-side registration utility.
 - `live files/`: legacy exhibition sketches. Network credentials are replaced with placeholders in this public copy.
 

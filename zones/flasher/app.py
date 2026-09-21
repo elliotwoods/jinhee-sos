@@ -281,11 +281,12 @@ class App:
             db = Database(self.database, recover_pending=False)
             try:
                 store = ZoneStore(db)
-                published, records = store.published(), len(store.records())
+                published, records, differs = store.published(), len(store.records()), store.local_differs()
                 self.registry = {r['cube_id']: r for r in db.rows() if r['cube_id'] is not None}
             finally:
                 db.close()
-            database = f'cube database v{published["version"]} published · {records} committed mappings now'
+            database = (f'cube database v{published["version"]} published · {records} committed mappings now' +
+                        (' · LOCAL CHANGES NOT PUBLISHED (Zone Database Manager)' if differs else ''))
         except Exception as exc:
             database = f'database: {exc}'
         self.info.set(f'Firmware builds: {builds}' + (f' · NEEDS BUILD: {", ".join(missing)}' if missing else '') + f'   ·   {database}')
