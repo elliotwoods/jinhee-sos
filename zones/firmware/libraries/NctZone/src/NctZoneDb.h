@@ -33,7 +33,7 @@ struct ZoneConfig {
   uint8_t format;
   uint8_t zoneType;
   uint8_t pointId;
-  uint8_t reserved;
+  uint8_t rxGainDb;  // PN532 RX gain in dB; 0 (older flashers) = RX_GAIN_DEFAULT_DB
   char name[16];  // NUL-terminated
   uint32_t crc;   // CRC-32 of the preceding 24 bytes
 };
@@ -62,6 +62,9 @@ bool validRecord(const Record &record);
 bool validRecords(const Record *records, uint16_t count);
 bool loadConfig(Storage &storage, ZoneConfig &config);
 bool loadParams(Storage &storage, ZoneParams &params);
+// Rewrites zcfg with `config` (CRC recomputed) and `params` (kept only when paramsValid), then verifies
+// by reading both back. The partition is erased first, so a failure can leave zcfg invalid.
+bool saveConfig(Storage &storage, ZoneConfig &config, const ZoneParams &params, bool paramsValid);
 
 class ZoneDb {
  public:

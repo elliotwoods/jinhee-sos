@@ -14,7 +14,7 @@ Everything uses **ESP-NOW channel 2**: cubes, zones, the pairing station and the
 
 ## Zone firmwares
 
-All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 polling, database lookup and `SET_ZONE` delivery with acknowledgment tracking, plus the update link and serial console. All run on the ESP32-C3 SuperMini with PN532 on SDA 4 / SCL 3.
+All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 polling, database lookup and `SET_ZONE` delivery with acknowledgment tracking, plus the update link and serial console. All run on the ESP32-C3 SuperMini with PN532 on SDA 4 / SCL 3. The exception is the replacement preshow plates. These are ex-cube XIAO ESP32-C3 boards with the reader on the XIAO's labelled SDA/SCL pads (D4/D5 = GPIO6/7). From `preshow-3.4.0`, `PreshowZone` tries 4/3 and then 6/7, and keeps the pair the reader answers on. The `NFC:` report line ends with `pins=<sda>/<scl>`. The fallback is opt-in (`TagPlateOptions::altSdaPin/altSclPin`), and no other zone enables it.
 
 | Flasher choice | Firmware | Replaces (`live files/`) | Behaviour |
 |---|---|---|---|
@@ -136,9 +136,14 @@ Boards are **identified automatically** when plugged in, using the first of thes
 
 Steps 2-4 briefly put the board in its bootloader. The table shows what each port is and what flashing would do.
 
-- **Manual:** select the port. The form is pre-filled from what was detected: zone, point, name and pool calibration. Click **Flash selected**.
+- **Manual:** select the port. The form is pre-filled from what was detected: zone, point, name, pool calibration and RX gain. Click **Flash selected**.
+- **RX gain** (18, 23, 33, 38, 43 or 48 dB, default 48) is the PN532 reader's receiver gain. It is stored in the zone
+  identity (`zcfg` byte 7) and shown in the port list; *(not applied)* there means the reader did not accept it.
+  Higher gain reads a weakly coupled tag but also amplifies noise, so lower it on a plate that misreads.
+  Auto-flash keeps each board's gain. A board flashed before this setting existed runs, and reflashes, at 48 dB.
+  The Zone Database Manager can change it over the air.
 - **Auto-flash:** click **Arm auto-flash** and plug boards in one after another.
-  - A board that already has a zone identity is updated in place, keeping its zone, point and name. It is skipped if its firmware and database are already current.
+  - A board that already has a zone identity is updated in place, keeping its zone, point, name and RX gain. It is skipped if its firmware and database are already current.
   - A legacy sketch is flashed when it matches the selected zone. With *Next point after each new board* ticked, the point then advances.
   - An unidentified board is flashed only if *Flash unidentified boards…* is ticked.
   - Neocubes, the pairing station and non-zone controllers are refused by auto-flash.
@@ -155,7 +160,7 @@ Steps 2-4 briefly put the board in its bootloader. The table shows what each por
   - checks the zone's own report
 - **Build all firmware** rebuilds all four sketches. Headless: `python zones/flasher/zone_build.py`.
 
-Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube/excluded device).
+Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43 [--rx-gain 38]`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube/excluded device).
 
 Restore a board's original firmware from its backup:
 `pairing_station/.venv/bin/python -m esptool --chip esp32c3 --port <port> write-flash 0 zones/flasher/data/backups/<MAC>_<time>.bin`
@@ -174,9 +179,10 @@ The monitor connects by itself to a detected zone on USB (untick *Connect automa
 ## Update zones over the air: Zone Database Manager
 
 `zones/dbmanager/app.py` (Finder: `zones/dbmanager/Launch.command`, VS Code: *Zone Database Manager*;
-the pairing app's **Zones → Zone Database Manager…** opens it too). Zone firmware is unchanged.
+the pairing app's **Zones → Zone Database Manager…** opens it too).
 
-- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.7-zones** (1.6 works without signal bars). Its zone
+- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.8-zones** (1.7 works without
+  RX gain control, 1.6 also without signal bars). Its zone
   relay needs no NFC reader. **Flash dongle…** builds that firmware if it is missing or stale, identifies the board
   and writes bootloader, partitions, boot selector and app separately, so NVS is kept. It refuses known cubes, known
   zone boards and the installed station (3C:0F:02:AD:83:24). It then records the dongle MAC as an `excluded` role so
@@ -200,8 +206,15 @@ the pairing app's **Zones → Zone Database Manager…** opens it too). Zone fir
   that is out of date. A zone that does not confirm is retried after 30 s. It never touches newer/different zones.
 - **Signal** column: the dongle's RSSI for each zone, smoothed. `▂▄▆` at −67 dBm or better, `▂▄·` down to
   −80 dBm, `▂··` below that. Requires dongle firmware 1.7.
+- **RX gain** column: the NFC reader gain stored on each zone. *(not applied)* means the reader did not accept it
+  (absent, failing or disabled); it is applied again when the reader recovers. `—` means it was never reported:
+  zone firmware before desert/tagplate-2.4.0, pool-3.2.0, preshow-3.3.0, or a dongle before 1.8.
+- **Set RX gain…** (selected, in-range, configured zone; dongle 1.8) sends a unicast `ZONE_SET_CONFIG`. The zone
+  rewrites `zcfg` (identity and calibration are kept), applies the gain to the reader at once without a reboot and
+  answers with its settings. The column shows `→ N dB …` until that answer arrives; no answer in 10 s is logged as
+  not confirmed. A radio delivery alone is never reported as success.
 - **Actions for the selected zone** sit beneath the list: Update selected (only for an out-of-date zone),
-  Update all, Identify, Show log, Reboot.
+  Update all, Identify, Show log, Reboot, Set RX gain….
 - **Sync** (the same widget as in every app) uploads local inventory changes, downloads web changes and pulls or
   publishes the zone database. `↑` and `↓` count what is pending. Conflicts stop it and open **Web Sync…**. The
   **web allocates the version**: identical content keeps the current version; otherwise it becomes
@@ -222,7 +235,12 @@ The zone flasher and PoolZone calibration write the **published** image (`ZoneSt
 this computer's mappings differ from it; they never allocate a version. Before the first web publication, a legacy
 local publication is still used while the local mappings match its hash.
 
-Serial commands on a zone (115200 baud): `?` report, `db` records, `log` recent tags, `help`.
+Serial commands on a zone (115200 baud): `?` report, `db` records, `log` recent tags, `rfcfg` (the gain the reader
+is actually running), `rxgain` (stored/applied gain), `rxgain <dB>` (store and apply, as Set RX gain…), `help`.
+
+Radio frames for settings: `ZONE_SET_CONFIG` 0x25 (9 bytes: confirm word `SCFG`, gain in dB; unicast only) and
+`ZONE_SETTINGS` 0x26 (11 bytes: nonce, stored gain, applied gain or 0, result of the last change), sent after every
+`ZONE_STATUS`. The status frame is unchanged, so older dongles and apps simply drop the settings frame.
 
 ## How updates stay safe
 

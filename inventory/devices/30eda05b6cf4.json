@@ -3,7 +3,7 @@
   "detail": "Choose Rename device to assign its label number",
   "mac": "30:ED:A0:5B:6C:F4",
   "pending_uid": null,
-  "role": "auto",
+  "role": "excluded",
   "source": "usb_flash",
   "status": "needs_number",
   "uid": null,

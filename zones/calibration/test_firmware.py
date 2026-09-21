@@ -59,10 +59,10 @@ class RadioIdChecks(unittest.TestCase):
         # The zcfg sector carries the legacy calibration endpoints alongside the identity;
         # rewriting the id must not discard them.
         z = firmware.zonedb
-        image = z.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430])
+        image = z.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430], rx_gain=38)
         self.assertEqual(z.parse_params(image), [3830, 430])
-        rewritten = z.zcfg_image(3, 5, 'Pool Radio 5', z.parse_params(image))
-        self.assertEqual(z.parse_config(rewritten), dict(zone_type=3, point_id=5, name='Pool Radio 5'))
+        rewritten = z.zcfg_image(3, 5, 'Pool Radio 5', z.parse_params(image), z.parse_config(image)['rx_gain'])
+        self.assertEqual(z.parse_config(rewritten), dict(zone_type=3, point_id=5, name='Pool Radio 5', rx_gain=38))
         self.assertEqual(z.parse_params(rewritten), [3830, 430])
 
 

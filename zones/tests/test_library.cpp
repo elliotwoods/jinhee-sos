@@ -58,6 +58,10 @@ static void testProtocol() {
   assert(!frameType(cube.data(), 24));
   uint8_t media[2] = {1, 1};
   assert(!frameType(media, 2));
+  assert(frameType(SET_GAIN_38.data(), int(SET_GAIN_38.size())) == ZONE_SET_CONFIG && SET_GAIN_38.size() == 9);
+  assert(!frameType(SET_GAIN_38.data(), 10));
+  uint8_t settingsFrame[11] = {'N', 'Z', 1, ZONE_SETTINGS};
+  assert(frameType(settingsFrame, 11) == ZONE_SETTINGS && !frameType(settingsFrame, 12));
   // Every chunk length avoids the cube/media lengths.
   for (int n = 1; n <= MAX_RECORDS_PER_CHUNK; n++) assert(chunkLength(n) != 24 && chunkLength(n) != 2);
 }
@@ -151,7 +155,14 @@ static void testUpdates() {
   deliver(link, FRAME_QUERY_STATUS);
   link.poll();
   auto replies = repliesAfter(link);
-  assert(replies.size() == 1 && !memcmp(replies[0].dest.data(), REGISTRY, 6));
+  // Status, then the settings frame (an older registry or dongle simply drops the second one).
+  assert(replies.size() == 2 && !memcmp(replies[0].dest.data(), REGISTRY, 6) && !memcmp(replies[1].dest.data(), REGISTRY, 6));
+  assert(frameType(replies[0].data.data(), int(replies[0].data.size())) == ZONE_STATUS);
+  assert(frameType(replies[1].data.data(), int(replies[1].data.size())) == ZONE_SETTINGS);
+  ZoneSettings settings;
+  memcpy(&settings, replies[1].data.data(), sizeof(settings));
+  assert(settings.nonce == 0xABCDEF01u && settings.rxGainStored == 48 && settings.rxGainApplied == 0 &&
+         settings.lastSetResult == SET_NONE);
   ZoneStatus s = lastStatus();
   assert(s.nonce == 0xABCDEF01u && s.dbVersion == 1 && s.dbCount == 32 && s.dbCrc == SLOT_V1_CRC && s.pointId == 2 &&
          s.zoneType == ZONE_PRESHOW && !strcmp(s.name, "Preshow 2") && !strcmp(s.firmware, "test-fw") &&
@@ -291,6 +302,28 @@ static void testUpdates() {
   assert(ESP.restarted);
   ESP.restarted = false;
 
+  // Set config: only a unicast frame with the confirm word is handed to the owner, once.
+  uint8_t gain = 0;
+  deliver(link, SET_GAIN_38, true);
+  deliver(link, SET_GAIN_NOCONFIRM, false);
+  link.poll();
+  assert(!link.takeConfigRequest(gain));
+  deliver(link, SET_GAIN_38, false);
+  link.poll();
+  assert(link.takeConfigRequest(gain) && gain == 38 && !link.takeConfigRequest(gain));
+  // The owner's result goes back to the requester as status + settings (nonce 0).
+  ZoneConfig updated = cfg;
+  updated.rxGainDb = 38;
+  link.setRxGainApplied(38);
+  sentFrames.clear();
+  link.configApplied(updated, true, SET_OK);
+  auto answer = repliesAfter(link);
+  assert(answer.size() == 2 && frameType(answer[1].data.data(), int(answer[1].data.size())) == ZONE_SETTINGS);
+  memcpy(&settings, answer[1].data.data(), sizeof(settings));
+  assert(settings.nonce == 0 && settings.rxGainStored == 38 && settings.rxGainApplied == 38 && settings.lastSetResult == SET_OK);
+  link.configApplied(cfg, true, SET_OK);  // back to the fixture identity for the report below
+  repliesAfter(link);
+
   // Serial report used by the flasher boot check.
   Serial.output.clear();
   assert(link.handleSerialCommand("?"));
@@ -336,6 +369,36 @@ static void testUniversalVersionUpdate() {
   }
 }
 
+static void testConfigSave() {
+  // saveConfig rewrites the identity with the new gain and keeps the parameters (pool calibration).
+  load("zcfg", CONFIG_POOL4);
+  PartitionStorage storage("zcfg");
+  ZoneConfig cfg;
+  ZoneParams params;
+  assert(loadConfig(storage, cfg) && loadParams(storage, params) && cfg.rxGainDb == 48);
+  cfg.rxGainDb = 23;
+  assert(saveConfig(storage, cfg, params, true));
+  ZoneConfig again;
+  ZoneParams paramsAgain;
+  assert(loadConfig(storage, again) && again.rxGainDb == 23 && again.pointId == 4 && !strcmp(again.name, "Pool Radio 4"));
+  assert(loadParams(storage, paramsAgain) && paramsAgain.count == 2 && paramsAgain.values[0] == 3830 &&
+         paramsAgain.values[1] == 430);
+  // Byte-identical to what the flasher writes for the same settings.
+  auto *p = fakePartition("zcfg");
+  assert(std::equal(CONFIG_POOL4_GAIN23.begin(), CONFIG_POOL4_GAIN23.end(), p->data->begin()));
+  // Without parameters, none are written.
+  load("zcfg", CONFIG_POINT2);
+  assert(loadConfig(storage, cfg));
+  cfg.rxGainDb = 33;
+  assert(saveConfig(storage, cfg, ZoneParams{}, false) && loadConfig(storage, again) && again.rxGainDb == 33);
+  assert(!loadParams(storage, paramsAgain));
+  // A config from an older flasher has 0 there: the default applies.
+  load("zcfg", CONFIG_LEGACY_GAIN);
+  assert(loadConfig(storage, cfg) && cfg.rxGainDb == 0 && effectiveRxGain(cfg.rxGainDb) == 48);
+  assert(rxGainField(18) == 0 && rxGainField(23) == 1 && rxGainField(33) == 4 && rxGainField(38) == 5 &&
+         rxGainField(43) == 6 && rxGainField(48) == 7 && !validRxGain(40) && !validRxGain(0));
+}
+
 static void testPeers() {
   espPeers.clear();
   ZoneDb db;
@@ -363,7 +426,8 @@ int main() {
   testProtocol();
   testStorage();
   testUpdates();
+  testConfigSave();
   testUniversalVersionUpdate();
   testPeers();
-  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), universal versions, log, identify, reboot, peers");
+  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), universal versions, log, identify, reboot, set config, config save, peers");
 }

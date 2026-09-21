@@ -5,13 +5,15 @@ import zlib
 
 RECORD = struct.Struct('<IB7s6s')          # cubeID, uidLength, uid[7], mac[6]
 SLOT_HEADER = struct.Struct('<4sBBHIII')   # magic, format, recordSize, count, dbVersion, generation, recordsCrc (+headerCrc)
-CONFIG = struct.Struct('<4sBBBB16s')       # magic, format, zoneType, pointId, reserved, name (+crc)
+CONFIG = struct.Struct('<4sBBBB16s')       # magic, format, zoneType, pointId, rxGainDb (0 = default), name (+crc)
 ANNOUNCE = struct.Struct('<2sBBIHHBBI')
 CHUNK_HEADER = struct.Struct('<2sBBIHB')
 QUERY = struct.Struct('<2sBBIB')
 STATUS = struct.Struct('<2sBBIBB16s16sIHIIHHIIIIBBBB')
 LOG_HEADER = struct.Struct('<2sBBIB')
 LOG_ENTRY = struct.Struct('<B7sIBI')
+SET_CONFIG = struct.Struct('<2sBBIB')
+SETTINGS = struct.Struct('<2sBBIBBB')
 
 RECORD_SIZE = RECORD.size
 MAX_PER_CHUNK = 12
@@ -19,9 +21,17 @@ SLOT_SIZE = 0x8000
 SLOT_CAPACITY = (SLOT_SIZE - SLOT_HEADER.size - 4) // RECORD_SIZE
 MAGIC, PROTO = b'NZ', 1
 DB_ANNOUNCE, DB_CHUNK, ZONE_QUERY, ZONE_STATUS, ZONE_LOG, ZONE_IDENTIFY, ZONE_REBOOT = 0x10, 0x11, 0x20, 0x21, 0x22, 0x23, 0x24
+ZONE_SET_CONFIG, ZONE_SETTINGS = 0x25, 0x26
 ANNOUNCE_FORCE = 0x01
 QUERY_STATUS, QUERY_LOG = 1, 2
 REBOOT_CONFIRM = 0x544F4F42
+SET_CONFIG_CONFIRM = 0x47464353
+# PN532 receiver gain steps (dB) a zone can store; zcfg byte 0 (older flashers) means the default.
+RX_GAINS = (18, 23, 33, 38, 43, 48)
+RX_GAIN_DEFAULT = 48
+SET_NONE, SET_OK, SET_INVALID, SET_UNCONFIGURED, SET_FLASH_FAILED, SET_NOT_APPLIED = range(6)
+SET_RESULTS = {0: '', 1: 'ok', 2: 'invalid value', 3: 'zone unconfigured', 4: 'flash write failed',
+               5: 'stored, reader did not accept it'}
 ZONE_TYPES = {1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow'}
 ZONE_COLORS = {0: ('idle', '#d8d8d8'), 1: ('preshow', '#ff2a1a'), 2: ('desert', '#ffb000'), 3: ('pool', '#1f4dff'), 4: ('mainshow', '#d4ff2a')}
 TAG_RESULTS = {0: 'unknown', 1: 'delivered', 2: 'unconfirmed', 3: 'pending'}
@@ -31,7 +41,7 @@ ERRORS = {0: '', 1: 'zone config invalid', 2: 'database empty', 3: 'NFC reader n
 
 assert SLOT_HEADER.size + 4 == 24 and CONFIG.size + 4 == 28 and RECORD_SIZE == 18
 assert ANNOUNCE.size == 18 and CHUNK_HEADER.size == 11 and QUERY.size == 9 and STATUS.size == 80
-assert LOG_ENTRY.size == 17
+assert LOG_ENTRY.size == 17 and SET_CONFIG.size == 9 and SETTINGS.size == 11
 
 
 def crc32(data, value=0):
@@ -118,15 +128,27 @@ def parse_slot_header(header):
     return dict(version=version, generation=generation, count=count, crc=records_crc)
 
 
-def config_image(zone_type, point_id, name):
+def effective_rx_gain(stored):
+    return stored if stored in RX_GAINS else RX_GAIN_DEFAULT
+
+
+def check_rx_gain(rx_gain):
+    rx_gain = int(rx_gain)
+    if rx_gain not in RX_GAINS:
+        raise ValueError(f'RX gain must be one of {", ".join(map(str, RX_GAINS))} dB')
+    return rx_gain
+
+
+def config_image(zone_type, point_id, name, rx_gain=RX_GAIN_DEFAULT):
     encoded = name.encode()
+    rx_gain = check_rx_gain(rx_gain)
     if zone_type not in ZONE_TYPES:
         raise ValueError('Unknown zone type')
     if not 0 <= point_id <= 255:
         raise ValueError('Point ID must be 0–255')
     if len(encoded) > 15:
         raise ValueError('Zone name must be at most 15 bytes')
-    body = CONFIG.pack(b'NZCF', 1, zone_type, point_id, 0, encoded)
+    body = CONFIG.pack(b'NZCF', 1, zone_type, point_id, rx_gain, encoded)
     return body + struct.pack('<I', crc32(body))
 
 
@@ -142,9 +164,9 @@ def params_image(values):
     return body + struct.pack('<I', crc32(body))
 
 
-def zcfg_image(zone_type, point_id, name, params=None):
+def zcfg_image(zone_type, point_id, name, params=None, rx_gain=RX_GAIN_DEFAULT):
     """Full zcfg partition content: identity, then optional parameters at PARAMS_OFFSET."""
-    image = config_image(zone_type, point_id, name)
+    image = config_image(zone_type, point_id, name, rx_gain)
     if params:
         image = image.ljust(PARAMS_OFFSET, b'\xff') + params_image(params)
     return image
@@ -163,11 +185,12 @@ def parse_params(image):
 def parse_config(image):
     if len(image) < 28:
         return None
-    magic, fmt, zone_type, point_id, _, name = CONFIG.unpack_from(image)
+    magic, fmt, zone_type, point_id, rx_gain, name = CONFIG.unpack_from(image)
     (crc,) = struct.unpack_from('<I', image, 24)
     if magic != b'NZCF' or fmt != 1 or crc != crc32(image[:24]) or 0 not in name:
         return None
-    return dict(zone_type=zone_type, point_id=point_id, name=name.split(b'\0')[0].decode(errors='replace'))
+    return dict(zone_type=zone_type, point_id=point_id, name=name.split(b'\0')[0].decode(errors='replace'),
+                rx_gain=effective_rx_gain(rx_gain))
 
 
 class Publication:
@@ -222,6 +245,15 @@ def parse_log(data):
     return dict(nonce=nonce, entries=entries)
 
 
+def parse_settings(data):
+    if len(data) != SETTINGS.size:
+        raise ValueError('Not a zone settings frame')
+    magic, proto, kind, nonce, stored, applied, result = SETTINGS.unpack(data)
+    if magic != MAGIC or proto != PROTO or kind != ZONE_SETTINGS:
+        raise ValueError('Not a zone settings frame')
+    return dict(nonce=nonce, rx_gain=effective_rx_gain(stored), rx_gain_applied=applied or None, set_result=result)
+
+
 def frame_kind(data):
     return data[3] if len(data) >= 4 and data[:2] == MAGIC and data[2] == PROTO else None
 
@@ -236,3 +268,7 @@ def identify_frame(seconds):
 
 def reboot_frame():
     return struct.pack('<2sBBI', MAGIC, PROTO, ZONE_REBOOT, REBOOT_CONFIRM)
+
+
+def set_config_frame(rx_gain):
+    return SET_CONFIG.pack(MAGIC, PROTO, ZONE_SET_CONFIG, SET_CONFIG_CONFIRM, check_rx_gain(rx_gain))

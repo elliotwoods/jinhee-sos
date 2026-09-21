@@ -148,7 +148,7 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
   which runs on the Wi-Fi task and may only hand the frame over.
 - The pool radios and the pool central are a **matched set**; reflash them together.
 - The preshow plates and the preshow bridge update in **either order**: the bridge accepts the
-  old 2-byte packet, and a `preshow-3.2.0` plate also sends it until it has heard a beacon
+  old 2-byte packet, and a `preshow-3.2.0` or later plate also sends it until it has heard a beacon
   (then never again). A plate's `?` report says `MEDIA: mode=legacy` or `mode=modern`.
 - `zones/preshow_test/` drives a plate's leased `HOST *` override to raise TouchDesigner cues
   by hand, for a plate with no reader attached.

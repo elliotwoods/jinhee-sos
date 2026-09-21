@@ -19,6 +19,8 @@ enum MessageType : uint8_t {
   ZONE_LOG      = 0x22,
   ZONE_IDENTIFY = 0x23,
   ZONE_REBOOT   = 0x24,
+  ZONE_SET_CONFIG = 0x25,  // host -> zone, unicast: store and apply a setting (PN532 RX gain)
+  ZONE_SETTINGS   = 0x26,  // zone -> host: sent after every ZONE_STATUS; older hosts/dongles drop it
   // 0x30 POOL_STATE and 0x31 POOL_BEACON are reserved by NctPoolProtocol.h, and
   // 0x40 PRESHOW_EVENT, 0x41 PRESHOW_ACK and 0x42 PRESHOW_BEACON by NctPreshowProtocol.h.
   // All five are deliberately NOT handled by frameType() below: ZoneLink::receive() queues
@@ -46,6 +48,26 @@ constexpr uint8_t RECORD_SIZE = 18;
 constexpr uint8_t MAX_RECORDS_PER_CHUNK = 12;
 constexpr uint8_t LOG_ENTRIES = 8;
 constexpr uint32_t REBOOT_CONFIRM = 0x544F4F42;  // "BOOT"
+constexpr uint32_t SET_CONFIG_CONFIRM = 0x47464353;  // "SCFG"
+
+// PN532 receiver gain in dB, stored in ZoneConfig.rxGainDb (0 there means the default).
+// The chip's RxGain field (CIU_RFCfg bits 6..4) has six distinct steps.
+constexpr uint8_t RX_GAIN_DEFAULT_DB = 48;
+inline bool validRxGain(uint8_t db) { return db == 18 || db == 23 || db == 33 || db == 38 || db == 43 || db == 48; }
+inline uint8_t effectiveRxGain(uint8_t stored) { return validRxGain(stored) ? stored : RX_GAIN_DEFAULT_DB; }
+// RxGain field value for a gain in dB (PN512 data sheet table 92: 0 18, 1 23, 4 33, 5 38, 6 43, 7 48 dB).
+inline uint8_t rxGainField(uint8_t db) {
+  switch (db) { case 18: return 0; case 23: return 1; case 33: return 4; case 38: return 5; case 43: return 6; default: return 7; }
+}
+
+enum SetConfigResult : uint8_t {
+  SET_NONE = 0,         // nothing has been requested since boot
+  SET_OK = 1,           // stored and applied to the reader
+  SET_INVALID = 2,      // value out of range, nothing changed
+  SET_UNCONFIGURED = 3, // the zone has no valid zcfg to update
+  SET_FLASH_FAILED = 4, // zcfg write or read-back failed; the previous setting is still in force
+  SET_NOT_APPLIED = 5,  // stored, but the reader did not accept it (absent, disabled or failing); applied on recovery
+};
 
 #pragma pack(push, 1)
 
@@ -136,6 +158,20 @@ struct ZoneReboot {
   uint32_t confirm;
 };
 
+struct ZoneSetConfig {
+  Header h;
+  uint32_t confirm;  // SET_CONFIG_CONFIRM
+  uint8_t rxGainDb;
+};
+
+struct ZoneSettings {
+  Header h;
+  uint32_t nonce;          // same as the ZONE_STATUS it follows
+  uint8_t rxGainStored;    // dB, from zcfg (default resolved)
+  uint8_t rxGainApplied;   // dB the reader accepted, 0 = not applied / unknown
+  uint8_t lastSetResult;   // SetConfigResult of the most recent ZONE_SET_CONFIG or serial rxgain
+};
+
 #pragma pack(pop)
 
 constexpr size_t CHUNK_HEADER_SIZE = sizeof(DbChunkHeader);
@@ -150,9 +186,12 @@ static_assert(sizeof(LogEntry) == 17, "log entry layout");
 static_assert(sizeof(ZoneLog) == 9 + 17 * LOG_ENTRIES, "log layout");
 static_assert(sizeof(ZoneIdentify) == 5, "identify layout");
 static_assert(sizeof(ZoneReboot) == 8, "reboot layout");
+static_assert(sizeof(ZoneSetConfig) == 9, "set config layout");
+static_assert(sizeof(ZoneSettings) == 11, "settings layout");
 // Collision guard with neocube (24) and media bridge (2) frames.
 static_assert(sizeof(DbAnnounce) != 24 && sizeof(ZoneQuery) != 24 && sizeof(ZoneStatus) != 24 &&
-              sizeof(ZoneIdentify) != 24 && sizeof(ZoneReboot) != 24, "frame length collides with cube Packet");
+              sizeof(ZoneIdentify) != 24 && sizeof(ZoneReboot) != 24 && sizeof(ZoneSetConfig) != 24 &&
+              sizeof(ZoneSettings) != 24, "frame length collides with cube Packet");
 
 inline constexpr size_t chunkLength(uint8_t n) { return CHUNK_HEADER_SIZE + size_t(RECORD_SIZE) * n; }
 // n=0 is never sent; 11 + 18n is never 24 or 2 for n>=1.
@@ -177,6 +216,8 @@ inline uint8_t frameType(const uint8_t *data, int len) {
     case ZONE_LOG:      return len == int(sizeof(ZoneLog)) ? data[3] : 0;
     case ZONE_IDENTIFY: return len == int(sizeof(ZoneIdentify)) ? data[3] : 0;
     case ZONE_REBOOT:   return len == int(sizeof(ZoneReboot)) ? data[3] : 0;
+    case ZONE_SET_CONFIG: return len == int(sizeof(ZoneSetConfig)) ? data[3] : 0;
+    case ZONE_SETTINGS: return len == int(sizeof(ZoneSettings)) ? data[3] : 0;
     default:            return 0;
   }
 }

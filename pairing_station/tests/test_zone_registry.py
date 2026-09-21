@@ -266,6 +266,69 @@ class ZoneRegistryTests(unittest.TestCase):
         self.zones.set_walkaround(False)
         self.assertIsNone(self.zones.publication)
 
+    def settings(self, mac, gain, applied, result, nonce=0):
+        frame = zonedb.SETTINGS.pack(b'NZ', 1, zonedb.ZONE_SETTINGS, nonce, gain, applied, result)
+        return self.zones.event(dict(event='zone_frame', mac=mac, hex=frame.hex().upper()))
+
+    def zone(self, mac):
+        return next(z for z in self.zones.zone_rows() if z['mac'] == mac)
+
+    def test_rx_gain_settings_and_set_request(self):
+        # Settings arriving before any status have no row to annotate.
+        self.assertTrue(self.settings(ZONE, 48, 48, 0))
+        self.assertEqual(self.zones.zone_rows(), [])
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=status_hex(1, 0)))
+        self.assertIsNone(self.zone(ZONE)['rx_gain'])  # older firmware/dongle: never reported
+        self.settings(ZONE, 48, 48, 0, nonce=5)
+        self.assertEqual((self.zone(ZONE)['rx_gain'], self.zone(ZONE)['rx_gain_applied']), (48, 48))
+        # The request is a unicast set-config frame; only the zone's own report settles it.
+        self.sent.clear()
+        self.zones.set_rx_gain(ZONE, 38)
+        self.assertEqual(self.frames(), [(ZONE, zonedb.set_config_frame(38))])
+        self.assertEqual(self.zone(ZONE)['rx_gain_pending'], 38)
+        self.settings(ZONE, 48, 48, zonedb.SET_NONE, nonce=77)  # a routine query answered meanwhile
+        self.assertEqual(self.zone(ZONE)['rx_gain_pending'], 38)
+        self.settings(ZONE, 38, 38, zonedb.SET_OK)
+        self.assertIsNone(self.zone(ZONE)['rx_gain_pending'])
+        self.assertEqual((self.zone(ZONE)['rx_gain'], self.zone(ZONE)['set_result']), (38, zonedb.SET_OK))
+        self.assertTrue(any('RX gain 38 dB — ok' in line for line in self.logs))
+        # A failure reply (nonce 0) settles it too, and says the old gain still applies.
+        self.zones.set_rx_gain(ZONE, 23)
+        self.settings(ZONE, 38, 38, zonedb.SET_FLASH_FAILED)
+        self.assertIsNone(self.zone(ZONE)['rx_gain_pending'])
+        self.assertTrue(any('flash write failed (still 38 dB)' in line for line in self.logs))
+        # No answer at all (old zone firmware ignores the frame): the request times out with a message.
+        self.zones.set_rx_gain(ZONE, 43)
+        self.now += self.zones.SET_TIMEOUT + 1
+        self.zones.tick(True, STATION)
+        self.assertIsNone(self.zone(ZONE)['rx_gain_pending'])
+        self.assertTrue(any('RX gain 43 dB not confirmed' in line for line in self.logs))
+        with self.assertRaises(ValueError):
+            self.zones.set_rx_gain(ZONE, 40)
+        # Reflashed with other firmware: the old settings are forgotten until reported again.
+        frame = bytearray(bytes.fromhex(status_hex(1, 0)))
+        frame[26:42] = b'preshow-3.3.0'.ljust(16, b'\0')
+        self.zones.event(dict(event='zone_frame', mac=ZONE, hex=frame.hex()))
+        self.assertIsNone(self.zone(ZONE)['rx_gain'])
+
+    def test_settings_columns_migrate_an_existing_table(self):
+        path = Path(self.temp.name) / 'old.sqlite3'
+        old = Database(path)
+        with old.conn:
+            old.conn.execute('CREATE TABLE zones (mac TEXT PRIMARY KEY, name TEXT, last_seen TEXT)')
+            old.conn.execute("INSERT INTO zones (mac, name) VALUES ('AA', 'x')")
+        from zone_registry import ZoneStore, ZONE_COLUMNS
+        with old.conn:
+            for column in ZONE_COLUMNS[1:]:
+                old.conn.execute(f'ALTER TABLE zones ADD COLUMN {column} INTEGER')
+            for column in ('last_seen_epoch', 'source', 'detail'):
+                old.conn.execute(f'ALTER TABLE zones ADD COLUMN {column} TEXT')
+        store = ZoneStore(old)
+        store.settings('AA', dict(rx_gain=33, rx_gain_applied=None, set_result=5))
+        row = store.zones()[0]
+        self.assertEqual((row['rx_gain'], row['rx_gain_applied'], row['set_result']), (33, None, 5))
+        old.close()
+
     def test_log_and_errors(self):
         entry = zonedb.LOG_ENTRY.pack(7, bytes.fromhex('0460354AB62191'), 1, 1, 3)
         log = zonedb.LOG_HEADER.pack(b'NZ', 1, zonedb.ZONE_LOG, 1, 1) + entry + b'\0' * (17 * 7)

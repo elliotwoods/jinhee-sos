@@ -212,7 +212,18 @@ int main() {
   setup(); run(300);
   assert(poolBootId!=previousBoot && poolSeq<=POOL_BURST_COUNT+2 && !centralKnown);
 
+  // Changing the RX gain rewrites zcfg: the radio ID and the calibration parameters survive it.
+  assert(has(serial("rxgain 33"), "RXGAIN SET 33dB: stored"));
+  {
+    nctzone::PartitionStorage storage("zcfg");
+    nctzone::ZoneConfig cfg; nctzone::ZoneParams params;
+    assert(nctzone::loadConfig(storage, cfg) && cfg.rxGainDb==33 && cfg.pointId==4);
+    assert(nctzone::loadParams(storage, params) && params.count==2 && params.values[0]==3830 && params.values[1]==430);
+  }
+  setup(); run(300);
+  assert(plate.configOk && plate.paramsOk && radioValid() && calibrationValid());
+
   puts("PASS: PoolZone ±33% mapping, flash, tagged POOL delivery/ACK, cube command, pool link beacon/latch/"
        "unicast+broadcast copy, bursts, repeated release, idle heartbeats, stale fallback, seq/bootId, "
-       "unknown tags, leased host override and editing interlock");
+       "unknown tags, leased host override and editing interlock, RX gain change keeps calibration");
 }

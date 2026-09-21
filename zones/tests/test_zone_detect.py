@@ -67,11 +67,12 @@ class DetectTests(unittest.TestCase):
         blank = zone_detect.from_flash(MAC, self.db, flash({}))
         self.assertEqual(blank['kind'], 'blank')
         records = zonedb.records_from_rows(self.db.rows())
-        regions = {0x8000: ZONE_TABLE, 0x210000: zonedb.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430]),
+        regions = {0x8000: ZONE_TABLE, 0x210000: zonedb.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430], rx_gain=38),
                    0x211000: zonedb.slot_image(records, 5), 0x219000: zonedb.slot_image(records, 7, generation=3)}
         zone = zone_detect.from_flash(MAC, self.db, flash(regions))
         self.assertEqual((zone['kind'], zone['profile'], zone['point'], zone['name'], zone['params'], zone['db_version'], zone['db_count']),
                          ('nctzone', 'pool', 4, 'Pool Radio 4', [3830, 430], 7, 32))
+        self.assertEqual(zone['rx_gain'], 38)
         regions[0x210000] = zonedb.zcfg_image(1, 2, 'Preshow 2')  # type 1 is shared by two profiles
         zone = zone_detect.from_flash(MAC, self.db, flash(regions))
         self.assertTrue(zone['ambiguous'] and zone['configured'])
@@ -86,12 +87,13 @@ class DetectTests(unittest.TestCase):
                                          'DB: version=3 count=30 crc=0000ABCD slot=B capacity=1819\nSTATS: tags=1 unknown=0 send_fail=0 error=0\nREADY\n')
         d = zone_detect.from_report(report)
         self.assertEqual((d['profile'], d['point'], d['name'], d['db_version']), ('mainshow', 2, 'Mainshow 2', 3))
+        self.assertNotIn('rx_gain', d)  # tagplate-2.1.0 predates the setting
         self.assertEqual(zone_build.profile_for('tagplate-2.1.0', 1), 'preshow_exit')
         self.assertEqual(zone_build.profile_for('pool-2.1.0', 3), 'pool')
         self.assertIsNone(zone_build.profile_for('mystery-1', 1))
 
     def test_plan(self):
-        form = dict(profile='desert', point=3, name='Desert 3', params=[])
+        form = dict(profile='desert', point=3, name='Desert 3', params=[], rx_gain=33)
         manifests = {'DesertZone': dict(version='desert-2.1.0'), 'PoolZone': dict(version='pool-2.1.0')}
         published = dict(version=4, crc=0xAA)
         plan = lambda d, **kw: zone_detect.plan(d, form, manifests, published, **kw)
@@ -110,6 +112,10 @@ class DetectTests(unittest.TestCase):
                     firmware='pool-2.0.0', db_version=4, db_crc=0xAA)
         keep = plan(zone, auto=True)  # identity is kept even though the form says desert 3
         self.assertEqual((keep['action'], keep['profile'], keep['point'], keep['name'], keep['params']), ('flash', 'pool', 2, 'Pool Radio 2', [3800, 400]))
+        # The board's RX gain is kept too; a board too old to report one ran at the 48 dB default.
+        self.assertEqual(keep['rx_gain'], 48)
+        self.assertEqual(plan(dict(zone, rx_gain=23), auto=True)['rx_gain'], 23)
+        self.assertEqual(plan(dict(zone, rx_gain=23))['rx_gain'], 33)  # manual flashing uses the form
         self.assertEqual(plan(dict(zone, firmware='pool-2.1.0'), auto=True)['action'], 'skip')
         self.assertEqual(plan(dict(zone, firmware='pool-2.1.0', db_version=3), auto=True)['action'], 'flash')
         self.assertEqual(plan(dict(zone, params=[]), auto=True)['action'], 'ask')

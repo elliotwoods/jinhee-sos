@@ -90,7 +90,7 @@ int main() {
   image("zcfg", CONFIG_POINT2);
   setup();
   assert(plate.radioOk && plate.nfcOk && plate.configOk && radioChannel == 2);
-  assert(has(Serial.output, "FW: preshow-3.2.0") && has(Serial.output, "DB: version=1 count=32"));
+  assert(has(Serial.output, "FW: preshow-3.4.0") && has(Serial.output, "DB: version=1 count=32"));
   assert(Serial.output.rfind("READY") > Serial.output.rfind("STATS:"));
   assert(esp_now_is_peer_exist(BROADCAST) && "broadcast, so events go out before any beacon");
   // The legacy bridge is pinned only as the fallback destination; the plate still has to
@@ -479,6 +479,39 @@ int main() {
   assert(plate.nfcOk);
   // Manual recovery from the console.
   assert(has(serial("nfc recover", 200), "PN532 LOST: recovery requested") && plate.nfcOk);
+  assert(has(serial("nfc"), "pins=4/3"));
+
+  // A replacement XIAO plate has its reader on the labelled SDA/SCL pads (GPIO6/7): found there at start-up,
+  // kept across a lost-reader recovery, and a tap still reaches the cube.
+  pn532Sda = 6;
+  pn532Scl = 7;
+  Serial.output.clear();
+  setup();
+  assert(plate.nfcOk && has(Serial.output, "PN532 FOUND on SDA=6 SCL=7") && has(serial("nfc"), "pins=6/7"));
+  pn532Present = false;
+  run(3500);
+  assert(!plate.nfcOk);
+  pn532Present = true;
+  run(5500);
+  assert(plate.nfcOk && has(serial("nfc"), "pins=6/7"));
+  mark = sentFrames.size();
+  presentedTag = FIRST_UID;
+  run(300);
+  assert(framesTo(FIRST_MAC.data(), mark).size() == 2 && "a reader on the XIAO pins commands the cube");
+  presentedTag.clear();
+  run(1000);
+  // No reader on either pair: reported against the original wiring, and found once it is connected there.
+  pn532Present = false;
+  Serial.output.clear();
+  setup();
+  assert(!plate.nfcOk && plate.radioOk && has(Serial.output, "PN532 NOT FOUND") && has(serial("nfc"), "pins=4/3"));
+  pn532Sda = 4;
+  pn532Scl = 3;
+  pn532Present = true;
+  run(5200);
+  assert(plate.nfcOk && has(serial("nfc"), "pins=4/3"));
+  pn532Sda = 4;
+  pn532Scl = 3;
 
   puts("PASS: PreshowZone tag enter/leave, beacon-latched unicast with broadcast fallback, burst + "
        "retry-until-acknowledged + give-up report, state re-assert self-heal, bridge swap and reboot, "

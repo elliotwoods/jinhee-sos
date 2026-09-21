@@ -11,7 +11,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "desert-2.3.0";
+constexpr const char *FIRMWARE_VERSION = "desert-2.4.0";
 
 #define MOSFET_PIN 1
 

@@ -18,7 +18,7 @@ int main() {
   image("zdb_b", {});
   image("zcfg", CONFIG_DESERT);
   setup();
-  assert(plate.radioOk && pinLevels[MOSFET_PIN] == LOW && has(Serial.output, "FW: desert-2.3.0"));
+  assert(plate.radioOk && pinLevels[MOSFET_PIN] == LOW && has(Serial.output, "FW: desert-2.4.0"));
 
   // ---- A tap: colour, tag state, then the two unconditional repeats ----
   // The repeats exist because the cube keeps one received packet and consumes it in loop(): the

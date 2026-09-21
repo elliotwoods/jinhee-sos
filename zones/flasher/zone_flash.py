@@ -50,7 +50,7 @@ def parse_report(text):
     block = text[start:end]
     patterns = dict(firmware=r'FW:\s*(\S+)', mac=r'MAC:\s*([0-9A-Fa-f:]{17})', channel=r'CHANNEL:\s*(\d+)',
                     zone=r'ZONE:\s*type=(\d+) point=(\d+) name=([^\r\n]*)', db=r'DB:\s*version=(\d+) count=(\d+) crc=([0-9A-Fa-f]{8}) slot=(\w+)',
-                    stats=r'STATS:.*error=(\d+)', pool=r'POOL: radio=\d+ cal1=([\d.]+) cal23=([\d.]+)')
+                    stats=r'STATS:.*error=(\d+)', rx_gain=r'RXGAIN:\s*stored=(\d+)dB applied=(?:(\d+)dB|\?)', pool=r'POOL: radio=\d+ cal1=([\d.]+) cal23=([\d.]+)')
     found = {k: re.search(p, block) for k, p in patterns.items()}
     if not all(found[k] for k in ('firmware', 'mac', 'channel', 'db')):
         return None
@@ -60,6 +60,9 @@ def parse_report(text):
                   last_error=int(found['stats'][1]) if found['stats'] else 0)
     if found['zone']:
         report.update(zone_type=int(found['zone'][1]), point_id=int(found['zone'][2]), name=found['zone'][3].strip())
+    if found['rx_gain']:  # absent before desert-2.4.0 / tagplate-2.4.0 / pool-3.2.0 / preshow-3.3.0
+        report['rx_gain'] = int(found['rx_gain'][1])
+        report['rx_gain_applied'] = int(found['rx_gain'][2]) if found['rx_gain'][2] else None
     if found['pool']:
         report['params'] = [round(float(found['pool'][1]) * 10), round(float(found['pool'][2]) * 10)]
     return report
@@ -69,7 +72,7 @@ class ZoneFlasher:
     def __init__(self, database, emit):
         self.database, self.emit = Path(database), emit
 
-    def execute(self, port, profile_name, point_id, name, params=(), force=False):
+    def execute(self, port, profile_name, point_id, name, params=(), force=False, rx_gain=zonedb.RX_GAIN_DEFAULT):
         """`force` overwrites a board the database lists as a neocube or excluded device. The known pairing station
         MAC and non-ESP32 USB devices are refused regardless."""
         profile = zone_build.PROFILES[profile_name]
@@ -80,14 +83,15 @@ class ZoneFlasher:
         if len(params) != len(profile['params']):
             raise ValueError(f'{profile["label"]} needs {len(profile["params"])} parameter(s): ' +
                              ', '.join(p[0] for p in profile['params']))
-        config = zonedb.zcfg_image(profile['zone_type'], point_id, name, params)
+        rx_gain = zonedb.check_rx_gain(rx_gain)
+        config = zonedb.zcfg_image(profile['zone_type'], point_id, name, params, rx_gain)
         manifest = zone_build.load_manifest(sketch)
         ident = uuid.uuid4().hex
         folder = DATA / 'runs' / ident
         folder.mkdir(parents=True)
         runner = Runner(self.emit, folder / 'upload.log')
         record = dict(id=ident, started_at=timestamp(), port=port['port'], profile=profile_name, sketch=sketch, point_id=point_id,
-                      name=name, params=params,
+                      name=name, params=params, rx_gain=rx_gain,
                       firmware=manifest['version'], build_hash=manifest['build_hash'], result='failed', forced=bool(force))
         db = Database(self.database, recover_pending=False)
         written = False
@@ -172,7 +176,7 @@ class ZoneFlasher:
             report = self.boot_report(port, runner)
             expected = dict(firmware=manifest['version'], mac=mac, channel=2, zone_type=profile['zone_type'],
                             point_id=point_id, name=name, db_version=publication.version, db_count=publication.count,
-                            db_crc=publication.crc)
+                            db_crc=publication.crc, rx_gain=rx_gain)
             if params:
                 expected['params'] = params
             mismatches = {k: (report or {}).get(k) for k, v in expected.items() if (report or {}).get(k) != v}
@@ -182,6 +186,7 @@ class ZoneFlasher:
                 store.seen(mac, dict(report, staging_version=0, staging_chunks=0, staging_total=0, uptime=0, tags=0,
                                      unknown_tags=0, send_fail=0), source='flash')
                 store.flashed(mac, profile_name, params)
+                store.settings(mac, dict(rx_gain=rx_gain, rx_gain_applied=report.get('rx_gain_applied'), set_result=None))
                 record.update(result='success', detail=f'{name} ({mac}) running {manifest["version"]} with database '
                                                        f'v{publication.version} ({publication.count} records)')
         except Exception as exc:
@@ -292,6 +297,8 @@ def main():
     parser.add_argument('--point', type=int, help='Zone point / radio ID')
     parser.add_argument('--name', help='Zone name (default from profile, max 15 bytes)')
     parser.add_argument('--param', type=float, action='append', default=[], help='Zone parameter in display units (pool: mm), in order')
+    parser.add_argument('--rx-gain', type=int, default=zonedb.RX_GAIN_DEFAULT, choices=zonedb.RX_GAINS,
+                        help='PN532 receiver gain in dB (default %(default)s)')
     parser.add_argument('--port', help='Serial port (default: the only flashable ESP32 connected)')
     parser.add_argument('--database', type=Path, default=DEFAULT_DATABASE)
     parser.add_argument('--build', action='store_true', help='Build the firmware before flashing')
@@ -329,7 +336,7 @@ def main():
         zone_build.build(profile['sketch'], runner)
     name = args.name or profile['name'].format(point=args.point)
     params = [round(v * spec[2]) for v, spec in zip(args.param, profile['params'])]
-    record = flasher.execute(port, args.profile, args.point, name, params, force=args.force)
+    record = flasher.execute(port, args.profile, args.point, name, params, force=args.force, rx_gain=args.rx_gain)
     raise SystemExit(0 if record['result'] == 'success' else 1)
 
 

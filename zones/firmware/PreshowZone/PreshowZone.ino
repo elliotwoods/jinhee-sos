@@ -2,6 +2,8 @@
 // NCT IMMERSIVE DEEP — PRESHOW TAGGING PLATE (points 1-4)
 //
 // ESP32-C3 SuperMini + PN532 I2C (SDA GPIO4 / SCL GPIO3), ESP-NOW channel 2.
+// Replacement plates are ex-cube XIAO ESP32-C3 boards with the reader on the labelled SDA/SCL pads
+// (D4/D5 = GPIO6/GPIO7); the plate finds the reader on either pair.
 // Tag -> cube turns PRESHOW (red) and TouchDesigner gets POINT <n> ON; tag removed -> OFF.
 //
 // The media bridge broadcasts a beacon; this plate latches its address and unicasts events
@@ -22,7 +24,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "preshow-3.2.0";
+constexpr const char *FIRMWARE_VERSION = "preshow-3.4.0";
 
 uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint8_t LEGACY_BRIDGE_MAC[6] = {PRESHOW_LEGACY_BRIDGE_MAC[0], PRESHOW_LEGACY_BRIDGE_MAC[1],
@@ -392,6 +394,8 @@ void setup() {
   options.firmware = FIRMWARE_VERSION;
   options.banner = "NCT PRESHOW TAG PLATE";
   options.zoneType = ZONE_PRESHOW;
+  options.altSdaPin = 6;  // XIAO ESP32-C3 D4
+  options.altSclPin = 7;  // XIAO ESP32-C3 D5
   plate.onTagEnter = tagEnter;
   plate.onTagLeave = tagLeave;
   plate.onFrame = mediaFrame;

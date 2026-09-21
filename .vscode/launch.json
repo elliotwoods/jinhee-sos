@@ -69,6 +69,18 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Mainshow Controller",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/zones/mainshow/app.py",
+      "args": [
+        "--connect"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Install prerequisites (both apps)",
       "type": "debugpy",
       "request": "launch",

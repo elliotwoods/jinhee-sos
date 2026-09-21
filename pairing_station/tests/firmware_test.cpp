@@ -79,8 +79,14 @@ int main() {
  cmd("{\"cmd\":\"zone_send\",\"id\":\"b3\",\"mac\":\"02:00:00:00:00:09\",\"hex\":\"4E5A0120070000000\"}");
  cmd("{\"cmd\":\"zone_send\",\"id\":\"b4\",\"mac\":\"03:00:00:00:00:09\",\"hex\":\"4E5A01200700000001\"}");
  assert(packets.size()==zoneBefore+2);
- assert(serialOutput.find("Identify/reboot must target one zone")!=std::string::npos);
+ assert(serialOutput.find("Identify/reboot/set-config must target one zone")!=std::string::npos);
  assert(serialOutput.find("Invalid zone frame")!=std::string::npos && serialOutput.find("Invalid zone MAC")!=std::string::npos);
+ // Set config (RX gain, 1.8): unicast only.
+ serialOutput.clear();
+ cmd("{\"cmd\":\"zone_send\",\"id\":\"sc\",\"mac\":\"02:00:00:00:00:09\",\"hex\":\"4E5A01255343464726\"}");
+ assert(packets.size()==zoneBefore+3 && packets.back().size()==9 && destinations.back()[5]==9);
+ cmd("{\"cmd\":\"zone_send\",\"id\":\"scb\",\"mac\":\"FF:FF:FF:FF:FF:FF\",\"hex\":\"4E5A01255343464726\"}");
+ assert(packets.size()==zoneBefore+3 && serialOutput.find("must target one zone")!=std::string::npos);
  // Received zone status frames are relayed as hex; cube-sized frames never enter the zone path.
  { uint8_t status[80]={'N','Z',1,0x21}; uint8_t zmac[6]={2,0,0,0,0,9}; esp_now_recv_info_t zi{zmac};
    serialOutput.clear(); receiveCallback(&zi,status,sizeof(status)); pollRadio();
@@ -89,6 +95,8 @@ int main() {
    wifi_pkt_rx_ctrl_t rx{}; rx.rssi=-71; esp_now_recv_info_t zr{zmac,nullptr,&rx};
    serialOutput.clear(); receiveCallback(&zr,status,sizeof(status)); pollRadio();
    assert(serialOutput.find("\"rssi\":-71")!=std::string::npos);  // signal strength for the zone manager
+   uint8_t settings[11]={'N','Z',1,0x26}; serialOutput.clear(); receiveCallback(&zi,settings,sizeof(settings)); pollRadio();
+   assert(serialOutput.find("\"event\":\"zone_frame\"")!=std::string::npos && serialOutput.find("4E5A0126")!=std::string::npos);
    uint8_t query[9]={'N','Z',1,0x20}; serialOutput.clear(); receiveCallback(&zi,query,sizeof(query)); pollRadio();
    assert(serialOutput.find("zone_frame")==std::string::npos); }
  puts("PASS: zone relay validation,  actual firmware fresh-tag gating, ACK filters, retries, flash timing, heartbeat, reconnect cleanup, UID rejection, peer cleanup");

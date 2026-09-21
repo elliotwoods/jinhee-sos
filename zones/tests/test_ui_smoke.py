@@ -101,7 +101,7 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(column(current, 'signal'), '—')  # no rssi reported (dongle firmware 1.6)
             self.assertEqual(manager_app.signal_text(-75), '▂▄· -75 dBm')
             self.assertEqual(manager_app.signal_text(-88), '▂·· -88 dBm')
-            self.assertIn('Flash dongle', app.radio_status['text'])  # 1.6 dongle: hint to update for signal bars
+            self.assertIn('Flash dongle', app.radio_status['text'])  # 1.6 dongle: hint to update (signal bars, RX gain)
             self.assertIn('1 out of date', app.summary['text'])
             self.assertIn('Published v3', app.published_label['text'])
             app.render(force=True)
@@ -112,6 +112,45 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(app.selected_label['text'], 'Selected: Desert 1')
             self.assertTrue(app.update_button.instate(['disabled']))  # already current
             self.assertFalse(app.identify_button.instate(['disabled']))
+            # RX gain: unknown until the zone reports it; set through a 1.8 dongle, settled only by the zone's report.
+            self.assertEqual(column(current, 'rx_gain'), '—')
+            settings = lambda gain, applied, result, nonce=0: zonedb.SETTINGS.pack(
+                b'NZ', 1, zonedb.ZONE_SETTINGS, nonce, gain, applied, result).hex()
+            app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=settings(48, 48, 0, 9)))
+            app.poll()
+            app.render(force=True)
+            self.assertEqual(column(current, 'rx_gain'), '48 dB')
+            self.assertFalse(app.gain_button.instate(['disabled']))
+            gain_frames = lambda: [m for m in sent if m.get('cmd') == 'zone_send'
+                                   and bytes.fromhex(m['hex'])[3] == zonedb.ZONE_SET_CONFIG]
+            with patch.object(manager_app, 'GainDialog') as dialog_class, \
+                    patch.object(manager_app.messagebox, 'showerror') as error:
+                dialog_class.return_value.result = 33
+                app.gain_button.invoke()  # the 1.6 dongle would reject the frame: refused here with the reason
+                error.assert_called_once()
+                self.assertIn('Flash dongle', error.call_args[0][1])
+                self.assertEqual(gain_frames(), [])
+                app.station['firmware'] = manager_app.dongle.FIRMWARE
+                app.gain_button.invoke()
+            [request] = gain_frames()
+            self.assertEqual((request['mac'], bytes.fromhex(request['hex'])), (current, zonedb.set_config_frame(33)))
+            app.render(force=True)
+            self.assertEqual(column(current, 'rx_gain'), '→ 33 dB …')
+            self.assertTrue(app.gain_button.instate(['disabled']))
+            app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=settings(48, 48, 0, 77)))  # routine query
+            app.poll()
+            self.assertEqual(app.zones.gain_requests[current][0], 33)
+            app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=settings(33, 33, zonedb.SET_OK)))
+            app.poll()
+            app.render(force=True)
+            self.assertEqual(column(current, 'rx_gain'), '33 dB')
+            self.assertNotIn(current, app.zones.gain_requests)
+            self.assertIn('RX gain 33 dB — ok', app.logbox.get('1.0', 'end'))
+            self.assertIn('RX gain 33 dB stored · reader 33 dB · last change: ok', app.detail.get('1.0', 'end'))
+            app.transport.inbox.put(dict(event='zone_frame', mac=current, hex=settings(33, 0, zonedb.SET_NOT_APPLIED)))
+            app.poll()
+            app.render(force=True)
+            self.assertEqual(column(current, 'rx_gain'), '33 dB (not applied)')
             app.tree.selection_set(zone)
             app.render(force=True)
             self.assertFalse(app.update_button.instate(['disabled']))
@@ -237,21 +276,31 @@ class UiSmokeTests(unittest.TestCase):
             window = flasher_app.App(self.root, Path(self.tmp.name) / 'devices.sqlite3')
             try:
                 self.assertEqual(window.name.get(), 'Preshow 1')
+                PLAN = [c[0] for c in flasher_app.PORT_COLUMNS].index('plan')
+                GAIN = [c[0] for c in flasher_app.PORT_COLUMNS].index('rx_gain')
+                self.assertEqual(window.form()['rx_gain'], 48)
                 window.scan_ports()
                 self.assertEqual(window.pending_detect, {'/dev/cu.station', '/dev/cu.zone'})
                 window.pending_detect.clear()
                 window.handle('detected', ('/dev/cu.station', dict(kind='station', label='Pairing station (protected)', mac=station['serial'], profile=None)))
                 window.handle('detected', ('/dev/cu.zone', dict(kind='nctzone', label='NctZone firmware', mac=zone['serial'], firmware='pool-2.0.0',
                               profile='pool', configured=True, point=4, name='Pool Radio 4', zone_type=3, params=[3830, 435],
-                              db_version=1, db_count=32, db_crc=5)))
+                              db_version=1, db_count=32, db_crc=5, source='serial report', rx_gain=38, rx_gain_applied=None)))
                 window.scan_ports()
                 # The detected identity fills the form, including calibration parameters.
                 self.assertEqual((window.profile_key(), window.point.get(), window.name.get()), ('pool', 4, 'Pool Radio 4'))
                 self.assertEqual([v.get() for v in window.param_vars], ['383.0', '43.5'])
                 self.assertEqual(window.form()['params'], [3830, 435])
+                self.assertEqual(window.form()['rx_gain'], 38)  # the board's gain, kept when reflashing
                 rows = {iid: window.port_tree.item(iid, 'values') for iid in window.port_tree.get_children()}
-                self.assertIn('REFUSE', rows['/dev/cu.station'][6])
-                self.assertIn('FLASH', rows['/dev/cu.zone'][6])
+                self.assertEqual(rows['/dev/cu.zone'][GAIN], '38 dB (not applied)')
+                self.assertEqual(rows['/dev/cu.station'][GAIN], '—')
+                self.assertEqual(window.plan_for('/dev/cu.zone', auto=False)['rx_gain'], 38)
+                window.rx_gain.set('23')
+                self.assertEqual(window.plan_for('/dev/cu.zone', auto=False)['rx_gain'], 23)
+                self.assertEqual(window.plan_for('/dev/cu.zone', auto=True)['rx_gain'], 38)  # auto-flash keeps the board's
+                self.assertIn('REFUSE', rows['/dev/cu.station'][PLAN])
+                self.assertIn('FLASH', rows['/dev/cu.zone'][PLAN])
                 self.assertEqual(list(window.monitor_ports['values']), ['/dev/cu.zone'])
                 # Switching zone type relabels the form and hides parameters.
                 window.profile_label.set(zone_build_labels['desert'])
@@ -272,7 +321,7 @@ class UiSmokeTests(unittest.TestCase):
                     window.scan_ports()
                     self.assertEqual(window.detections['/dev/cu.legacy']['label'], 'Legacy PreshowZone plate')
                     self.assertEqual(window.pending_detect, set())
-                    self.assertIn('FLASH', window.port_tree.item('/dev/cu.legacy', 'values')[6])
+                    self.assertIn('FLASH', window.port_tree.item('/dev/cu.legacy', 'values')[PLAN])
                     window.port_tree.selection_set('/dev/cu.legacy')
                     window.detect_selected()      # "Detect again" does identify again
                     self.assertEqual(window.pending_detect, {'/dev/cu.legacy'})

@@ -65,6 +65,8 @@ def from_report(report):
         detection.update(point=report['point_id'], name=report['name'], zone_type=report['zone_type'])
     if report.get('params'):
         detection['params'] = report['params']
+    if report.get('rx_gain'):
+        detection.update(rx_gain=report['rx_gain'], rx_gain_applied=report.get('rx_gain_applied'))
     return detection
 
 
@@ -108,7 +110,8 @@ def from_flash(mac, db, read):
             if params:
                 candidates = [k for k in candidates if zone_build.PROFILES[k]['params']] or candidates
             detection.update(point=config['point_id'], name=config['name'], zone_type=config['zone_type'],
-                             profile=candidates[0] if candidates else None, ambiguous=len(candidates) > 1)
+                             profile=candidates[0] if candidates else None, ambiguous=len(candidates) > 1,
+                             rx_gain=config['rx_gain'])
             if params:
                 detection['params'] = params
         return detection
@@ -128,11 +131,13 @@ def forceable(detection):
 
 
 def plan(detection, form, manifests, published, auto=False, allow_unidentified=False, force=False):
-    """Decide what flashing this board would do. Returns dict(action=flash|skip|refuse|ask, reason, profile, point, name, params).
+    """Decide what flashing this board would do.
+    Returns dict(action=flash|skip|refuse|ask, reason, profile, point, name, params, rx_gain).
 
     `force` (manual flashing only, never auto) overrides a refusal for anything `forceable`."""
     kind = detection['kind']
-    chosen = dict(profile=form['profile'], point=form['point'], name=form['name'], params=list(form.get('params') or []))
+    chosen = dict(profile=form['profile'], point=form['point'], name=form['name'], params=list(form.get('params') or []),
+                  rx_gain=form.get('rx_gain', zonedb.RX_GAIN_DEFAULT))
     if kind in NOT_FLASHABLE:
         if force and not auto and forceable(detection):
             return dict(chosen, action='flash', force=True, reason=f'FORCED over refusal: {NOT_FLASHABLE[kind]}')
@@ -144,7 +149,9 @@ def plan(detection, form, manifests, published, auto=False, allow_unidentified=F
         params = detection.get('params') or []
         if len(params) != len(profile['params']):
             return dict(action='ask', reason='Zone parameters are missing on the board; flash it manually once')
-        keep = dict(profile=detection['profile'], point=detection['point'], name=detection['name'], params=list(params))
+        # A board reporting no gain runs firmware older than the setting, which always used the default.
+        keep = dict(profile=detection['profile'], point=detection['point'], name=detection['name'], params=list(params),
+                    rx_gain=detection.get('rx_gain') or zonedb.RX_GAIN_DEFAULT)
         manifest = manifests.get(profile['sketch'])
         current = (manifest and detection.get('firmware') == manifest['version'] and published['version'] and
                    detection.get('db_version') == published['version'] and detection.get('db_crc') == published['crc'])

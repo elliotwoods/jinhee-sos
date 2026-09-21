@@ -24,7 +24,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "pool-3.1.0";
+constexpr const char *FIRMWARE_VERSION = "pool-3.2.0";
 // Embedded by the zone builder for exact-source update detection.
 #ifndef POOL_BUILD_ID
 #define POOL_BUILD_ID unknown

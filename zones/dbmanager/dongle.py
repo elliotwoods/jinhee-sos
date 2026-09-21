@@ -39,7 +39,7 @@ class Firmware:
 
 
 # `version` is what the board must report in `hello`.
-PAIRING = Firmware('pairing-station relay', 'nct-pairing-1.7-zones',  # 1.7 adds signal strength
+PAIRING = Firmware('pairing-station relay', 'nct-pairing-1.8-zones',  # 1.7 adds signal strength, 1.8 RX gain control
                    ROOT / 'pairing_station/firmware/pairing_station', ROOT / 'pairing_station/build',
                    (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware/libraries'))
 MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.2.0', ROOT / 'zones/firmware/MainshowController',

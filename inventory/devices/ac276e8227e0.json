@@ -3,7 +3,7 @@
   "detail": "Cube acknowledged; flash persistence not verified",
   "mac": "AC:27:6E:82:27:E0",
   "pending_uid": null,
-  "role": "auto",
+  "role": "excluded",
   "source": "usb",
   "status": "acknowledged",
   "uid": "53:07:D5:CF:33:00:01",

@@ -37,6 +37,8 @@ class ZoneFlasherTests(unittest.TestCase):
         self.calls, self.events = [], []
         self.mac, self.corrupt_readback, self.report = MAC, False, 'match'
         self.zone_line = 'ZONE: type=1 point=2 name=Preshow 2'
+        self.gain_line = None  # default: the board reports the gain it was flashed with, applied
+        self.flashed_gain = None
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -77,10 +79,13 @@ class ZoneFlasherTests(unittest.TestCase):
             return None
         text = (f'FW: preshow-2.0.0\nMAC: {self.mac}\nCHANNEL: 2\n{self.zone_line}\n'
                 f'DB: version={publication.version} count={publication.count} crc={publication.crc:08X} slot=A capacity=1819\n'
-                'STATS: tags=0 unknown=0 send_fail=0 error=0\nREADY\n')
+                'STATS: tags=0 unknown=0 send_fail=0 error=0\n'
+                f'NFC: ok=1 fw=32010607\n{self.gain_line or f"RXGAIN: stored={self.flashed_gain}dB applied={self.flashed_gain}dB"}\n'
+                'READY\n')
         return parse_report(text)
 
-    def execute(self, point=2, name='Preshow 2', profile='preshow', params=(), force=False):
+    def execute(self, point=2, name='Preshow 2', profile='preshow', params=(), force=False, rx_gain=48):
+        self.flashed_gain = rx_gain
         with patch.object(zone_flash, 'DATA', self.root / 'data'), \
                 patch('zone_flash.Runner.__call__', side_effect=self.fake_tool), \
                 patch('zone_flash.ports', return_value=[self.port]), \
@@ -88,7 +93,7 @@ class ZoneFlasherTests(unittest.TestCase):
                 patch('zone_build.build_dir', return_value=self.build), \
                 patch.object(ZoneFlasher, 'boot_report', side_effect=self.boot):
             return ZoneFlasher(self.db_path, lambda *e: self.events.append(e)).execute(self.port, profile, point, name, params,
-                                                                                   force=force)
+                                                                                   force=force, rx_gain=rx_gain)
 
     def test_success_writes_identity_database_and_records_zone(self):
         record = self.execute()
@@ -103,7 +108,7 @@ class ZoneFlasherTests(unittest.TestCase):
         run = Path(write[write.index('0x211000') + 1]).parent
         slot = zonedb.parse_slot((run / 'zdb_a.bin').read_bytes())
         self.assertEqual((slot['version'], slot['count']), (1, 32))
-        self.assertEqual(zonedb.parse_config((run / 'zcfg.bin').read_bytes()), dict(zone_type=1, point_id=2, name='Preshow 2'))
+        self.assertEqual(zonedb.parse_config((run / 'zcfg.bin').read_bytes()), dict(zone_type=1, point_id=2, name='Preshow 2', rx_gain=48))
         self.assertEqual(sum('0x400000' in c for c in self.calls), 1)  # first flash backs up
         self.assertEqual(self.calls[-1][self.calls[-1].index('--after') + 1], 'watchdog-reset')
         self.assertTrue(all(c[c.index('--before') + 1] == 'no-reset' for c in self.calls[2:] if '--before' in c))
@@ -167,6 +172,32 @@ class ZoneFlasherTests(unittest.TestCase):
         self.corrupt_readback, self.report = False, None
         self.assertEqual(self.execute()['result'], 'boot_unconfirmed')
 
+    def test_rx_gain_is_written_checked_at_boot_and_recorded(self):
+        record = self.execute(rx_gain=33)
+        self.assertEqual(record['result'], 'success', record.get('detail'))
+        self.assertEqual(record['rx_gain'], 33)
+        write = next(c for c in self.calls if 'write-flash' in c)
+        zcfg = Path(write[write.index('0x210000') + 1]).read_bytes()
+        self.assertEqual(zcfg[7], 33)
+        self.assertEqual(zonedb.parse_config(zcfg)['rx_gain'], 33)
+        db = Database(self.db_path)
+        zone = ZoneStore(db).zones()[0]
+        db.close()
+        self.assertEqual((zone['rx_gain'], zone['rx_gain_applied']), (33, 33))
+        # A board still storing another gain after the flash is not a success.
+        self.gain_line = 'RXGAIN: stored=48dB applied=48dB'
+        self.assertEqual(self.execute(rx_gain=33)['result'], 'boot_unconfirmed')
+        with self.assertRaises(ValueError):
+            self.execute(rx_gain=40)
+
+    def test_report_parses_rx_gain(self):
+        base = f'FW: preshow-3.3.0\nMAC: {MAC}\nCHANNEL: 2\nDB: version=1 count=2 crc=0000ABCD slot=A capacity=1819\n'
+        report = parse_report(base + 'RXGAIN: stored=38dB applied=?\nREADY\n')
+        self.assertEqual((report['rx_gain'], report['rx_gain_applied']), (38, None))
+        report = parse_report(base + 'RXGAIN: stored=23dB applied=23dB\nREADY\n')
+        self.assertEqual((report['rx_gain'], report['rx_gain_applied']), (23, 23))
+        self.assertNotIn('rx_gain', parse_report(base + 'READY\n'))  # firmware before the setting
+
     def test_pool_profile_writes_calibration_params(self):
         self.zone_line = 'ZONE: type=3 point=4 name=Pool Radio 4\nPOOL: radio=4 cal1=383.0 cal23=43.5 laser=ok member=-1'
         with self.assertRaises(ValueError):
@@ -175,7 +206,7 @@ class ZoneFlasherTests(unittest.TestCase):
         self.assertEqual(record['result'], 'success', record.get('detail'))
         write = next(c for c in self.calls if 'write-flash' in c)
         zcfg = Path(write[write.index('0x210000') + 1]).read_bytes()
-        self.assertEqual(zonedb.parse_config(zcfg), dict(zone_type=3, point_id=4, name='Pool Radio 4'))
+        self.assertEqual(zonedb.parse_config(zcfg), dict(zone_type=3, point_id=4, name='Pool Radio 4', rx_gain=48))
         self.assertEqual(zonedb.parse_params(zcfg), [3830, 435])
         db = Database(self.db_path)
         zone = ZoneStore(db).zones()[0]

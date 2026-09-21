@@ -25,7 +25,8 @@ from sync_widget import SyncWidget  # noqa: E402  (universal web Sync: inventory
 BG, CARD, FG, MUTED = '#101720', '#1b2633', '#e9f0f7', '#9aafc4'
 GREEN, AMBER, RED, BLUE = '#54d6a0', '#ffc16b', '#ff7a8a', '#82b8fa'
 PORT_COLUMNS = [('port', 'USB port', 170), ('mac', 'MAC', 135), ('detected', 'Detected', 210), ('identity', 'Zone identity', 150),
-                ('firmware', 'Firmware', 110), ('database', 'Database', 110), ('plan', 'Plan / result', 330)]
+                ('firmware', 'Firmware', 110), ('rx_gain', 'RX gain', 80), ('database', 'Database', 110),
+                ('plan', 'Plan / result', 330)]
 HISTORY_COLUMNS = [('time', 'Time', 70), ('cube', 'Neocube', 80), ('uid', 'NFC UID', 170), ('mac', 'MAC', 140),
                    ('result', 'Zone command', 150), ('held', 'On plate', 80), ('registry', 'Registry', 170)]
 
@@ -166,6 +167,14 @@ class App:
         self.points.grid(row=0, column=3, sticky='w')
         ttk.Label(form, text='Name').grid(row=0, column=4, sticky='w', padx=(18, 8))
         ttk.Entry(form, textvariable=self.name, width=18).grid(row=0, column=5, sticky='w')
+        # PN532 receiver gain stored in zcfg; the Zone Database Manager can also change it over the air.
+        self.rx_gain = tk.StringVar(value=str(zonedb.RX_GAIN_DEFAULT))
+        ttk.Label(form, text='RX gain').grid(row=0, column=6, sticky='w', padx=(18, 8))
+        self.rx_gain_box = ttk.Combobox(form, textvariable=self.rx_gain, values=[str(g) for g in zonedb.RX_GAINS],
+                                        state='readonly', width=4)
+        self.rx_gain_box.grid(row=0, column=7, sticky='w')
+        ttk.Label(form, text='dB', foreground=MUTED).grid(row=0, column=8, sticky='w', padx=(4, 0))
+        self.rx_gain_box.bind('<<ComboboxSelected>>', lambda _: self.refresh_plans())
         self.param_vars, self.param_widgets = [tk.StringVar(), tk.StringVar()], []
         for i, var in enumerate(self.param_vars):
             label = ttk.Label(form, text='')
@@ -239,7 +248,8 @@ class App:
                 params.append(round(float(var.get()) * scale))
             except ValueError:
                 raise ValueError(f'Enter a number for "{label}"')
-        return dict(profile=self.profile_key(), point=self.point.get(), name=self.name.get().strip(), params=params)
+        return dict(profile=self.profile_key(), point=self.point.get(), name=self.name.get().strip(), params=params,
+                    rx_gain=int(self.rx_gain.get()))
 
     def fill_form(self, detection):
         if not detection.get('profile'):
@@ -254,6 +264,7 @@ class App:
             self.name.set(detection['name'])
         for var, value, spec in zip(self.param_vars, detection.get('params') or [], profile['params']):
             var.set(str(value / spec[2]))
+        self.rx_gain.set(str(detection.get('rx_gain') or zonedb.RX_GAIN_DEFAULT))
 
     # ------------------------------------------------------------------ ports, detection, plans
     def manifests(self):
@@ -345,7 +356,10 @@ class App:
                 values, tag = dict(detected='Identifying…' if port in self.pending_detect else '—', plan=''), 'muted'
             else:
                 identity = f'{d.get("name")} · point {d.get("point")}' if d.get('configured') or d.get('name') else '—'
+                gain = d.get('rx_gain')
                 values = dict(mac=d.get('mac') or '', detected=d['label'], identity=identity, firmware=d.get('firmware') or '—',
+                              rx_gain=('—' if not gain else f'{gain} dB' if d.get('source') != 'serial report'
+                                       or d.get('rx_gain_applied') == gain else f'{gain} dB (not applied)'),
                               database=f'v{d["db_version"]} · {d["db_count"]} rec' if 'db_version' in d else '—',
                               plan=(result or (plan['action'].upper() + ' · ' + plan['reason'])))
                 tag = ('ok' if result and result.startswith('SUCCESS') else 'bad' if result else
@@ -433,7 +447,8 @@ class App:
 
         def work():
             record = ZoneFlasher(self.database, self.emit).execute(info, plan['profile'], plan['point'], plan['name'], plan['params'],
-                                                                   force=plan.get('force', False))
+                                                                   force=plan.get('force', False),
+                                                                   rx_gain=plan.get('rx_gain', zonedb.RX_GAIN_DEFAULT))
             self.emit('flashed', (port, record, auto))
         return self.run(f'{"FORCE-f" if plan.get("force") else "F"}lashing "{plan["name"]}" on {port}…', work, port)
 
@@ -461,7 +476,8 @@ class App:
         warning = '\n\nFORCED: overriding the refusal above.' if plan.get('force') else ''
         if detection.get('profile') and detection['profile'] != plan['profile']:
             warning += f'\n\nNOTE: this board was identified as "{zone_build.PROFILES[detection["profile"]]["label"]}".'
-        if messagebox.askokcancel('Flash zone', f'Flash {profile["label"]} as "{plan["name"]}" (point {plan["point"]}) on\n'
+        if messagebox.askokcancel('Flash zone', f'Flash {profile["label"]} as "{plan["name"]}" (point {plan["point"]}, '
+                                  f'RX gain {plan.get("rx_gain", zonedb.RX_GAIN_DEFAULT)} dB) on\n'
                                   f'{port} ({detection.get("mac", "?")})?{warning}', parent=self.root):
             self.flash(port, plan)
 

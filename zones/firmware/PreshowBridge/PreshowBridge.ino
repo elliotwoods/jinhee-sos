@@ -37,6 +37,7 @@ using namespace nctzone;
 constexpr const char *FIRMWARE_VERSION = "preshowbridge-1.0.0";
 constexpr uint8_t CHANNEL = ESPNOW_CHANNEL;
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+constexpr uint32_t CDC_TX_TIMEOUT_MS = 8;  // see the note in setup()
 
 // Latest frame per SENDER, handed over by the Wi-Fi task. Keyed by the ESP-NOW source
 // address rather than the point id in the packet, so two plates configured alike cannot
@@ -89,7 +90,11 @@ void logLine(const char *format, ...) {
   if (count < 0) return;
   size_t length = size_t(count) < sizeof(line) - 2 ? size_t(count) : sizeof(line) - 2;
   line[length++] = '\n';
-  if (Serial && Serial.availableForWrite() >= int(length)) Serial.write((const uint8_t *)line, length);
+  // Backpressure is the only gate, deliberately. `if (Serial)` on a native USB-JTAG C3 is
+  // HWCDC's own notion of "host attached", and if it were ever false while something really
+  // was reading, cue lines would be dropped silently — the worst failure this firmware has.
+  // availableForWrite() answers the question that actually matters: can this be written now.
+  if (Serial.availableForWrite() >= int(length)) Serial.write((const uint8_t *)line, length);
   else ++logDrops;
 }
 
@@ -235,7 +240,8 @@ void emitCues() {
     char line[24];
     int count = snprintf(line, sizeof(line), "PRESHOW,%u,%s\n", point, want ? "ON" : "OFF");
     if (count <= 0) continue;
-    if (!Serial || Serial.availableForWrite() < count) { ++cueDrops; continue; }
+    // Backpressure only — see the note in logLine() about why `if (Serial)` must not gate this.
+    if (Serial.availableForWrite() < count) { ++cueDrops; continue; }
     Serial.write((const uint8_t *)line, size_t(count));
     if (want) emittedMask |= bit; else emittedMask &= uint8_t(~bit);
     ++cues;
@@ -338,7 +344,12 @@ void serialCommands() {
 void setup() {
   Serial.setTxBufferSize(4096);
   Serial.begin(115200);
-  Serial.setTxTimeoutMs(0);
+  // Small, not zero. Serial here is HWCDC over native USB; a few milliseconds lets a write
+  // wait for the host's next poll instead of giving up the instant the ring is momentarily
+  // full, which matters when the line being written is a show cue. It is also the entire
+  // budget a write can ever consume, which nothing here can notice: the beacon is every
+  // 500 ms and a cue line is fourteen bytes into a 4 KB buffer.
+  Serial.setTxTimeoutMs(CDC_TX_TIMEOUT_MS);
   delay(500);
 
   for (auto &s : senders) s = PreshowSender{};

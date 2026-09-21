@@ -2,9 +2,9 @@
 """Zone Database Manager: find zones over ESP-NOW, see their database versions, update them.
 
 The ESP-NOW dongle is any ESP32-C3 running the pairing-station firmware (its zone relay needs no
-NFC reader); "Flash dongle…" installs that firmware. Zone firmware is unchanged: updates use the
-existing announce/chunk frames, and zones accept only a higher database version. Versions are
-universal, allocated by the web inventory when a new database is published (zone_publish.py).
+NFC reader); "Flash dongle…" installs that firmware. Updates use the announce/chunk frames, and
+zones accept only a higher database version. Set RX gain… stores a zone's PN532 gain (ZONE_SET_CONFIG).
+Versions are universal, allocated by the web inventory when a new database is published (zone_publish.py).
 
 Threading: serial I/O runs in Transport's worker, web and flashing in worker threads. Tk widgets
 and SQLite are only touched from the Tk poll callback.
@@ -35,7 +35,7 @@ BG = '#101720'; CARD = '#1b2633'; FG = '#e9f0f7'; MUTED = '#9aafc4'
 GREEN = '#54d6a0'; BLUE = '#82b8fa'; AMBER = '#ffc16b'; RED = '#ff7b7b'
 DATA = ROOT / 'pairing_station' / 'data'
 COLUMNS = [('name', 'Zone', 130), ('signal', 'Signal', 120), ('kind', 'Type · point', 110), ('mac', 'MAC', 145),
-           ('firmware', 'Firmware', 110),
+           ('firmware', 'Firmware', 110), ('rx_gain', 'RX gain', 90),
            ('db', 'Database', 170), ('state', 'State', 120), ('staging', 'Update', 90), ('seen', 'Last seen', 90),
            ('error', 'Last error', 170)]
 STATE_TEXT = {'current': '✓ current', 'behind': '↑ out of date', 'updating': '… updating', 'ahead': '⚠ newer / differs',
@@ -52,6 +52,16 @@ def signal_text(rssi):
     return f'{bars} {round(rssi)} dBm'
 
 
+def gain_text(z):
+    """Stored PN532 RX gain; flags a requested change in flight or a reader that has not taken the setting."""
+    if z.get('rx_gain_pending') is not None:
+        return f'→ {z["rx_gain_pending"]} dB …'
+    if z.get('rx_gain') is None:
+        return '—'  # zone firmware or dongle too old to report it
+    text = f'{z["rx_gain"]} dB'
+    return text if z.get('rx_gain_applied') == z['rx_gain'] else text + ' (not applied)'
+
+
 def age_text(age):
     return '—' if age is None else f'{int(age)} s' if age < 120 else f'{int(age // 60)} min' if age < 7200 else f'{int(age // 3600)} h'
 
@@ -59,6 +69,44 @@ def age_text(age):
 def progress_text(fraction, width=12):
     filled = round(fraction * width)
     return '█' * filled + '░' * (width - filled) + f' {int(fraction * 100):>3}%'
+
+
+class GainDialog:
+    """Modal choice of a zone's PN532 RX gain. `result` is the chosen dB, or None when cancelled."""
+
+    def __init__(self, root, zone_name, current, reported=True):
+        self.result = None
+        top = self.top = tk.Toplevel(root)
+        top.title('Set RX gain')
+        top.configure(bg=BG)
+        top.transient(root)
+        frame = ttk.Frame(top, padding=16); frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text=f'NFC reader RX gain for {zone_name}', font=('Helvetica', 14, 'bold')).pack(anchor='w')
+        ttk.Label(frame, text=(f'Currently {current} dB.' if reported else 'This zone has not reported a gain yet '
+                               '(older firmware ignores the request).') +
+                  '\nHigher gain reads weakly coupled tags but also amplifies noise. 48 dB is the default.\n'
+                  'The zone stores it and applies it at once; no reboot.', foreground=MUTED, justify='left').pack(anchor='w', pady=(4, 10))
+        self.var = tk.StringVar(value=str(current))
+        row = ttk.Frame(frame); row.pack(anchor='w')
+        self.combo = ttk.Combobox(row, textvariable=self.var, values=[str(g) for g in zonedb.RX_GAINS], width=6, state='readonly')
+        self.combo.pack(side='left')
+        ttk.Label(row, text='dB').pack(side='left', padx=(4, 0))
+        buttons = ttk.Frame(frame); buttons.pack(fill='x', pady=(14, 0))
+        ttk.Button(buttons, text='Set', style='Accent.TButton', command=self.ok).pack(side='right')
+        ttk.Button(buttons, text='Cancel', command=top.destroy).pack(side='right', padx=(0, 6))
+        top.bind('<Return>', lambda _: self.ok())
+        top.bind('<Escape>', lambda _: top.destroy())
+        top.update_idletasks()
+        top.geometry(f'+{root.winfo_rootx() + 80}+{root.winfo_rooty() + 80}')
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        root.wait_window(top)
+
+    def ok(self):
+        self.result = int(self.var.get())
+        self.top.destroy()
 
 
 class UpdateDialog:
@@ -316,6 +364,8 @@ class App:
         self.log_button.pack(side='left', padx=(6, 0))
         self.reboot_button = ttk.Button(selection, text='Reboot', command=lambda: self.action(self.reboot))
         self.reboot_button.pack(side='left', padx=(6, 0))
+        self.gain_button = ttk.Button(selection, text='Set RX gain…', command=lambda: self.action(self.set_rx_gain))
+        self.gain_button.pack(side='left', padx=(6, 0))
 
         bottom = ttk.Frame(outer); bottom.pack(fill='x')
         self.detail = tk.Text(bottom, height=8, width=70, bg=CARD, fg=FG, relief='flat', font=('Menlo', 10), state='disabled')
@@ -445,7 +495,8 @@ class App:
             return
         old = firmware != dongle.FIRMWARE
         self.radio_status.configure(text=f'Connected · {event.get("mac")} · {firmware} · channel 2' +
-                                    (f' · no signal bars: Flash dongle… updates it to {dongle.FIRMWARE}' if old else ''),
+                                    (f' · older relay (no RX gain control): Flash dongle… updates it to {dongle.FIRMWARE}'
+                                     if old else ''),
                                     foreground=AMBER if old else GREEN)
         if not was:
             self.log(f'Dongle ready: {event.get("mac")} · {firmware}')
@@ -608,6 +659,19 @@ class App:
                                   'seconds.', parent=self.root):
             self.zones.reboot(zone['mac'])
 
+    def set_rx_gain(self):
+        self.require_dongle()
+        firmware = (self.station or {}).get('firmware', '')
+        if firmware != dongle.FIRMWARE:
+            raise ValueError(f'The dongle runs {firmware or "unknown firmware"}; setting the RX gain needs '
+                             f'{dongle.FIRMWARE}. Use Flash dongle… first.')
+        zone = self.selected_zone()
+        current = zone.get('rx_gain') or zonedb.RX_GAIN_DEFAULT
+        gain = GainDialog(self.root, zone['name'] or zone['mac'], current, reported=zone.get('rx_gain') is not None).result
+        if gain is not None:
+            self.zones.set_rx_gain(zone['mac'], gain)
+            self.set_status(f'RX gain {gain} dB sent to {zone["name"] or zone["mac"]}: waiting for the zone to confirm', BLUE)
+
     # ---------- web ----------
     def synced(self, result):
         """After a Sync: the published zone database may have changed; show it and log what moved."""
@@ -724,6 +788,8 @@ class App:
                                 (self.update_all_button, self.connected and not self.zones.publication
                                  and any(z['state'] == 'behind' for z in in_range)),
                                 (self.identify_button, on_air), (self.log_button, on_air), (self.reboot_button, on_air),
+                                (self.gain_button, on_air and chosen['in_range'] and chosen['config_valid']
+                                 and chosen.get('rx_gain_pending') is None),
                                 (self.stop_button, bool(self.zones.publication or self.walk_var.get())),
                                 (self.flash_button, not busy), (self.connect_button, self.busy != 'flash'),
                                 (self.rescan_button, self.busy != 'flash')]:
@@ -745,6 +811,7 @@ class App:
         for index, z in enumerate(shown):
             values = dict(
                 name=z['name'] or '—', signal=signal_text(z.get('rssi')) if z['in_range'] else '—', kind=f'{z["zone_label"]} · {z["point_id"]}', mac=z['mac'], firmware=z['firmware'] or '—',
+                rx_gain=gain_text(z),
                 db=f'v{z["db_version"]} · {z["db_count"]} rec · {z["db_crc"] or 0:08X}',
                 state=STATE_TEXT.get(z['state'], z['state']),
                 staging=(f'v{z["staging_version"]} {z["staging_chunks"]}/{z["staging_total"]}' if z['staging_version'] else '—'),
@@ -764,7 +831,12 @@ class App:
                      f'Database v{z["db_version"]} · {z["db_count"]} records · CRC {z["db_crc"] or 0:08X} · slot '
                      f'{"-AB"[z["active_slot"] or 0]} · state {STATE_TEXT.get(z["state"], z["state"])}',
                      f'Uptime {z["uptime"]} s · channel {z["channel"]} · config {"valid" if z["config_valid"] else "INVALID"} · '
-                     f'tags {z["tags"]} / unknown {z["unknown_tags"]} / send fail {z["send_fail"]}']
+                     f'tags {z["tags"]} / unknown {z["unknown_tags"]} / send fail {z["send_fail"]}',
+                     (f'RX gain {z["rx_gain"]} dB stored · reader '
+                      f'{str(z["rx_gain_applied"]) + " dB" if z["rx_gain_applied"] else "not applied"}'
+                      + (f' · last change: {zonedb.SET_RESULTS.get(z["set_result"], z["set_result"])}' if z['set_result'] else '')
+                      if z['rx_gain'] is not None else
+                      'RX gain not reported (zone firmware before 2.4 / pool-3.2 / preshow-3.3, or dongle before 1.8)')]
             if z['log']:
                 lines.append(f'Recent tags (received {z["log"]["received"]}):')
                 lines += [f'  {e["age_s"]:>5} s ago  {e["uid"]:<21} cube {e["cube_id"] or "—":<5} {e["result"]}'

@@ -19,6 +19,10 @@ struct TagPlateOptions {
   const char *banner = "NCT TAG PLATE";
   uint8_t zoneType = 0;        // zone sent to cubes; 0 = use the zone type stored in zcfg
   int sdaPin = 4, sclPin = 3;  // field-proven PN532 wiring
+  // Optional second PN532 wiring, tried when the reader does not answer on sdaPin/sclPin, e.g. 6/7 for a reader on
+  // the XIAO ESP32-C3's labelled SDA/SCL pads (D4/D5). The pair the reader answers on is kept. -1 = none: leave it
+  // off where anything else shares or sits on those pins (the pool slider shares the reader's bus).
+  int altSdaPin = -1, altSclPin = -1;
   bool nfcEnabled = true;     // local sensor calibration can bypass reader initialization/polling
   int ledPin = 8;              // SuperMini onboard LED (active low)
   bool repeatZone = true;      // re-send the tapped cube's colour (see ZONE_REPEAT_MS)
@@ -83,11 +87,13 @@ class TagPlate {
     Serial.printf("DB: slot=%d version=%lu count=%u\n", slot, (unsigned long)db.version(), db.count());
 
     // The PN532 stays powered across ESP32 resets; a reset mid-transaction can leave it holding the bus.
+    altPins_ = false;
     bool busClear = recoverBus();
     delay(300);
     nfcOk = false;
-    for (int attempt = 0; options_.nfcEnabled && attempt < 3 && !nfcOk && busClear; attempt++) {
-      nfcOk = beginNfc();
+    for (int attempt = 0; options_.nfcEnabled && attempt < 3 && !nfcOk; attempt++) {
+      if (attempt) busClear = recoverBus();
+      nfcOk = findNfc(busClear);
       if (!nfcOk) delay(400);
     }
     Serial.println(!options_.nfcEnabled ? "PN532 disabled" : nfcOk ? "PN532 FOUND" : busClear ? "PN532 NOT FOUND (radio continues; retrying)"
@@ -111,15 +117,53 @@ class TagPlate {
   }
 
   void printNfc() {
-    Serial.printf("NFC: ok=%u fw=%08lX polls=%lu found=%lu last_ms=%lu max_ms=%lu fast_fail=%lu recoveries=%lu sda=%d scl=%d\n",
+    Serial.printf("NFC: ok=%u fw=%08lX polls=%lu found=%lu last_ms=%lu max_ms=%lu fast_fail=%lu recoveries=%lu sda=%d scl=%d pins=%d/%d\n",
                   nfcOk, (unsigned long)nfcVersion_, (unsigned long)nfcPolls_, (unsigned long)nfcFound_,
                   (unsigned long)nfcLastMs_, (unsigned long)nfcMaxMs_, (unsigned long)nfcFastFails_,
-                  (unsigned long)nfcRecoveries_, digitalRead(options_.sdaPin), digitalRead(options_.sclPin));
+                  (unsigned long)nfcRecoveries_, digitalRead(sdaPin()), digitalRead(sclPin()), sdaPin(), sclPin());
+  }
+
+  uint8_t rxGainStored() const { return effectiveRxGain(configOk ? config.rxGainDb : 0); }
+
+  void printRxGainSetting() {
+    uint8_t applied = link.rxGainApplied();
+    if (applied) Serial.printf("RXGAIN: stored=%udB applied=%udB\n", rxGainStored(), applied);
+    else Serial.printf("RXGAIN: stored=%udB applied=?\n", rxGainStored());
+  }
+
+  // Store a new PN532 RX gain in zcfg and apply it to the reader without a reboot. Used by the serial
+  // "rxgain" command and ZONE_SET_CONFIG. Runs on loop(): flash erase and I2C are not for the Wi-Fi task.
+  uint8_t changeRxGain(uint8_t db) {
+    uint8_t result;
+    if (!validRxGain(db)) {
+      result = SET_INVALID;
+    } else if (!configOk) {
+      result = SET_UNCONFIGURED;
+    } else {
+      ZoneConfig updated = config;
+      updated.rxGainDb = db;
+      if (!saveConfig(configStorage_, updated, params, paramsOk)) {
+        // The erase may have run: reload whatever is there so the report matches the flash.
+        configOk = loadConfig(configStorage_, config);
+        paramsOk = loadParams(configStorage_, params);
+        result = SET_FLASH_FAILED;
+      } else {
+        config = updated;
+        result = options_.nfcEnabled && nfcOk && setRxGain(db) ? SET_OK : SET_NOT_APPLIED;
+        if (result == SET_NOT_APPLIED) link.setRxGainApplied(0);
+      }
+    }
+    static const char *const NAMES[] = {"none", "ok", "invalid value", "zone unconfigured", "flash write failed",
+                                        "stored, reader did not accept it"};
+    Serial.printf("RXGAIN SET %udB: %s\n", db, NAMES[result]);
+    link.configApplied(config, configOk, result);
+    return result;
   }
 
   void printReport() {
     link.printReport(false);
     printNfc();
+    printRxGainSetting();
     if (onReport) onReport();
     Serial.println("READY");
   }
@@ -127,6 +171,8 @@ class TagPlate {
   void loop() {
     pollSerial();
     link.poll();
+    uint8_t requestedGain;
+    if (link.takeConfigRequest(requestedGain)) changeRxGain(requestedGain);
     processSendResults();
     pollFlash();
     pollZoneRepeat();
@@ -218,7 +264,7 @@ class TagPlate {
   // NXP UM10204 bus clear: release SDA, clock SCL up to nine times, then STOP. Open-drain only, so a line is
   // never driven high against the reader. Returns true when both lines are high afterwards.
   bool recoverBus() {
-    const int sda = options_.sdaPin, scl = options_.sclPin;
+    const int sda = sdaPin(), scl = sclPin();
     Wire.end();
     pinMode(sda, INPUT_PULLUP);
     pinMode(scl, INPUT_PULLUP);
@@ -250,6 +296,32 @@ class TagPlate {
     return clear;
   }
 
+  int sdaPin() const { return altPins_ ? options_.altSdaPin : options_.sdaPin; }
+  int sclPin() const { return altPins_ ? options_.altSclPin : options_.sclPin; }
+  bool hasAltPins() const { return options_.altSdaPin >= 0 && options_.altSclPin >= 0; }
+
+  // Start the reader on the current pin pair (whose bus recoverBus() just cleared, or not), then on the alternate
+  // pair if one is configured. The pair that answered stays selected; if neither does, the current one is kept, so
+  // the report describes the wiring that last worked and the held-low diagnosis stays about that bus.
+  bool findNfc(bool busClear) {
+    if (busClear && beginNfc()) return true;
+    if (!hasAltPins()) return false;
+    Wire.end();
+    pinMode(sdaPin(), INPUT);
+    pinMode(sclPin(), INPUT);
+    altPins_ = !altPins_;
+    if (recoverBus() && beginNfc()) {
+      Serial.printf("PN532 FOUND on SDA=%d SCL=%d\n", sdaPin(), sclPin());
+      return true;
+    }
+    Wire.end();
+    pinMode(sdaPin(), INPUT);
+    pinMode(sclPin(), INPUT);
+    altPins_ = !altPins_;
+    recoverBus();
+    return false;
+  }
+
   // Only library calls that read their reply back are used: a PN532 RFConfiguration command whose reply is left
   // unread made the chip hold SCL low until power-cycled (seen on this hardware; see pairing_station/I2C_DEBUG.md).
   bool beginNfc() {
@@ -257,19 +329,21 @@ class TagPlate {
     nfcVersion_ = nfc_.getFirmwareVersion();
     if (((nfcVersion_ >> 24) & 0xFF) != 0x32) return false;  // a floating bus can return garbage; PN532 IC is 0x32
     if (!nfc_.SAMConfig()) return false;
-    setMaxRxGain();
+    setRxGain(rxGainStored());
     return true;
   }
 
-  // Raise the receiver gain to its maximum so a weakly coupled cube is still read.
+  // Set the receiver gain stored in zcfg (default 48 dB, the maximum, so a weakly coupled cube is still read).
   // RFConfiguration CfgItem 0x0A takes all eleven analog registers for 106 kbps type A (UM0701-02 table 19);
-  // only CIU_RFCfg moves, from its 0x59 default to 0x79, which sets RxGain (bits 6..4) to 111 = 48 dB instead
-  // of 101 = 38 dB (PN512 data sheet table 92). The other ten keep their documented defaults. Higher gain also
-  // raises the noise the demodulator sees, so measure rather than assume a marginal tag improves.
+  // only CIU_RFCfg moves from its 0x59 default, whose RxGain (bits 6..4) 101 = 38 dB is replaced by the chosen
+  // step (PN512 data sheet table 92; 0x79 = 48 dB). The other ten keep their documented defaults. Higher gain
+  // also raises the noise the demodulator sees, so measure rather than assume a marginal tag improves.
   // The reply (D5 33, UM0701-02 p106) is read here because the library acknowledges the command and waits for
   // its reply but never consumes it, and that unread reply is what held SCL low (pairing_station/I2C_DEBUG.md).
-  bool setMaxRxGain() {
-    uint8_t command[] = {PN532_COMMAND_RFCONFIGURATION, 0x0A, 0x79, 0xF4, 0x3F, 0x11, 0x4D,
+  bool setRxGain(uint8_t db) {
+    db = effectiveRxGain(db);
+    uint8_t rfcfg = uint8_t((0x59 & 0x8F) | (rxGainField(db) << 4));
+    uint8_t command[] = {PN532_COMMAND_RFCONFIGURATION, 0x0A, rfcfg, 0xF4, 0x3F, 0x11, 0x4D,
                          0x85, 0x61, 0x6F, 0x26, 0x62, 0x87};
     uint8_t reply[10] = {};  // ready byte, then 00 00 FF LEN LCS D5 33 DCS 00
     bool ok = nfc_.sendCommandCheckAck(command, sizeof(command)) &&
@@ -278,7 +352,10 @@ class TagPlate {
       for (uint8_t &byte : reply) byte = Wire.read();
       ok = reply[6] == PN532_PN532TOHOST && reply[7] == PN532_COMMAND_RFCONFIGURATION + 1;
     }
-    Serial.printf("PN532 RX GAIN 48dB: %s\n", ok ? "set" : "NOT SET (reader stays at the default 38dB)");
+    Serial.printf("PN532 RX GAIN %udB: %s\n", db, ok ? "set" : "NOT SET (reader keeps its previous gain)");
+    // The command replaces the whole register, so a NOT SET after a reset leaves the chip's 38 dB default,
+    // but a failure on a live reader may leave the earlier gain: report it as unknown either way.
+    link.setRxGainApplied(ok ? db : 0);
     return ok;
   }
 
@@ -304,6 +381,7 @@ class TagPlate {
 
   void nfcLost(const char *why) {
     nfcOk = false;
+    link.setRxGainApplied(0);  // re-applied by beginNfc() on recovery
     fastFailRun_ = 0;
     lastNfcRetry_ = millis() - NFC_RETRY_INTERVAL;  // recover on the next pass
     link.setError(ERR_NFC);
@@ -377,7 +455,7 @@ class TagPlate {
       if (now - lastNfcRetry_ >= NFC_RETRY_INTERVAL) {
         nfcRecoveries_++;
         bool busClear = recoverBus();
-        nfcOk = busClear && beginNfc();
+        nfcOk = findNfc(busClear);
         lastNfcRetry_ = lastHealth_ = millis();
         Serial.println(nfcOk ? "PN532 FOUND" : busClear ? "PN532 NOT FOUND (retrying)" : "PN532 I2C LINE HELD LOW (retrying)");
         if (nfcOk && link.lastError() == ERR_NFC) link.setError(ERR_NONE);
@@ -571,6 +649,10 @@ class TagPlate {
       printNfc();
     } else if (!strcmp(line, "rfcfg")) {
       printRxGain();
+    } else if (!strncmp(line, "rxgain", 6) && (line[6] == 0 || line[6] == ' ')) {
+      unsigned long db = 0;
+      if (sscanf(line + 6, "%lu", &db) != 1) printRxGainSetting();
+      else changeRxGain(db > 255 ? 0 : uint8_t(db));
     } else if (!strcmp(line, "nfc recover")) {
       nfcLost("recovery requested");
       if (tagPresent_) {
@@ -578,7 +660,7 @@ class TagPlate {
         if (onTagLeave) onTagLeave(currentUid_, currentUidLength_, currentCube_.cubeID ? &currentCube_ : nullptr);
       }
     } else if (!strcmp(line, "help")) {
-      Serial.println("Commands: ? | nfc | nfc recover | db | log | cube <id> | zone <id> <0-4> | clear <id> | flash <id> [s] | stop | help");
+      Serial.println("Commands: ? | nfc | nfc recover | rfcfg | rxgain [18|23|33|38|43|48] | db | log | cube <id> | zone <id> <0-4> | clear <id> | flash <id> [s] | stop | help");
     } else if (!(onSerial && onSerial(line)) && !cubeCommand(line) && !link.handleSerialCommand(line)) {
       Serial.println("Unknown command; try help");
     }
@@ -598,6 +680,7 @@ class TagPlate {
   uint32_t lastSeen_ = 0, lastNfcCheck_ = 0, lastNfcRetry_ = 0, enteredAt_ = 0, lastHealth_ = 0;
   uint32_t nfcVersion_ = 0, nfcPolls_ = 0, nfcFound_ = 0, nfcLastMs_ = 0, nfcMaxMs_ = 0, nfcFastFails_ = 0, nfcRecoveries_ = 0;
   uint8_t fastFailRun_ = 0;
+  bool altPins_ = false;  // the reader answered on altSdaPin/altSclPin
   bool flashing_ = false, flashBlue_ = false;
   Record flashCube_ = {};
   uint32_t flashStarted_ = 0, flashDuration_ = 0, lastFlash_ = 0;

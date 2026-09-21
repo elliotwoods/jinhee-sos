@@ -3,7 +3,7 @@
   "detail": "No matching acknowledgment after three attempts",
   "mac": "1C:DB:D4:F1:DA:D0",
   "pending_uid": "53:99:40:C9:33:00:01",
-  "role": "auto",
+  "role": "excluded",
   "source": "usb_flash",
   "status": "unconfirmed",
   "uid": null,

@@ -20,6 +20,9 @@ BROADCAST = 'FF:FF:FF:FF:FF:FF'
 ZONE_COLUMNS = ['name', 'zone_type', 'point_id', 'firmware', 'db_version', 'db_count', 'db_crc', 'staging_version',
                 'staging_chunks', 'staging_total', 'uptime', 'tags', 'unknown_tags', 'send_fail', 'last_error', 'channel',
                 'config_valid', 'active_slot']
+# Reported in ZONE_SETTINGS (after each status, zone firmware desert-2.4.0 / tagplate-2.4.0 / pool-3.2.0 /
+# preshow-3.3.0 and later, relayed by nct-pairing-1.8-zones). NULL: never reported.
+SETTINGS_COLUMNS = ['rx_gain', 'rx_gain_applied', 'set_result']
 
 
 def _now_iso():
@@ -40,6 +43,9 @@ class ZoneStore:
             for column in ('profile', 'params'):  # written by the zone flasher
                 if column not in existing:
                     self.conn.execute(f'ALTER TABLE zones ADD COLUMN {column} TEXT')
+            for column in SETTINGS_COLUMNS:
+                if column not in existing:
+                    self.conn.execute(f'ALTER TABLE zones ADD COLUMN {column} INTEGER')
 
     def _meta(self, key, default=None):
         row = self.conn.execute('SELECT value FROM metadata WHERE key=?', (key,)).fetchone()
@@ -123,6 +129,11 @@ class ZoneStore:
                 'last_seen=excluded.last_seen, last_seen_epoch=excluded.last_seen_epoch, source=excluded.source',
                 [mac] + values + [_now_iso(), self.wall(), source])
 
+    def settings(self, mac, settings):
+        with self.conn:
+            self.conn.execute(f'UPDATE zones SET {", ".join(f"{c}=?" for c in SETTINGS_COLUMNS)} WHERE mac=?',
+                              [settings.get(c) for c in SETTINGS_COLUMNS] + [mac])
+
     def flashed(self, mac, profile, params):
         with self.conn:
             self.conn.execute('UPDATE zones SET profile=?, params=? WHERE mac=?', (profile, ','.join(str(v) for v in params), mac))
@@ -140,6 +151,7 @@ class ZoneRegistry:
     WALK_TIMEOUT = 45
     WALK_BACKOFF = 30
     RECENT_ZONE = 15 * 60
+    SET_TIMEOUT = 10  # seconds for a zone to report a requested setting back
     ACK_TIMEOUT = 1.0  # one relay command at a time: bursts overrun the station's USB serial buffer
 
     def __init__(self, db, send, log=print, clock=time.monotonic, wall=time.time, auto_refresh=False):
@@ -150,6 +162,7 @@ class ZoneRegistry:
         self.backoff = {}  # mac -> clock time before walkaround retries it
         self.requests = {}
         self.logs = {}
+        self.gain_requests = {}  # mac -> (requested dB, clock) until the zone's ZONE_SETTINGS confirms it
         self.rssi = {}  # mac -> smoothed RSSI (dBm) reported by the dongle (pairing-station firmware 1.7+)
         self.publication = None
         self.publish_target = None
@@ -180,7 +193,7 @@ class ZoneRegistry:
         if not connected:
             raise ValueError('Connect the station first')
         if station.get('zones') != zonedb.PROTO:
-            raise ValueError('Station firmware has no zone support; reflash the pairing station (nct-pairing-1.7-zones)')
+            raise ValueError('Station firmware has no zone support; reflash the pairing station (nct-pairing-1.8-zones)')
 
     def publish(self, target=None, force=False, expected=None, timeout=None):
         """Broadcast the published database until the expected zones confirm it.
@@ -237,6 +250,13 @@ class ZoneRegistry:
     def reboot(self, mac):
         return self._emit(mac, zonedb.reboot_frame(), 'reboot')
 
+    def set_rx_gain(self, mac, rx_gain):
+        """Ask one zone to store and apply a PN532 RX gain. Success is only its next ZONE_SETTINGS report."""
+        frame = zonedb.set_config_frame(rx_gain)
+        self.gain_requests[mac] = (int(rx_gain), self.clock())
+        self.log(f'Zone {mac}: set RX gain {rx_gain} dB requested')
+        return self._emit(mac, frame, 'set_config')
+
     # ---- progress ----
     def classify(self, zone, published):
         """current / behind / ahead / updating / unpublished. `ahead` covers a higher version or the same
@@ -265,6 +285,7 @@ class ZoneRegistry:
             z['zone_label'] = zonedb.ZONE_TYPES.get(z['zone_type'], 'unconfigured' if not z['config_valid'] else str(z['zone_type']))
             z['log'] = self.logs.get(z['mac'])
             z['rssi'] = self.rssi.get(z['mac'])
+            z['rx_gain_pending'] = self.gain_requests.get(z['mac'], (None,))[0]
             rows.append(z)
         return rows
 
@@ -297,6 +318,8 @@ class ZoneRegistry:
                     self.rssi[e['mac']] = e['rssi'] if previous is None else 0.7 * previous + 0.3 * e['rssi']
                 if frame == zonedb.ZONE_STATUS:
                     self._status(e['mac'], zonedb.parse_status(data))
+                elif frame == zonedb.ZONE_SETTINGS:
+                    self._settings(e['mac'], zonedb.parse_settings(data))
                 elif frame == zonedb.ZONE_LOG:
                     self.logs[e['mac']] = dict(zonedb.parse_log(data), received=_now_iso())
                     self.log(f'Zone {e["mac"]} log: {len(self.logs[e["mac"]]["entries"])} recent tag(s)')
@@ -318,9 +341,29 @@ class ZoneRegistry:
             return True
         return False
 
+    def _settings(self, mac, settings):
+        previous = next((z for z in self.store.zones() if z['mac'] == mac), None)
+        if not previous:
+            return  # settings follow a status; without one there is no row to annotate yet
+        self.store.settings(mac, settings)
+        request = self.gain_requests.get(mac)
+        if not request:
+            return
+        result = settings['set_result']
+        # The reply to the request itself carries nonce 0; a routine query answered in the same moment carries
+        # its own nonce and the old state, so only a matching gain or a nonce-0 failure settles the request.
+        stored = settings['rx_gain'] == request[0] and result in (zonedb.SET_OK, zonedb.SET_NOT_APPLIED)
+        failed = settings['nonce'] == 0 and result not in (zonedb.SET_NONE, zonedb.SET_OK, zonedb.SET_NOT_APPLIED)
+        if stored or failed:
+            del self.gain_requests[mac]
+            self.log(f'Zone {previous["name"] or mac}: RX gain {request[0]} dB — {zonedb.SET_RESULTS.get(result, result)}'
+                     + (f' (still {settings["rx_gain"]} dB)' if failed else ''))
+
     def _status(self, mac, status):
         previous = next((z for z in self.store.zones() if z['mac'] == mac), None)
         self.store.seen(mac, status)
+        if previous and previous['firmware'] != status['firmware']:
+            self.store.settings(mac, {})  # a reflashed zone must report its settings again
         if previous and previous['db_version'] != status['db_version']:
             self.log(f'Zone {status["name"] or mac}: database v{previous["db_version"]} → v{status["db_version"]}')
         if status['last_error'] and (not previous or previous['last_error'] != status['last_error']):
@@ -339,6 +382,10 @@ class ZoneRegistry:
                 self.stop('Publishing paused: station disconnected')
             return
         now = self.clock()
+        for mac, (gain, at) in list(self.gain_requests.items()):
+            if now - at > self.SET_TIMEOUT:
+                del self.gain_requests[mac]
+                self.log(f'Zone {mac}: RX gain {gain} dB not confirmed (no answer; zone or dongle firmware may be too old)')
         if self.publication:
             p = self.publication
             if self.cycles and self.expected and not (self.expected - self._updated()):

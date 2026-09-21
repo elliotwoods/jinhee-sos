@@ -18,7 +18,7 @@ inline uint32_t fakeNow = 0;
 inline uint32_t millis() { return fakeNow; }
 inline void delay(unsigned ms) { fakeNow += ms; }
 inline void delayMicroseconds(unsigned) {}
-constexpr int HIGH = 1, LOW = 0, OUTPUT = 3, INPUT_PULLUP = 1, OUTPUT_OPEN_DRAIN = 2;
+constexpr int HIGH = 1, LOW = 0, INPUT = 0, OUTPUT = 3, INPUT_PULLUP = 1, OUTPUT_OPEN_DRAIN = 2;
 inline std::map<int, int> pinLevels;
 inline std::vector<std::pair<int, int>> pinWrites;
 inline void pinMode(int, int) {}
@@ -213,6 +213,8 @@ inline int esp_partition_erase_range(const esp_partition_t *p, size_t offset, si
 
 // ---- I2C / PN532 ----
 inline int wireBegins = 0;
+inline int wireSda = -1, wireScl = -1;  // pins of the last Wire.begin()
+inline int pn532Sda = 4, pn532Scl = 3;  // pins the reader is wired to (zones: SDA 4 / SCL 3); -1 = it answers on any
 
 // Two PCA9685 LED drivers, modelled well enough to test what the live central got wrong:
 // unchecked writes, a shadow cache that never re-asserted, and ALL_LED never being cleared.
@@ -249,6 +251,12 @@ inline FakePca *pcaAt(uint8_t address) {
   return nullptr;
 }
 
+// PN532 command channel for the RX gain: when pn532AcceptsCommands, sendCommandCheckAck() queues the
+// reply the next Wire.requestFrom() at the PN532 address returns, and CIU_RFCfg is tracked in pn532RfCfg.
+inline bool pn532AcceptsCommands = false;
+inline std::deque<uint8_t> pn532Reply;
+inline uint8_t pn532RfCfg = 0x59;
+inline int pn532GainCommands = 0;
 struct WireStub {
   uint8_t target = 0;
   std::vector<uint8_t> outgoing;
@@ -256,8 +264,8 @@ struct WireStub {
   bool started = false;
 
   void note() { ++i2cTransactions; assert(criticalDepth == 0 && "I2C transaction inside a critical section"); }
-  bool begin(int, int) { note(); wireBegins++; started = true; return true; }
-  bool begin(int, int, uint32_t) { return begin(0, 0); }
+  bool begin(int sda, int scl) { note(); wireBegins++; wireSda = sda; wireScl = scl; started = true; return true; }
+  bool begin(int sda, int scl, uint32_t) { return begin(sda, scl); }
   void end() { started = false; }
   void setTimeOut(int) {}
   void beginTransmission(uint8_t address) { note(); target = address; outgoing.clear(); }
@@ -285,6 +293,13 @@ struct WireStub {
     note();
     incoming.clear();
     if (!started || i2cBusStuck) return 0;
+    if (address == (0x48 >> 1)) {
+      if (pn532Reply.empty()) return 0;
+      incoming.assign(pn532Reply.begin(), pn532Reply.end());
+      pn532Reply.clear();
+      while (incoming.size() < count) incoming.push_back(0);
+      return count;
+    }
     FakePca *board = pcaAt(address);
     if (!board) return 0;
     board->reads++;
@@ -304,15 +319,31 @@ constexpr uint8_t PN532_I2C_ADDRESS = 0x48 >> 1, PN532_PN532TOHOST = 0xD5, PN532
                   PN532_COMMAND_READREGISTER = 0x06;
 inline std::vector<uint8_t> presentedTag;
 inline bool pn532Present = true;
+inline bool pn532Reachable() {
+  return pn532Present && (pn532Sda < 0 || (wireSda == pn532Sda && wireScl == pn532Scl));
+}
 struct Adafruit_PN532 {
   Adafruit_PN532(int, int) {}
   void begin() {}
-  uint32_t getFirmwareVersion() { return pn532Present ? 0x32010607 : 0; }
+  uint32_t getFirmwareVersion() { return pn532Reachable() ? 0x32010607 : 0; }
   bool SAMConfig() { return true; }
-  // The host has no reader command channel, so the gain setting reports itself as not applied.
-  bool sendCommandCheckAck(uint8_t *, uint8_t, uint16_t = 100) { return false; }
+  // Without pn532AcceptsCommands the host has no reader command channel: the gain reports itself as not applied.
+  bool sendCommandCheckAck(uint8_t *command, uint8_t length, uint16_t = 100) {
+    if (!pn532Reachable() || !pn532AcceptsCommands || !length) return false;
+    // Reply: ready byte, 00 00 FF LEN LCS D5 <cmd+1> [data] DCS 00
+    pn532Reply = {0x01, 0x00, 0x00, 0xFF, 0x02, 0xFE, PN532_PN532TOHOST, uint8_t(command[0] + 1)};
+    if (command[0] == PN532_COMMAND_RFCONFIGURATION && length >= 3 && command[1] == 0x0A) {
+      pn532RfCfg = command[2];
+      pn532GainCommands++;
+    } else if (command[0] == PN532_COMMAND_READREGISTER) {
+      pn532Reply.push_back(pn532RfCfg);
+    }
+    pn532Reply.push_back(0x00);
+    pn532Reply.push_back(0x00);
+    return true;
+  }
   bool readPassiveTargetID(int, uint8_t *uid, uint8_t *length, int timeout) {
-    if (!pn532Present) return false;  // command not acknowledged: returns at once
+    if (!pn532Reachable()) return false;  // command not acknowledged: returns at once
     fakeNow += presentedTag.empty() ? timeout : 20;
     if (presentedTag.empty()) return false;
     *length = uint8_t(presentedTag.size());

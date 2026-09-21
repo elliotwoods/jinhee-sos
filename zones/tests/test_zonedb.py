@@ -39,7 +39,15 @@ class ZoneDbTests(unittest.TestCase):
         self.assertIsNone(zonedb.parse_slot(b'\xff' * 0x8000))
         config = zonedb.config_image(1, 3, 'Preshow 3')
         self.assertEqual(len(config), 28)
-        self.assertEqual(zonedb.parse_config(config), dict(zone_type=1, point_id=3, name='Preshow 3'))
+        self.assertEqual(zonedb.parse_config(config), dict(zone_type=1, point_id=3, name='Preshow 3', rx_gain=48))
+        self.assertEqual(zonedb.parse_config(zonedb.config_image(1, 3, 'Preshow 3', rx_gain=23))['rx_gain'], 23)
+        with self.assertRaises(ValueError):
+            zonedb.config_image(1, 3, 'Preshow 3', rx_gain=40)
+        # A config written before the setting existed stores 0 there, which means the default.
+        legacy = bytearray(config)
+        legacy[7] = 0
+        legacy[24:28] = zonedb.crc32(bytes(legacy[:24])).to_bytes(4, 'little')
+        self.assertEqual(zonedb.parse_config(bytes(legacy))['rx_gain'], 48)
         with self.assertRaises(ValueError):
             zonedb.config_image(1, 3, 'x' * 16)
         with self.assertRaises(ValueError):
@@ -83,6 +91,22 @@ class ZoneDbTests(unittest.TestCase):
         self.assertEqual(len(zonedb.identify_frame(99)), 5)
         self.assertEqual(zonedb.identify_frame(99)[4], 60)
         self.assertEqual(struct.unpack('<I', zonedb.reboot_frame()[4:])[0], zonedb.REBOOT_CONFIRM)
+
+    def test_rx_gain_frames(self):
+        frame = zonedb.set_config_frame(38)
+        self.assertEqual(frame, b'NZ\x01\x25SCFG\x26')  # confirm word "SCFG" little-endian, then 38
+        self.assertEqual(zonedb.frame_kind(frame), zonedb.ZONE_SET_CONFIG)
+        with self.assertRaises(ValueError):
+            zonedb.set_config_frame(40)
+        settings = zonedb.SETTINGS.pack(b'NZ', 1, zonedb.ZONE_SETTINGS, 0, 43, 43, zonedb.SET_OK)
+        self.assertEqual(zonedb.parse_settings(settings), dict(nonce=0, rx_gain=43, rx_gain_applied=43, set_result=1))
+        unapplied = zonedb.SETTINGS.pack(b'NZ', 1, zonedb.ZONE_SETTINGS, 5, 0, 0, zonedb.SET_NONE)
+        self.assertEqual(zonedb.parse_settings(unapplied), dict(nonce=5, rx_gain=48, rx_gain_applied=None, set_result=0))
+        for bad in (settings[:-1], b'XX' + settings[2:]):
+            with self.assertRaises(ValueError):
+                zonedb.parse_settings(bad)
+        self.assertNotIn(len(frame), (2, 24))
+        self.assertNotIn(len(settings), (2, 24))
 
 
 if __name__ == '__main__':

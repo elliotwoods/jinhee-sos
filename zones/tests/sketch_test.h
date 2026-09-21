@@ -14,11 +14,29 @@ static nctzone::ZoneStatus queryStatus() {
   size_t before = sentFrames.size();
   radio(FRAME_QUERY_STATUS);
   run(400);
-  auto replies = framesTo(REGISTRY, before);
-  assert(!replies.empty() && replies.back().data.size() == sizeof(nctzone::ZoneStatus));
-  nctzone::ZoneStatus s;
-  memcpy(&s, replies.back().data.data(), sizeof(s));
+  nctzone::ZoneStatus s = {};
+  bool ok = false;
+  for (size_t i = before; i < sentFrames.size(); i++)
+    if (!memcmp(sentFrames[i].dest.data(), REGISTRY, 6) &&
+        nctzone::frameType(sentFrames[i].data.data(), int(sentFrames[i].data.size())) == nctzone::ZONE_STATUS) {
+      memcpy(&s, sentFrames[i].data.data(), sizeof(s));
+      ok = true;
+    }
+  assert(ok && "no status reply");
   return s;
+}
+
+// The ZONE_SETTINGS frame that follows each status reply (latest one sent since `from`).
+static nctzone::ZoneSettings lastSettings(size_t from = 0) {
+  nctzone::ZoneSettings m = {};
+  bool ok = false;
+  for (size_t i = from; i < sentFrames.size(); i++)
+    if (nctzone::frameType(sentFrames[i].data.data(), int(sentFrames[i].data.size())) == nctzone::ZONE_SETTINGS) {
+      memcpy(&m, sentFrames[i].data.data(), sizeof(m));
+      ok = true;
+    }
+  assert(ok && "no settings frame");
+  return m;
 }
 
 static Packet cubePacket(const SentFrame &frame) {

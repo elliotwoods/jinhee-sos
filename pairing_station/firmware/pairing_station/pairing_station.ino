@@ -132,7 +132,7 @@ void releaseTarget() {
 }
 void hello(const String &id) {
   JsonDocument d; d["event"]="hello"; d["id"]=id; d["protocol"]=1;
-  d["firmware"]="nct-pairing-1.7-zones"; d["zones"]=nctzone::PROTO; d["mac"]=WiFi.macAddress(); d["channel"]=WiFi.channel();
+  d["firmware"]="nct-pairing-1.8-zones"; d["zones"]=nctzone::PROTO; d["mac"]=WiFi.macAddress(); d["channel"]=WiFi.channel();
   d["radio_ok"]=radioOK; d["nfc_ok"]=nfcOK;
   d["nfc_polling"]=nfcPolling; d["nfc_firmware"]=nfcFirmware; d["nfc_i2c_status"]=nfcI2cStatus; d["tag_present"]=tagPresent; output(d);
 }
@@ -217,9 +217,11 @@ void command(char *line) {
     bool broadcast=parseHex(d["mac"] | "",zoneMac,6)==6 && !memcmp(zoneMac,broadcastMac,6);
     if(parseHex(d["mac"] | "",zoneMac,6)!=6 || ((zoneMac[0]&1) && !broadcast)) { error(id,"Invalid zone MAC"); return; }
     if(kind!=nctzone::DB_ANNOUNCE && kind!=nctzone::DB_CHUNK && kind!=nctzone::ZONE_QUERY &&
-       kind!=nctzone::ZONE_IDENTIFY && kind!=nctzone::ZONE_REBOOT) { error(id,"Invalid zone frame"); return; }
-    if(broadcast && (kind==nctzone::ZONE_IDENTIFY || kind==nctzone::ZONE_REBOOT)) {
-      error(id,"Identify/reboot must target one zone"); return;
+       kind!=nctzone::ZONE_IDENTIFY && kind!=nctzone::ZONE_REBOOT && kind!=nctzone::ZONE_SET_CONFIG) {
+      error(id,"Invalid zone frame"); return;
+    }
+    if(broadcast && (kind==nctzone::ZONE_IDENTIFY || kind==nctzone::ZONE_REBOOT || kind==nctzone::ZONE_SET_CONFIG)) {
+      error(id,"Identify/reboot/set-config must target one zone"); return;
     }
     sendZoneFrame(id,zoneMac,frame,length); return;
   }
@@ -256,7 +258,7 @@ void pollRadio() {
   ZoneReceived z;
   for(int count=0;count<16 && zoneQueue && xQueueReceive(zoneQueue,&z,0)==pdTRUE;count++) {
     uint8_t kind=nctzone::frameType(z.data,z.length);
-    if(kind!=nctzone::ZONE_STATUS && kind!=nctzone::ZONE_LOG) continue;  // other registries' traffic
+    if(kind!=nctzone::ZONE_STATUS && kind!=nctzone::ZONE_LOG && kind!=nctzone::ZONE_SETTINGS) continue;  // other registries' traffic
     JsonDocument d; d["event"]="zone_frame"; d["mac"]=hexString(z.sender,6); d["kind"]=kind;
     if(z.rssi) d["rssi"]=z.rssi;
     d["hex"]=plainHex(z.data,z.length); output(d);

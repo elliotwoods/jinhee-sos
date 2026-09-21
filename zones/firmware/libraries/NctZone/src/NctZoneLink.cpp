@@ -128,8 +128,36 @@ void ZoneLink::handle(const Frame &frame) {
       rebootAt_ = millis() + 300;
       break;
     }
-    default: break;  // ZONE_STATUS / ZONE_LOG are for the registry
+    case ZONE_SET_CONFIG: {
+      ZoneSetConfig m;
+      memcpy(&m, frame.data, sizeof(m));
+      if (frame.broadcast || m.confirm != SET_CONFIG_CONFIRM) break;
+      Serial.printf("SET CONFIG rx_gain=%udB requested by ", m.rxGainDb);
+      printHex(frame.src, 6);
+      Serial.println();
+      configRequested_ = true;
+      requestedRxGain_ = m.rxGainDb;
+      memcpy(requester_, frame.src, 6);
+      break;
+    }
+    default: break;  // ZONE_STATUS / ZONE_LOG / ZONE_SETTINGS are for the registry
   }
+}
+
+bool ZoneLink::takeConfigRequest(uint8_t &rxGainDb) {
+  if (!configRequested_) return false;
+  configRequested_ = false;
+  rxGainDb = requestedRxGain_;
+  return true;
+}
+
+void ZoneLink::configApplied(const ZoneConfig &config, bool configValid, uint8_t result) {
+  config_ = config;
+  configValid_ = configValid;
+  lastSetResult_ = result;
+  static const uint8_t none[6] = {};
+  if (memcmp(requester_, none, 6)) schedule(requester_, QUERY_STATUS, 0);
+  memset(requester_, 0, 6);
 }
 
 void ZoneLink::onAnnounce(const Frame &frame) {
@@ -312,6 +340,17 @@ void ZoneLink::sendStatus(const uint8_t *mac, uint32_t nonce) {
   s.configValid = configValid_;
   s.activeSlot = uint8_t(db_->activeSlot());
   send(mac, (const uint8_t *)&s, sizeof(s));
+  sendSettings(mac, nonce);
+}
+
+void ZoneLink::sendSettings(const uint8_t *mac, uint32_t nonce) {
+  ZoneSettings m = {};
+  fillHeader(m.h, ZONE_SETTINGS);
+  m.nonce = nonce;
+  m.rxGainStored = effectiveRxGain(config_.rxGainDb);
+  m.rxGainApplied = rxGainApplied_;
+  m.lastSetResult = lastSetResult_;
+  send(mac, (const uint8_t *)&m, sizeof(m));
 }
 
 void ZoneLink::sendLog(const uint8_t *mac, uint32_t nonce) {

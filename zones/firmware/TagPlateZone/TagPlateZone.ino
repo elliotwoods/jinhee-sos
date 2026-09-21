@@ -11,7 +11,7 @@
 
 using namespace nctzone;
 
-constexpr const char *FIRMWARE_VERSION = "tagplate-2.3.0";
+constexpr const char *FIRMWARE_VERSION = "tagplate-2.4.0";
 
 TagPlate plate;
 

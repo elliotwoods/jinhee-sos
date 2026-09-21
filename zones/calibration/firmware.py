@@ -262,7 +262,7 @@ def assign_radio_id(port_name, new_id, emit, force=False):
                 path=folder/f'{label}-before.bin'
                 tool('read-flash',hex(part['offset']),hex(part['size']),path)
                 protected[label]=(part,path.read_bytes())
-            image=zonedb.zcfg_image(POOL_ZONE_TYPE,new_id,name,params).ljust(zcfg['size'],b'\xff')
+            image=zonedb.zcfg_image(POOL_ZONE_TYPE,new_id,name,params,parsed['rx_gain']).ljust(zcfg['size'],b'\xff')
             target=folder/'zcfg-after.bin'; target.write_bytes(image)
             emit('stage',f'Assigning radio ID {new_id} ({name})…')
             tool('write-flash',hex(zcfg['offset']),target)

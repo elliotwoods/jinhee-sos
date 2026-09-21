@@ -57,6 +57,21 @@ bool loadParams(Storage &storage, ZoneParams &params) {
   return ok;
 }
 
+bool saveConfig(Storage &storage, ZoneConfig &config, const ZoneParams &params, bool paramsValid) {
+  memcpy(config.magic, "NZCF", 4);
+  config.format = CONFIG_FORMAT;
+  config.crc = crc32((const uint8_t *)&config, offsetof(ZoneConfig, crc));
+  if (storage.size() < PARAMS_OFFSET + sizeof(params) || !storage.erase() ||
+      !storage.write(0, (const uint8_t *)&config, sizeof(config)))
+    return false;
+  if (paramsValid && !storage.write(PARAMS_OFFSET, (const uint8_t *)&params, sizeof(params))) return false;
+  ZoneConfig check;
+  if (!loadConfig(storage, check) || memcmp(&check, &config, sizeof(config))) return false;
+  if (!paramsValid) return true;
+  ZoneParams checkParams;
+  return loadParams(storage, checkParams) && !memcmp(&checkParams, &params, sizeof(params));
+}
+
 ZoneDb::~ZoneDb() { free(records_); }
 
 uint16_t ZoneDb::capacityFor(size_t storageSize) {

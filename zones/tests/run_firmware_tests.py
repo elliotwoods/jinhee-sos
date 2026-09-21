@@ -71,6 +71,16 @@ def fixtures():
     text += array('FRAME_QUERY_LOG', zonedb.query_frame(zonedb.QUERY_LOG, 7))
     text += array('IDENTIFY_5', zonedb.identify_frame(5))
     text += array('REBOOT', zonedb.reboot_frame())
+    text += array('SET_GAIN_38', zonedb.set_config_frame(38))
+    text += array('SET_GAIN_BAD', zonedb.SET_CONFIG.pack(zonedb.MAGIC, zonedb.PROTO, zonedb.ZONE_SET_CONFIG,
+                                                         zonedb.SET_CONFIG_CONFIRM, 40))
+    text += array('SET_GAIN_NOCONFIRM', zonedb.SET_CONFIG.pack(zonedb.MAGIC, zonedb.PROTO, zonedb.ZONE_SET_CONFIG, 0, 38))
+    # A zcfg written by a flasher before the RX gain existed: byte 7 is 0, which means the 48 dB default.
+    legacy = bytearray(zonedb.config_image(1, 2, 'Preshow 2'))
+    legacy[7] = 0
+    legacy[24:28] = zonedb.crc32(bytes(legacy[:24])).to_bytes(4, 'little')
+    text += array('CONFIG_LEGACY_GAIN', bytes(legacy))
+    text += array('CONFIG_POOL4_GAIN23', zonedb.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430], rx_gain=23))
     return text
 
 
