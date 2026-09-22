@@ -1,5 +1,5 @@
 {
-  "version": "v1.4.1-USB.2",
+  "version": "v1.5.0-USB.1",
   "fqbn": "esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M",
   "core": "3.3.11",
   "esptool": "5.3.1",
@@ -25,10 +25,10 @@
     {
       "offset": 65536,
       "file": "neocore_usb.ino.bin",
-      "sha256": "e70722bea0c649c8e538b9c38ad174118b5410eddfd4e632b4fa9624fa4e4147",
-      "size": 963120
+      "sha256": "46813d9a80edb87d39d513a70b752d94c66625d3daa94b9b3bf327f4afc0cad3",
+      "size": 968480
     }
   ],
-  "source_hash": "62ec9486425d184c50926f44e5858c35f508b912d60bf3f7b6676822c05ae757",
-  "build_hash": "ff7ac578f81330fad851c14ae7ec24f41b9237e3809f5255eaada6dcf2a5bf24"
+  "source_hash": "b854d9db022f774c3d457beac729b3e61d120a541d8ccd829ee94cc8c58f1d4a",
+  "build_hash": "bb769495bfd5ab64c5247956b34858b7a4f3961a71d6ec4f901a53d169ad9524"
 }

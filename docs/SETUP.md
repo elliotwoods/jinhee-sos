@@ -67,7 +67,8 @@ python3.14 scripts/setup.py
 
 Setup creates `pairing_station/.venv`, installs the pinned flasher dependencies
 (currently pyserial 3.5 and esptool 5.3.1, also sufficient for the other Python
-apps), validates the bundled cube manifest/binary hashes, and synchronizes the
+apps) and the NCT Console's pywebview (`console/requirements.txt`; on Windows also pythonnet, and
+the WebView2 runtime that ships with Edge is used for the window), validates the bundled cube manifest/binary hashes, and synchronizes the
 shared inventory. It needs network access for package installation. It does not
 flash connected hardware.
 
@@ -125,6 +126,7 @@ CI proves imports, locks, paths, encodings and the sync logic. With a board plug
 
 | Tool | Command from repository root |
 |---|---|
+| NCT Console (everything in one window) | `pairing_station/.venv/bin/python console/app.py` (`--simulate` without hardware, `--browser` without a native webview) |
 | Pairing station | `pairing_station/.venv/bin/python pairing_station/app.py --connect` |
 | Cube USB flasher | `pairing_station/.venv/bin/python flashing_station/app.py` |
 | Cube flasher simulation | `pairing_station/.venv/bin/python flashing_station/app.py --simulate` |
@@ -141,6 +143,7 @@ Close Arduino Serial Monitor and any other process holding the same serial port.
 For VS Code, open the **repository root**, install the recommended Python/Python
 Debugger extensions, and use Run and Debug:
 
+- NCT Console
 - Pairing Station
 - USB Flash Station
 - Zone Flasher
@@ -362,7 +365,7 @@ Then build:
 pairing_station/.venv/bin/python scripts/build_all_firmware.py
 ```
 
-Or choose **Build all firmwares** in VS Code and press F5. Thirteen targets are included (the
+Or choose **Build all firmwares** in VS Code and press F5. Fourteen targets are included (the
 `--dry-run` output is the authoritative list); the zone and diagnostic rows below are the main ones:
 
 | Target | Board/settings | Output |
@@ -410,6 +413,7 @@ pairing_station/.venv/bin/python -m unittest discover -s flashing_station/tests 
 pairing_station/.venv/bin/python -m unittest discover -s zones/tests -p 'test_*.py'
 pairing_station/.venv/bin/python -m unittest discover -s zones/calibration -p 'test_*.py'
 pairing_station/.venv/bin/python -m unittest discover -s poolzone_test/tests -p 'test_*.py'
+pairing_station/.venv/bin/python -m unittest discover -s console/tests -p 'test_*.py'
 ```
 
 Host firmware simulations (need `c++`; pairing simulation also needs its installed

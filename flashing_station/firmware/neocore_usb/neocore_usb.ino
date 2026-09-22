@@ -1,6 +1,16 @@
-/* Neocore v1.4.1-USB.2. Derived from v1.4.1-STABLE-TEST (2026-09-17).
- * XIAO ESP32-C3 / D10 / eight WS2812 LEDs. USB updates only.
- * ESP-NOW fixed channel 2; original registration and show behavior preserved.
+/* Neocore v1.6.0-USB.1. Derived from v1.4.1-USB.2 (2026-09-17 v1.4.1-STABLE-TEST lineage).
+ * XIAO ESP32-C3 / D10 / eight WS2812 LEDs. Firmware updates over USB only.
+ * ESP-NOW fixed channel 2; original registration and SHOW_START behavior preserved.
+ *
+ * v1.5.0: the main show is data (NctShow library). The compiled-in DefaultShow.h renders
+ * the v1.4.1 timeline exactly; a newer show can be sent over ESP-NOW (SHOW_ANNOUNCE/CHUNK)
+ * and is kept in NVS namespace "show". SHOW_TIMECODE lets a ready cube that missed
+ * SHOW_START join the running show and corrects drift above 100 ms. Old controllers that
+ * never send timecode work exactly as before.
+ *
+ * v1.6.0: fanning. A fade/blink/pulse/cycle cue may offset each cube by its registered number
+ * (sequential steps or a fixed scatter), so one show ripples across the cubes. v1.5.0 refuses
+ * fanned images (the byte was reserved) and keeps its current show.
  */
 #include <WiFi.h>
 #include <esp_now.h>
@@ -8,6 +18,23 @@
 #include <Adafruit_NeoPixel.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <NctShowProtocol.h>
+#include "DefaultShow.h"
+
+#define FW_VERSION "v1.6.0-USB.1"
+
+// A received NctShow frame, handed from the Wi-Fi task to loop(). Declared here, before
+// the prototypes the Arduino builder generates for functions that take it.
+struct ShowFrame {
+  uint8_t src[6];
+  uint8_t broadcast;
+  uint8_t len;
+  uint8_t data[sizeof(nctshow::ShowChunk)];
+};
+
+void setShowCube(uint32_t cube);  // defined with the show player, used by registration
 
 
 // =====================================================
@@ -157,17 +184,6 @@ uint32_t lastShowId = 0;
 uint32_t lastShowFrameMillis = 0;
 
 
-// =====================================================
-// 랜덤 네온 구간 상태
-// =====================================================
-
-bool randomEffectInitialized = false;
-
-uint8_t randomLevelFrom = 20;
-uint8_t randomLevelTo   = 20;
-
-uint32_t randomTransitionStart = 0;
-uint32_t randomTransitionDuration = 1000;
 
 
 // =====================================================
@@ -209,60 +225,6 @@ uint32_t randomTransitionDuration = 1000;
 #define MAINSHOW_B 1
 
 
-// =====================================================
-// MAIN SHOW 색
-// =====================================================
-
-// 일반 흰색
-
-#define SHOW_WHITE_R 20
-#define SHOW_WHITE_G 20
-#define SHOW_WHITE_B 20
-
-
-// 밝은 흰색
-// ★ 절대 최대 100
-
-#define SHOW_WHITE_MAX_R 100
-#define SHOW_WHITE_MAX_G 100
-#define SHOW_WHITE_MAX_B 100
-
-
-// 네온 최대
-// #CFFF3B 비율을 낮춘 색
-
-#define SHOW_NEON_MAX_R 81
-#define SHOW_NEON_MAX_G 100
-#define SHOW_NEON_MAX_B 23
-
-
-// 결정 3색
-
-#define CRYSTAL_GRAY_R 17
-#define CRYSTAL_GRAY_G 17
-#define CRYSTAL_GRAY_B 18
-
-#define CRYSTAL_BLUE_R 11
-#define CRYSTAL_BLUE_G 16
-#define CRYSTAL_BLUE_B 18
-
-#define CRYSTAL_RED_R 18
-#define CRYSTAL_RED_G 12
-#define CRYSTAL_RED_B 12
-
-
-// 사막 #DBAB82 계열
-
-#define SHOW_DESERT_R 24
-#define SHOW_DESERT_G 18
-#define SHOW_DESERT_B 13
-
-
-// 물 / 풀
-
-#define SHOW_POOL_R 0
-#define SHOW_POOL_G 8
-#define SHOW_POOL_B 30
 
 
 // =====================================================
@@ -755,6 +717,9 @@ void saveRegistration(
 
   isRegistered = true;
 
+  // Fanned cues offset each cube by its number.
+  setShowCube(myCubeID);
+
   Serial.print(
     "REGISTERED Cube #"
   );
@@ -767,6 +732,77 @@ void saveRegistration(
 
 // =====================================================
 // =====================================================
+
+// =====================================================
+// ★ MAIN SHOW DATA (v1.5.0)
+//
+// The show is data: an NctShow image (NctShowEngine.h), either the one
+// published and stored in NVS namespace "show" or the compiled-in
+// DEFAULT_SHOW (DefaultShow.h, generated from shows/mainshow.json and
+// identical to the v1.4.1 hard-coded timeline).
+// =====================================================
+
+uint8_t showImage[nctshow::MAX_IMAGE];
+uint16_t showImageSize = 0;
+uint32_t showVersion = 0;  // 0 = compiled-in
+uint32_t showCrc = 0;
+uint8_t showSource = nctshow::SOURCE_BUILTIN;
+nctshow::Player showPlayer;
+
+void useBuiltinShow() {
+  memcpy(showImage, DEFAULT_SHOW, DEFAULT_SHOW_SIZE);
+  showImageSize = DEFAULT_SHOW_SIZE;
+  showVersion = 0;
+  showCrc = DEFAULT_SHOW_CRC;
+  showSource = nctshow::SOURCE_BUILTIN;
+  showPlayer.begin(showImage, isRegistered ? myCubeID : 0);
+}
+
+// Anything missing, torn or invalid in NVS falls back to the compiled-in show.
+void loadStoredShow() {
+  prefs.begin("show", true);
+  size_t size = prefs.getBytesLength("img");
+  uint32_t version = prefs.getUInt("ver", 0);
+  uint32_t crc = prefs.getUInt("crc", 0);
+  bool ok = version > 0 && size > 0 && size <= sizeof(showImage) &&
+            prefs.getBytes("img", showImage, size) == size;
+  prefs.end();
+  if (ok && nctshow::crc32(showImage, size) == crc && nctshow::validImage(showImage, size)) {
+    showImageSize = size;
+    showVersion = version;
+    showCrc = crc;
+    showSource = nctshow::SOURCE_NVS;
+    showPlayer.begin(showImage, isRegistered ? myCubeID : 0);
+    return;
+  }
+  useBuiltinShow();
+}
+
+void setShowCube(uint32_t cube) {
+  showPlayer.setCube(cube);
+}
+
+uint32_t showRandom(uint32_t lo, uint32_t hiExclusive, void *) {
+  return random(lo, hiExclusive);
+}
+
+// Starts (or restarts) the show so that its clock reads tMs now.
+void startMainShowAt(
+  uint32_t showId,
+  uint32_t tMs
+) {
+  lastShowId = showId;
+  showRunning = true;
+  showStartMillis = millis() - tMs;
+  lastShowFrameMillis = 0;
+  showPlayer.restart();
+  currentZone = ZONE_MAINSHOW;
+
+  nctshow::Rgb c;
+  if (showPlayer.render(tMs, showRandom, nullptr, c)) {
+    showColor(c.r, c.g, c.b);
+  }
+}
 
 void startMainShow(
   uint32_t showId
@@ -785,34 +821,7 @@ void startMainShow(
     return;
   }
 
-
-  lastShowId =
-    showId;
-
-  showRunning =
-    true;
-
-  showStartMillis =
-    millis();
-
-  lastShowFrameMillis =
-    0;
-
-  randomEffectInitialized =
-    false;
-
-  currentZone =
-    ZONE_MAINSHOW;
-
-
-  // 영상 시작 시 최초 네온색
-
-  showColor(
-    MAINSHOW_R,
-    MAINSHOW_G,
-    MAINSHOW_B
-  );
-
+  startMainShowAt(showId, 0);
 
   Serial.println();
 
@@ -835,180 +844,38 @@ void startMainShow(
 
 
 // =====================================================
-// 결정 색 3종 디졸브
-//
-// 01:19 ~ 01:54
-// 3색이 순환하며 부드럽게 변화
-// =====================================================
-
-void updateCrystalDissolve(
-  uint32_t localTime
-) {
-
-  const uint32_t segment =
-    3000;
-
-  uint32_t cycle =
-    localTime %
-    (segment * 3);
-
-  if (cycle < segment) {
-
-    showFade(
-
-      CRYSTAL_GRAY_R,
-      CRYSTAL_GRAY_G,
-      CRYSTAL_GRAY_B,
-
-      CRYSTAL_BLUE_R,
-      CRYSTAL_BLUE_G,
-      CRYSTAL_BLUE_B,
-
-      cycle,
-      segment
-    );
-
-  }
-  else if (
-    cycle < segment * 2
-  ) {
-
-    uint32_t t =
-      cycle - segment;
-
-    showFade(
-
-      CRYSTAL_BLUE_R,
-      CRYSTAL_BLUE_G,
-      CRYSTAL_BLUE_B,
-
-      CRYSTAL_RED_R,
-      CRYSTAL_RED_G,
-      CRYSTAL_RED_B,
-
-      t,
-      segment
-    );
-
-  }
-  else {
-
-    uint32_t t =
-      cycle -
-      segment * 2;
-
-    showFade(
-
-      CRYSTAL_RED_R,
-      CRYSTAL_RED_G,
-      CRYSTAL_RED_B,
-
-      CRYSTAL_GRAY_R,
-      CRYSTAL_GRAY_G,
-      CRYSTAL_GRAY_B,
-
-      t,
-      segment
-    );
-  }
-}
-
-
-// =====================================================
-// 02:04 ~ 02:49
-//
-// 네온색이 랜덤하게 밝아졌다 어두워짐
-// 각 Cube가 조금씩 다르게 움직임
-// =====================================================
-
-void updateRandomNeon() {
-
-  uint32_t now =
-    millis();
-
-
-  if (
-    !randomEffectInitialized
-  ) {
-
-    randomEffectInitialized =
-      true;
-
-    randomLevelFrom = 20;
-
-    randomLevelTo =
-      random(
-        12,
-        51
-      );
-
-    randomTransitionStart =
-      now;
-
-    randomTransitionDuration =
-      random(
-        700,
-        1501
-      );
-  }
-
-
-  uint32_t elapsed =
-    now -
-    randomTransitionStart;
-
-
-  if (
-    elapsed >=
-    randomTransitionDuration
-  ) {
-
-    randomLevelFrom =
-      randomLevelTo;
-
-    randomLevelTo =
-      random(
-        12,
-        51
-      );
-
-    randomTransitionStart =
-      now;
-
-    randomTransitionDuration =
-      random(
-        700,
-        1501
-      );
-
-    elapsed = 0;
-  }
-
-
-  uint8_t level =
-    lerp8(
-      randomLevelFrom,
-      randomLevelTo,
-      elapsed,
-      randomTransitionDuration
-    );
-
-
-  showNeonLevel(
-    level
-  );
-}
-
-
-// =====================================================
 // ★ MAIN SHOW 타임라인
 //
 // 기준:
 // SHOW_START = 영상 00:00
 //
 // 종료:
-// 04:58 = 298000 ms
+// the show image's length (04:58 = 298000 ms for the default)
 // =====================================================
+
+void endMainShow() {
+
+  ledOff();
+
+  showRunning =
+    false;
+
+  // 다음 회차 SHOW_START를 다시 받지 않도록
+  // 메인쇼 참가 자격만 해제한다. LED는 OFF 유지.
+
+  currentZone =
+    ZONE_IDLE;
+
+  Serial.println();
+
+  Serial.println(
+    "MAIN SHOW TIMELINE END"
+  );
+
+  Serial.println(
+    "LED OFF"
+  );
+}
 
 void updateMainShowTimeline() {
 
@@ -1019,10 +886,8 @@ void updateMainShowTimeline() {
     return;
   }
 
-
   uint32_t now =
     millis();
-
 
   // LED 업데이트는 약 50fps
 
@@ -1035,564 +900,291 @@ void updateMainShowTimeline() {
     return;
   }
 
-
   lastShowFrameMillis =
     now;
-
 
   uint32_t t =
     now -
     showStartMillis;
 
+  nctshow::Rgb c;
 
-  // ===================================================
-  // 00:00 ~ 00:31
-  // 입장 상태 / 네온 유지
-  // ===================================================
-
-  if (
-    t < 31000
-  ) {
-
-    showColor(
-      MAINSHOW_R,
-      MAINSHOW_G,
-      MAINSHOW_B
-    );
-
+  if (showPlayer.render(t, showRandom, nullptr, c)) {
+    showColor(c.r, c.g, c.b);
     return;
   }
 
+  // 쇼 끝: 2부에서는 네오코어 OFF
+  endMainShow();
+}
 
-  // ===================================================
-  // 00:31 ~ 00:36
-  // 본영상 시작 → OFF
-  // ===================================================
 
-  if (
-    t < 36000
-  ) {
+// =====================================================
+// ★ SHOW FRAMES (NctShowProtocol.h)
+//
+// The Wi-Fi task only copies frames into showQueue; loop() handles them.
+// Legacy 24-byte Packets keep their own path (pendingPacket).
+// =====================================================
 
-    ledOff();
+QueueHandle_t showQueue = nullptr;
 
-    return;
+// Wireless show update: staged in RAM, committed to NVS when complete.
+uint8_t stagingImage[nctshow::MAX_IMAGE];
+uint32_t stagingVersion = 0;  // 0 = not staging
+uint32_t stagingCrc = 0;
+uint16_t stagingLength = 0;
+uint16_t stagingTotal = 0;
+uint16_t stagingReceived = 0;
+uint32_t stagingMask = 0;
+uint32_t stagingActivity = 0;
+bool pendingCommit = false;   // complete and valid, waiting for the show to end
+uint8_t showUpdateError = nctshow::ERR_NONE;
+uint8_t announcerMac[6] = {0};
+bool haveAnnouncer = false;
+
+static_assert(nctshow::MAX_CHUNKS <= 32, "staging mask");
+
+// Replies to SHOW_QUERY, delayed by a random jitter so ~140 cubes do not collide.
+struct PendingReply {
+  bool used;
+  uint8_t mac[6];
+  uint32_t due;
+  uint32_t nonce;
+};
+
+PendingReply pendingReplies[4];
+
+void sendShowStatus(
+  const uint8_t *destination,
+  uint32_t nonce
+) {
+  nctshow::ShowStatus s = {};
+  nctshow::fillHeader(s.h, nctshow::SHOW_STATUS);
+  s.nonce = nonce;
+  s.version = showVersion;
+  s.crc = showCrc;
+  s.length = showImageSize;
+  s.stagingVersion = stagingVersion;
+  s.stagingChunks = stagingReceived;
+  s.stagingTotal = stagingTotal;
+  s.cubeId = isRegistered ? myCubeID : 0;
+  s.source = showSource;
+  s.lastError = showUpdateError;
+  s.zone = currentZone;
+  s.showRunning = showRunning ? 1 : 0;
+  s.pendingCommit = pendingCommit ? 1 : 0;
+  s.uptimeS = millis() / 1000;
+  strncpy(s.fw, FW_VERSION, sizeof(s.fw));
+  addPeer(destination);
+  esp_now_send(destination, (uint8_t *)&s, sizeof(s));
+}
+
+void scheduleShowStatus(
+  const uint8_t *destination,
+  uint32_t nonce,
+  uint16_t jitterMs
+) {
+  if (jitterMs > nctshow::MAX_REPLY_JITTER_MS) {
+    jitterMs = nctshow::MAX_REPLY_JITTER_MS;
   }
-
-
-  // ===================================================
-  // 00:36 ~ 01:00
-  // 흰색 1초 주기 점멸
-  //
-  // 0~0.5초 ON
-  // 0.5~1초 OFF
-  // ===================================================
-
-  if (
-    t < 60000
-  ) {
-
-    uint32_t phase =
-      (t - 36000) %
-      1000;
-
-    if (
-      phase < 500
-    ) {
-
-      showColor(
-        SHOW_WHITE_R,
-        SHOW_WHITE_G,
-        SHOW_WHITE_B
-      );
-
-    } else {
-
-      ledOff();
+  for (PendingReply &r : pendingReplies) {
+    if (r.used && !memcmp(r.mac, destination, 6)) {
+      r.nonce = nonce;  // one pending reply per querier
+      return;
     }
-
-    return;
   }
-
-
-  // ===================================================
-  // 01:00 ~ 01:08
-  // 흰색 점점 밝아짐
-  // ===================================================
-
-  if (
-    t < 68000
-  ) {
-
-    showFade(
-
-      SHOW_WHITE_R,
-      SHOW_WHITE_G,
-      SHOW_WHITE_B,
-
-      SHOW_WHITE_MAX_R,
-      SHOW_WHITE_MAX_G,
-      SHOW_WHITE_MAX_B,
-
-      t - 60000,
-      8000
-    );
-
-    return;
-  }
-
-
-  // ===================================================
-  // 01:08 ~ 01:14
-  // 네온색
-  // ===================================================
-
-  if (
-    t < 74000
-  ) {
-
-    showColor(
-      MAINSHOW_R,
-      MAINSHOW_G,
-      MAINSHOW_B
-    );
-
-    return;
-  }
-
-
-  // ===================================================
-  // 01:14 순간 네온 플래시
-  //
-  // 300ms 정도만 밝아짐
-  // 최대 100 이하
-  // ===================================================
-
-  if (
-    t < 74300
-  ) {
-
-    uint32_t p =
-      t - 74000;
-
-
-    if (
-      p < 120
-    ) {
-
-      showFade(
-
-        MAINSHOW_R,
-        MAINSHOW_G,
-        MAINSHOW_B,
-
-        SHOW_NEON_MAX_R,
-        SHOW_NEON_MAX_G,
-        SHOW_NEON_MAX_B,
-
-        p,
-        120
-      );
-
-    } else {
-
-      showFade(
-
-        SHOW_NEON_MAX_R,
-        SHOW_NEON_MAX_G,
-        SHOW_NEON_MAX_B,
-
-        MAINSHOW_R,
-        MAINSHOW_G,
-        MAINSHOW_B,
-
-        p - 120,
-        180
-      );
+  for (PendingReply &r : pendingReplies) {
+    if (!r.used) {
+      r.used = true;
+      memcpy(r.mac, destination, 6);
+      r.nonce = nonce;
+      r.due = millis() + random(0, uint32_t(jitterMs) + 1);
+      return;
     }
+  }
+}
 
-    return;
+void stopStaging() {
+  stagingVersion = 0;
+  stagingTotal = 0;
+  stagingReceived = 0;
+  stagingMask = 0;
+  pendingCommit = false;
+}
+
+void commitStagedShow() {
+  pendingCommit = false;
+  prefs.begin("show", false);
+  // Image first, then version and CRC: a torn write leaves a CRC mismatch,
+  // and loadStoredShow() falls back to the compiled-in show.
+  prefs.putUInt("ver", 0);
+  size_t written = prefs.putBytes("img", stagingImage, stagingLength);
+  prefs.putUInt("crc", stagingCrc);
+  prefs.putUInt("ver", stagingVersion);
+  prefs.end();
+
+  uint32_t version = stagingVersion;
+  stopStaging();
+  loadStoredShow();
+
+  if (written != stagingLength || showVersion != version) {
+    showUpdateError = nctshow::ERR_COMMIT;
+    Serial.println("SHOW UPDATE: NVS WRITE FAILED");
+  } else {
+    showUpdateError = nctshow::ERR_NONE;
+    Serial.print("SHOW UPDATE: v");
+    Serial.println(showVersion);
   }
 
+  if (haveAnnouncer) {
+    sendShowStatus(announcerMac, 0);
+  }
+}
 
-  // ===================================================
-  // 01:14.3 ~ 01:19
-  // 기본 네온 유지
-  // ===================================================
-
-  if (
-    t < 79000
-  ) {
-
-    showColor(
-      MAINSHOW_R,
-      MAINSHOW_G,
-      MAINSHOW_B
-    );
-
+void finishStaging() {
+  if (nctshow::crc32(stagingImage, stagingLength) != stagingCrc) {
+    showUpdateError = nctshow::ERR_CRC;
+    stopStaging();
     return;
   }
-
-
-  // ===================================================
-  // 01:19 ~ 01:54
-  // 결정 3색 디졸브
-  // ===================================================
-
-  if (
-    t < 114000
-  ) {
-
-    updateCrystalDissolve(
-      t - 79000
-    );
-
+  if (!nctshow::validImage(stagingImage, stagingLength)) {
+    showUpdateError = nctshow::ERR_INVALID;
+    stopStaging();
     return;
   }
+  pendingCommit = true;
+  if (!showRunning) {
+    commitStagedShow();
+  } else {
+    Serial.println("SHOW UPDATE: WAITING FOR SHOW END");
+  }
+}
 
+void onShowAnnounce(
+  const ShowFrame &f
+) {
+  nctshow::ShowAnnounce a;
+  memcpy(&a, f.data, sizeof(a));
+  memcpy(announcerMac, f.src, 6);
+  haveAnnouncer = true;
 
-  // ===================================================
-  // 01:54 ~ 01:59
-  // 전체 흰색으로 점점 밝아짐
-  // ===================================================
-
-  if (
-    t < 119000
-  ) {
-
-    showFade(
-
-      CRYSTAL_GRAY_R,
-      CRYSTAL_GRAY_G,
-      CRYSTAL_GRAY_B,
-
-      SHOW_WHITE_MAX_R,
-      SHOW_WHITE_MAX_G,
-      SHOW_WHITE_MAX_B,
-
-      t - 114000,
-      5000
-    );
-
+  bool force = (a.flags & nctshow::ANNOUNCE_FORCE) && !f.broadcast;
+  uint16_t chunks = (a.length + nctshow::CHUNK_DATA - 1) / nctshow::CHUNK_DATA;
+  if (a.version == 0 || a.length == 0 || a.length > sizeof(stagingImage) ||
+      a.chunkSize != nctshow::CHUNK_DATA || a.chunkCount != chunks) {
+    showUpdateError = nctshow::ERR_ANNOUNCE;
     return;
   }
-
-
-  // ===================================================
-  // 01:59 ~ 02:04
-  // 네온 최대 → 기본 밝기로 감소
-  // ===================================================
-
-  if (
-    t < 124000
-  ) {
-
-    showFade(
-
-      SHOW_NEON_MAX_R,
-      SHOW_NEON_MAX_G,
-      SHOW_NEON_MAX_B,
-
-      MAINSHOW_R,
-      MAINSHOW_G,
-      MAINSHOW_B,
-
-      t - 119000,
-      5000
-    );
-
+  if (a.version == showVersion && a.crc32 == showCrc) {
+    return;  // already current
+  }
+  if (a.version <= showVersion && !force) {
     return;
   }
-
-
-  // ===================================================
-  // 02:04 ~ 02:49
-  // 네온 랜덤 밝기
-  // ===================================================
-
-  if (
-    t < 169000
-  ) {
-
-    updateRandomNeon();
-
+  if (stagingVersion == a.version && stagingCrc == a.crc32 && stagingLength == a.length) {
+    stagingActivity = millis();  // same update in progress (or complete and pending)
     return;
   }
-
-
-  // ===================================================
-  // 02:49 ~ 03:04
-  // OFF
-  // ===================================================
-
-  if (
-    t < 184000
-  ) {
-
-    ledOff();
-
+  if (pendingCommit && a.version < stagingVersion && !force) {
     return;
   }
+  stopStaging();
+  stagingVersion = a.version;
+  stagingCrc = a.crc32;
+  stagingLength = a.length;
+  stagingTotal = chunks;
+  stagingActivity = millis();
+  memset(stagingImage, 0, sizeof(stagingImage));
+}
 
-
-  // ===================================================
-  // 03:04 ~ 03:12
-  // 사막색 Fade In
-  // ===================================================
-
-  if (
-    t < 192000
-  ) {
-
-    showFade(
-
-      0,
-      0,
-      0,
-
-      SHOW_DESERT_R,
-      SHOW_DESERT_G,
-      SHOW_DESERT_B,
-
-      t - 184000,
-      8000
-    );
-
+void onShowChunk(
+  const ShowFrame &f
+) {
+  nctshow::ShowChunk c;
+  memcpy(&c, f.data, sizeof(c));
+  if (!stagingVersion || pendingCommit || c.version != stagingVersion || c.index >= stagingTotal) {
     return;
   }
-
-
-  // ===================================================
-  // 03:12 ~ 03:41
-  // 사막색 천천히 Fade Out
-  // ===================================================
-
-  if (
-    t < 221000
-  ) {
-
-    showFade(
-
-      SHOW_DESERT_R,
-      SHOW_DESERT_G,
-      SHOW_DESERT_B,
-
-      0,
-      0,
-      0,
-
-      t - 192000,
-      29000
-    );
-
+  uint16_t expected = c.index + 1 < stagingTotal
+                        ? nctshow::CHUNK_DATA
+                        : stagingLength - uint16_t(c.index) * nctshow::CHUNK_DATA;
+  if (c.n != expected) {
     return;
   }
-
-
-  // ===================================================
-  // 03:41 ~ 03:51
-  // OFF
-  // ===================================================
-
-  if (
-    t < 231000
-  ) {
-
-    ledOff();
-
+  stagingActivity = millis();
+  if (stagingMask & (1UL << c.index)) {
     return;
   }
+  stagingMask |= 1UL << c.index;
+  stagingReceived++;
+  memcpy(stagingImage + uint32_t(c.index) * nctshow::CHUNK_DATA, c.data, c.n);
+  if (stagingReceived == stagingTotal) {
+    finishStaging();
+  }
+}
 
-
-  // ===================================================
-  // 03:51 ~ 03:54
-  // 풀색 Fade In
-  // ===================================================
-
-  if (
-    t < 234000
-  ) {
-
-    showFade(
-
-      0,
-      0,
-      0,
-
-      SHOW_POOL_R,
-      SHOW_POOL_G,
-      SHOW_POOL_B,
-
-      t - 231000,
-      3000
-    );
-
+// Fallback start and drift correction for a ready cube; SHOW_START is unchanged.
+void onShowTimecode(
+  const ShowFrame &f
+) {
+  nctshow::ShowTimecode tc;
+  memcpy(&tc, f.data, sizeof(tc));
+  if (tc.showId == 0 || tc.tMs >= showPlayer.lengthMs()) {
     return;
   }
-
-
-  // ===================================================
-  // 03:54 ~ 03:57
-  // 풀색 Fade Out
-  // ===================================================
-
-  if (
-    t < 237000
-  ) {
-
-    showFade(
-
-      SHOW_POOL_R,
-      SHOW_POOL_G,
-      SHOW_POOL_B,
-
-      0,
-      0,
-      0,
-
-      t - 234000,
-      3000
-    );
-
-    return;
-  }
-
-
-  // ===================================================
-  // 03:57 ~ 04:37
-  // OFF
-  // ===================================================
-
-  if (
-    t < 277000
-  ) {
-
-    ledOff();
-
-    return;
-  }
-
-
-  // ===================================================
-  // 04:37 ~ 04:47
-  // 흰색 Fade In
-  // ===================================================
-
-  if (
-    t < 287000
-  ) {
-
-    showFade(
-
-      0,
-      0,
-      0,
-
-      SHOW_WHITE_R,
-      SHOW_WHITE_G,
-      SHOW_WHITE_B,
-
-      t - 277000,
-      10000
-    );
-
-    return;
-  }
-
-
-  // ===================================================
-  // 04:47 ~ 04:55
-  //
-  // 낮은 흰색 유지
-  // 약 700ms마다
-  // 120ms 강한 플래시
-  //
-  // ★ 강한 순간에도 최대 100
-  // ===================================================
-
-  if (
-    t < 295000
-  ) {
-
-    uint32_t phase =
-      (t - 287000) %
-      700;
-
-
-    if (
-      phase < 120
-    ) {
-
-      showColor(
-        SHOW_WHITE_MAX_R,
-        SHOW_WHITE_MAX_G,
-        SHOW_WHITE_MAX_B
-      );
-
-    } else {
-
-      showColor(
-        SHOW_WHITE_R,
-        SHOW_WHITE_G,
-        SHOW_WHITE_B
-      );
+  if (showRunning && tc.showId == lastShowId) {
+    uint32_t elapsed = millis() - showStartMillis;
+    uint32_t drift = elapsed > tc.tMs ? elapsed - tc.tMs : tc.tMs - elapsed;
+    if (drift > nctshow::DRIFT_LIMIT_MS) {
+      showStartMillis = millis() - tc.tMs;
+      Serial.print("TIMECODE RESYNC / DRIFT MS = ");
+      Serial.println(drift);
     }
-
     return;
   }
+  if (currentZone != ZONE_MAINSHOW) {
+    return;  // not ready (or a show on this cube just ended and dropped eligibility)
+  }
+  startMainShowAt(tc.showId, tc.tMs);
+  Serial.print("MAIN SHOW JOIN BY TIMECODE / ID = ");
+  Serial.print(tc.showId);
+  Serial.print(" / T = ");
+  Serial.println(tc.tMs);
+}
 
-
-  // ===================================================
-  // 04:55 ~ 04:58
-  // 흰색 Fade Out
-  // ===================================================
-
-  if (
-    t < 298000
-  ) {
-
-    showFade(
-
-      SHOW_WHITE_R,
-      SHOW_WHITE_G,
-      SHOW_WHITE_B,
-
-      0,
-      0,
-      0,
-
-      t - 295000,
-      3000
-    );
-
-    return;
+void handleShowFrames() {
+  ShowFrame f;
+  while (showQueue && xQueueReceive(showQueue, &f, 0) == pdTRUE) {
+    switch (nctshow::frameType(f.data, f.len)) {
+      case nctshow::SHOW_ANNOUNCE: onShowAnnounce(f); break;
+      case nctshow::SHOW_CHUNK: onShowChunk(f); break;
+      case nctshow::SHOW_QUERY: {
+        nctshow::ShowQuery q;
+        memcpy(&q, f.data, sizeof(q));
+        scheduleShowStatus(f.src, q.nonce, q.jitterMs);
+        break;
+      }
+      case nctshow::SHOW_TIMECODE: onShowTimecode(f); break;
+      default: break;
+    }
   }
 
+  uint32_t now = millis();
+  for (PendingReply &r : pendingReplies) {
+    if (r.used && int32_t(now - r.due) >= 0) {
+      r.used = false;
+      sendShowStatus(r.mac, r.nonce);
+    }
+  }
 
-  // ===================================================
-  // 04:58 이후
-  // 2부에서는 네오코어 OFF
-  // ===================================================
+  if (stagingVersion && !pendingCommit && now - stagingActivity > nctshow::STAGING_TIMEOUT_MS) {
+    showUpdateError = nctshow::ERR_TIMEOUT;
+    stopStaging();
+  }
 
-  ledOff();
-
-  showRunning =
-    false;
-
-  // 다음 회차 SHOW_START를 다시 받지 않도록
-  // 메인쇼 참가 자격만 해제한다. LED는 OFF 유지.
-  currentZone =
-    ZONE_IDLE;
-
-
-  Serial.println();
-
-  Serial.println(
-    "MAIN SHOW TIMELINE END"
-  );
-
-  Serial.println(
-    "LED OFF"
-  );
+  if (pendingCommit && !showRunning) {
+    commitStagedShow();
+  }
 }
 
 
@@ -1609,6 +1201,21 @@ void onDataRecv(
   if (
     len != sizeof(Packet)
   ) {
+
+    // NctShow frames (never 24 bytes) go to loop() through showQueue.
+    if (
+      showQueue &&
+      len <= (int)sizeof(ShowFrame::data) &&
+      nctshow::frameType(data, len)
+    ) {
+
+      ShowFrame f;
+      memcpy(f.src, info->src_addr, 6);
+      f.broadcast = info->des_addr && (info->des_addr[0] & 1);
+      f.len = (uint8_t)len;
+      memcpy(f.data, data, len);
+      xQueueSend(showQueue, &f, 0);
+    }
 
     return;
   }
@@ -1635,6 +1242,14 @@ void onDataRecv(
 // =====================================================
 // SETUP
 // =====================================================
+
+// "SHOW: v=<version> crc=<hex> src=builtin|nvs" (version 0 = compiled-in show)
+void printShowLine() {
+  char line[64];
+  snprintf(line, sizeof(line), "SHOW: v=%lu crc=%08lx src=%s", (unsigned long)showVersion,
+           (unsigned long)showCrc, showSource == nctshow::SOURCE_NVS ? "nvs" : "builtin");
+  Serial.println(line);
+}
 
 bool usbReady = false;
 
@@ -1692,7 +1307,7 @@ void setup() {
   );
 
   Serial.println(
-    "FW: v1.4.1-USB.2"
+    "FW: " FW_VERSION
   );
 
   Serial.print(
@@ -1709,6 +1324,8 @@ void setup() {
   // ===================================================
 
   loadRegistration();
+
+  loadStoredShow();
 
 
   if (
@@ -1752,6 +1369,9 @@ void setup() {
   }
 
 
+  showQueue =
+    xQueueCreate(8, sizeof(ShowFrame));
+
   esp_now_register_recv_cb(
     onDataRecv
   );
@@ -1770,7 +1390,7 @@ void setup() {
     "FW: "
   );
   Serial.println(
-    "v1.4.1-USB.2"
+    FW_VERSION
   );
 
   Serial.print(
@@ -1791,6 +1411,8 @@ void setup() {
     WiFi.channel()
   );
 
+  printShowLine();
+
   usbReady = true;
   Serial.println(
     "Cube READY"
@@ -1809,9 +1431,10 @@ void setup() {
 
 void loop() {
   if (Serial.available() && Serial.read() == '?' && usbReady) {
-    Serial.println("FW: v1.4.1-USB.2");
+    Serial.println("FW: " FW_VERSION);
     Serial.print("Cube MAC: "); Serial.println(WiFi.macAddress());
     Serial.print("ESP-NOW CHANNEL: "); Serial.println(WiFi.channel());
+    printShowLine();
     Serial.println("Cube READY");
   }
 
@@ -1820,6 +1443,8 @@ void loop() {
   // ===================================================
 
   updateMainShowTimeline();
+
+  handleShowFrames();
 
 
   // ===================================================

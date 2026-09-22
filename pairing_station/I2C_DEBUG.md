@@ -62,3 +62,10 @@ MAC `AC:27:6E:82:60:4C`. The station observed tag removal then read
 `53:21:D4:CF:33:00:01`, transmitted registration, received a matching cube ACK
 on attempt 1, sent static/idle, and the GUI displayed its green success feedback.
 Physical LED appearance and persistence across cube power loss were not verified.
+
+## Adjacent powered readers (bench lesson, 2026-09)
+
+Two PN532 boards powered within a few centimetres of each other stop reading tags: each carrier
+detunes the other's antenna, and the symptom is "initialised fine, polls run, no tag ever found".
+Power down or move away every reader except the one under test before concluding a tag or a board is
+faulty. The NCT Console's reader-fault suggestion links here.

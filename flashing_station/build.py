@@ -2,21 +2,21 @@
 import hashlib
 import json
 import shutil
-from core import ROOT, WORKSPACE, VERSION, FQBN, digest, atomic_json
+from core import ROOT, WORKSPACE, VERSION, FQBN, SHOW_LIBRARY, digest, source_digest, atomic_json
 import hostos
 
 def build(run):
     cli = hostos.arduino_cli()
     if not cli: raise RuntimeError('Install Arduino IDE or arduino-cli and ESP32 core 3.3.11')
-    source_hash = digest(ROOT/'firmware/neocore_usb/neocore_usb.ino')
+    source_hash = source_digest()
     out = ROOT/'build'; out.mkdir(exist_ok=True)
-    run([cli,'compile','--fqbn',FQBN,'--libraries',str(WORKSPACE/'live files/libraries'),
+    run([cli,'compile','--fqbn',FQBN,'--libraries',str(WORKSPACE/'live files/libraries'),'--library',str(SHOW_LIBRARY),
          '--build-path',str(out/'cache'),'--output-dir',str(out),str(ROOT/'firmware/neocore_usb')], timeout=600)
     core = hostos.esp32_core('3.3.11')
     options = json.loads((out/'cache/build.options.json').read_text(encoding='utf-8'))
     if not all(hostos.same_folder(folder,core) for folder in options['hardwareFolders'].split(',')):
         raise RuntimeError('Build used an unexpected ESP32 core; select version 3.3.11')
-    if source_hash != digest(ROOT/'firmware/neocore_usb/neocore_usb.ino'):
+    if source_hash != source_digest():
         raise RuntimeError('Source changed during build; rebuild before flashing')
     # Match the selected board's upload recipe; leave NVS (0x9000–0xdfff) untouched.
     shutil.copyfile(core/'tools/partitions/boot_app0.bin', out/'boot_app0.bin')

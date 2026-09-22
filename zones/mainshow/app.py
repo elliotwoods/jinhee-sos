@@ -26,6 +26,7 @@ import hostos  # noqa: E402
 from database import Database  # noqa: E402
 from transport import Transport  # noqa: E402
 from zone_registry import ZoneStore  # noqa: E402
+import showfile  # noqa: E402
 sys.path.insert(0, str(ROOT / 'zones/dbmanager'))
 import dongle  # noqa: E402  (adds flashing_station to the path: import it last)
 
@@ -36,18 +37,11 @@ FIRMWARE = dongle.MAINSHOW.version
 ZONE_NAMES = {0: 'idle', 1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow'}
 DEFAULT_CUBE = 44
 
-# The cube's own timeline (updateMainShowTimeline() in flashing_station/firmware/neocore_usb), as
-# (end in ms since SHOW_START, what the cube shows). The cube reports nothing back, so the app can
-# only show where the cube *should* be.
-TIMELINE = [
-    (31000, 'Neon hold (entrance)'), (36000, 'Off: main video starts'), (60000, 'White blink, 1 Hz'),
-    (68000, 'White fades up to maximum'), (74000, 'Neon'), (74300, 'Neon flash'), (79000, 'Neon'),
-    (114000, 'Crystal dissolve: grey, blue, red'), (119000, 'Fades up to maximum white'),
-    (124000, 'Maximum neon fades to neon'), (169000, 'Random neon brightness'), (184000, 'Off'),
-    (192000, 'Desert fades in'), (221000, 'Desert fades out'), (231000, 'Off'), (234000, 'Pool blue fades in'),
-    (237000, 'Pool blue fades out'), (277000, 'Off'), (287000, 'White fades in'), (295000, 'White strobe'),
-    (298000, 'White fades out'),
-]
+# The cubes' show as (end in ms since SHOW_START, what the cube shows), from the show document
+# (shows/mainshow.json; the cube firmware's compiled-in DefaultShow.h is generated from it). The cube
+# reports nothing back, so the app can only show where the cube *should* be. A cube holding a newer
+# published show (Show editor) follows that one; the console reads the published copy.
+TIMELINE = showfile.summary(showfile.load())
 SHOW_LENGTH_MS = TIMELINE[-1][0]
 
 
@@ -102,7 +96,7 @@ class Session:
         self.reset()
 
     def usable(self):
-        return self.connected and self.info.get('radio_ok') and self.info.get('firmware', '').startswith('mainshow-')
+        return self.connected and self.info.get('radio_ok') and dongle.show_capable(self.info.get('firmware'))
 
     def busy(self):
         if self.pending and self.clock() - self.pending['sent'] > self.REPLY_TIMEOUT:
@@ -158,7 +152,7 @@ class Session:
             self.info = event
             firmware = event.get('firmware', '?')
             self.connected = True
-            if not firmware.startswith('mainshow-'):
+            if not dongle.show_capable(firmware):
                 self.problem = (f'This board runs {firmware}: it is not the Mainshow controller. '
                                 'Use Flash controller firmware… to convert a spare dongle.')
             elif not event.get('radio_ok'):
@@ -193,6 +187,13 @@ class Session:
         elif kind == 'ignored':
             self.log(f'Trigger input closed again after only {event.get("open_ms")} ms open: treated as a dropout '
                      f'and ignored (it must be open {event.get("rearm_ms")} ms before it can start a new show)')
+        elif kind == 'show_config':  # mainshow-1.3.0: the show length that bounds the timecode
+            self.info = dict(self.info, show_length_ms=event.get('length_ms'), show_version=event.get('version'),
+                             show_crc=event.get('crc'))
+            self.log(f'Controller: show v{event.get("version")} ({event.get("length_ms", 0) / 1000:.1f} s) stored; '
+                     'timecode follows it')
+        elif kind == 'show_stop':
+            self.log('Controller: show timecode stopped (cubes keep playing until idle)')
         elif kind == 'error':
             self.log('Controller: ' + str(event.get('detail')))
         return kind
@@ -408,13 +409,17 @@ class App:
         if self.session.problem:
             self.link_status.configure(text=f'{mac} · {self.session.problem}', foreground=RED)
             return
-        if mac and mac not in dongle.controllers(self.db):
+        general = dongle.is_general(firmware)
+        # A general radio also answers ① and ②, but it is a dongle, not the show trigger: it is not
+        # recorded as the controller (that record would lock it out of every other firmware).
+        if mac and not general and mac not in dongle.controllers(self.db):
             dongle.set_controller(self.db, mac, True)  # so the dongle flasher leaves it alone
             self.log(f'Recorded {mac} as the Mainshow controller')
-        old = firmware != FIRMWARE
+        old = firmware != (dongle.GENERAL.version if general else FIRMWARE)
+        inputs = (' · no physical trigger (general radio)' if general else
+                  f' · BOOT button GPIO{info.get("button_pin")} · trigger input GPIO{info.get("trigger_pin")} (XIAO D1)')
         self.link_status.configure(foreground=AMBER if old else GREEN, text=(
-            f'Connected · {mac} · {firmware} · channel {info.get("channel")} · BOOT button GPIO{info.get("button_pin")} · '
-            f'trigger input GPIO{info.get("trigger_pin")} (XIAO D1) · {info.get("shows", 0)} show(s) since boot' +
+            f'Connected · {mac} · {firmware} · channel {info.get("channel")}{inputs} · {info.get("shows", 0)} show(s) since boot' +
             (f' · Flash controller firmware… updates it to {FIRMWARE}' if old else '')))
         if self.expect_firmware:
             self.expect_firmware = False

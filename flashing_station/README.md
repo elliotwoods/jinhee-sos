@@ -19,9 +19,25 @@ Audio cues cover connection, start, progress, success and failure. Mute, volume 
 
 ## Firmware
 
-The supplied build is **v1.4.1-USB.2**, derived from `live files/neocore_cube_OTA_1.4/neocore_cube_OTA_1.4.ino` (v1.4.1-STABLE-TEST). It removes the ArduinoOTA service, Wi-Fi credentials and access-point connection attempts. ESP-NOW uses fixed channel 2. The original show timeline, LED limits, registration NVS layout and packet numbers remain; packet type 5 is reserved and ignored.
+The previous build, **v1.4.1-USB.2**, was derived from `live files/neocore_cube_OTA_1.4/neocore_cube_OTA_1.4.ino` (v1.4.1-STABLE-TEST). It removes the ArduinoOTA service, Wi-Fi credentials and access-point connection attempts. ESP-NOW uses fixed channel 2. The original show timeline, LED limits, registration NVS layout and packet numbers remain; packet type 5 is reserved and ignored.
 
-A USB `?` query reports firmware version, station MAC, ESP-NOW channel and readiness. It only reports ready after ESP-NOW initialized successfully.
+**v1.5.0-USB.1** (2026-09-23) makes the main show data. Registration, zones, `MSG_SHOW_START` and the packet ABI are unchanged.
+- The compiled-in `DefaultShow.h` is generated from `shows/mainshow.json` (`python pairing_station/showfile.py --header`) and renders v1.4.1's hard-coded timeline exactly: `zones/tests/test_ShowEngine.cpp` compares them every millisecond of the show.
+- A newer show published from the console's Show editor arrives over ESP-NOW (`SHOW_ANNOUNCE`/`SHOW_CHUNK`, `zones/firmware/libraries/NctShow`), is checked (CRC, format) and kept in NVS namespace `show` (keys `img`, `ver`, `crc`; the `cube` registration keys are untouched). A torn or invalid stored show falls back to the compiled-in one. Only a higher version is accepted (FORCE: unicast only), and never while a show is running: a complete update waits for the show to end.
+- `SHOW_TIMECODE` from mainshow-1.3.0 / general-radio-1.1.0: a mainshow-ready cube that missed the start joins at the broadcast time, and a running cube corrects drift above 100 ms.
+- The build now also compiles `zones/firmware/libraries/NctShow` (`build.py --library`), and the manifest's `source_hash` covers the sketch, `DefaultShow.h` and NctShow.
+- Updating the fleet: flash v1.5.0 once over USB (the normal pipeline; bootloader and partition table are byte-identical to v1.4.1, only the app changes). Later shows go over the air.
+
+Hardware check on cube #17 (1C:DB:D4:F0:A8:30), 2026-09-23. All results are from serial logs; the LEDs were not watched.
+- USB flash succeeded with NVS preserved (run `07f6136475b14697ba39dda34f80fce3`).
+- An old-style SET_ZONE 4 + SHOW_START started the show, repeats were ignored, and SET_ZONE 0 stopped it.
+- A unicast show start while the cube was idle was ignored; made ready afterwards, it joined from the timecode (T = 3131 ms).
+- The wireless update of a 516-byte show (3 chunks) was confirmed about 0.3 s after sending.
+- A second update was held by the host while a show ran; with the cube still playing, it was staged and committed when the cube went idle.
+- The stored show survived a watchdog reset.
+- The cube was left holding show v2 (content identical to the default).
+
+A USB `?` query reports firmware version, station MAC, ESP-NOW channel, the active show (`SHOW: v=<n> crc=<hex> src=builtin|nvs`, v0 = compiled-in) and readiness. It only reports ready after ESP-NOW initialized successfully.
 
 Build target: `esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M`, Arduino-ESP32 **3.3.11**, esptool **5.3.1**, bundled Adafruit NeoPixel library. Click **Rebuild firmware** after editing the maintained USB-only source. No Internet firmware discovery occurs. SHA-256 checks reject modified or stale artifacts.
 

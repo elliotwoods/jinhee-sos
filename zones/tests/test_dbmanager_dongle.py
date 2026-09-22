@@ -108,6 +108,35 @@ class DongleTests(unittest.TestCase):
         self.assertEqual(Path(write[write.index('0x10000') + 1]).read_bytes(), b'M' * 10)
         self.assertEqual(dongle.refusal('02:00:00:00:00:01', known, dongle.MAINSHOW)[:22], '02:00:00:00:00:01 is a')
 
+    def test_general_radio_firmware_and_backups(self):
+        stem = 'GeneralRadio.ino'
+        self.assertEqual(dongle.artifacts(dongle.GENERAL)['app'].name, stem + '.bin')
+        self.assertEqual((dongle.GENERAL.sketch.name, dongle.GENERAL.version), ('GeneralRadio', 'general-radio-1.1.0'))
+        self.assertTrue(dongle.is_general('general-radio-1.0.0') and not dongle.is_general('nct-pairing-1.8-zones') and not dongle.is_general(None))
+        self.assertTrue(dongle.show_capable('general-radio-1.0.0') and dongle.show_capable('mainshow-1.2.0') and not dongle.show_capable('nct-pairing-1.8-zones'))
+        self.assertEqual(dongle.RELAY_VERSIONS, {'nct-pairing-1.8-zones', 'general-radio-1.1.0', 'general-radio-1.0.0'})
+        for name, data in [('bootloader', b'B'), ('partitions', b'P'), ('app', b'G' * 10)]:
+            (self.build / f'{stem}{"" if name == "app" else "." + name}.bin').write_bytes(data)
+        (self.build / f'{stem}.merged.bin').write_bytes((self.build / 'pairing_station.ino.merged.bin').read_bytes())
+        # A recorded Mainshow controller is refused the general radio as it is refused the relay.
+        self.assertIn('Mainshow controller', dongle.refusal(MAC, dict(KNOWN, controllers={MAC}), dongle.GENERAL))
+        self.assertIsNone(dongle.refusal(MAC, KNOWN, dongle.GENERAL))  # an excluded ex-cube may be given it
+        with patch.object(dongle.GENERAL, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
+                patch.object(dongle, 'build_state', return_value='current'), patch('backend.Runner.__call__', side_effect=self.fake_tool), \
+                patch.object(dongle, 'ports', return_value=[PORT]), patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()), \
+                patch.object(dongle.time, 'strftime', side_effect=['20260923-010000', '20260923-010001']):
+            for _ in range(2):
+                self.assertEqual(dongle.flash(PORT, KNOWN, Path(self.tmp.name) / 'run', lambda *e: None,
+                                              firmware=dongle.GENERAL, backup='always'), MAC)
+        writes = [c for c in self.calls if 'write-flash' in c]
+        self.assertEqual(Path(writes[0][writes[0].index('0x10000') + 1]).read_bytes(), b'G' * 10)
+        reads = [c for c in self.calls if 'read-flash' in c]
+        self.assertEqual(len(reads), 2, 'backup="always" reads the flash before every write')
+        backups = sorted(p.name for p in (self.build / 'backups').iterdir())
+        self.assertEqual(len(backups), 2)
+        self.assertTrue(all(b.startswith('AABBCC001122-') and b.endswith('.bin') for b in backups), backups)
+        self.assertLess(self.calls.index(reads[0]), self.calls.index(writes[0]))
+
     def test_controller_record(self):
         sys.path.insert(0, str(ROOT.parent / 'pairing_station'))
         from database import Database

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>NCT Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">
+{ "imports": { "preact": "./vendor/preact.mjs", "preact/hooks": "./vendor/hooks.mjs", "htm": "./vendor/htm.mjs" } }
+</script>
+</head>
+<body>
+<div id="app"><div class="splash">Starting the NCT Console backend…</div></div>
+<div id="live" aria-live="polite" class="sr-only"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

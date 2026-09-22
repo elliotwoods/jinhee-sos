@@ -10,6 +10,7 @@ pairing_station/.venv/bin/python zones/mainshow/app.py [--cube 44] [--port /dev/
 - **Controller**:
   - The port list marks the recorded Mainshow controller, the pairing station and the spare dongles.
   - **Flash controller firmware…** converts a spare ESP32-C3 dongle, such as an ex-cube board running the pairing-station relay. The Zone Database Manager then needs the other dongle. A port that app has open is refused.
+  - A **general radio** (`zones/firmware/GeneralRadio`) also answers ① and ② (with the plate-style colour repeats), but it has no BOOT-button/trigger-input show start and is not recorded as the controller.
 - **Cube #**: looked up in `pairing_station/data/devices.sqlite3`. The default is 44.
 - **① Mainshow ready** sends `SET_ZONE 4` to that cube, which turns neon.
 - **② Trigger mainshow** sends `SHOW_START` (5 times, with a fresh showId) to **this cube only** (the default) or to

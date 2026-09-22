@@ -35,7 +35,7 @@ jobs:
       - name: Unit tests
         run: |
           status=0
-          for suite in pairing_station/tests flashing_station/tests zones/tests zones/calibration poolzone_test/tests; do
+          for suite in pairing_station/tests flashing_station/tests zones/tests zones/calibration poolzone_test/tests console/tests; do
             echo "::group::$suite"
             "$PY" -m unittest discover -s "$suite" -p 'test_*.py' || status=1
             echo "::endgroup::"
@@ -43,9 +43,14 @@ jobs:
           exit $status
       - name: Every app imports
         run: |
-          for app in pairing_station flashing_station inventory_web poolzone_test rangetest zones/calibration zones/dbmanager zones/flasher zones/mainshow zones/preshow_test; do
+          for app in pairing_station flashing_station inventory_web poolzone_test rangetest zones/calibration zones/dbmanager zones/flasher zones/mainshow zones/preshow_test console; do
             (cd "$app" && "$GITHUB_WORKSPACE/$PY" -c "import importlib.util as u,sys;sys.path.insert(0,'.');s=u.spec_from_file_location('app_under_test','app.py');m=u.module_from_spec(s);s.loader.exec_module(m);print('ok','$app')") || exit 1
           done
+      - name: Console front-end unit tests (node)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: test ! -d console/web/tests || node --test "console/web/tests/*.test.js"
       - name: Firmware build plan
         run: '"$PY" scripts/build_all_firmware.py --dry-run'
       - name: Host firmware simulations

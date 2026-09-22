@@ -67,6 +67,10 @@ def main():
         # the Mainshow app (zones/mainshow) flashes this same build through zones/dbmanager/dongle.py.
         ('Mainshow controller', 'zones/firmware/MainshowController', 'zones/build/MainshowController', C3,
          ('zones/firmware/libraries', 'live files/libraries')),
+        # One dongle for every ESP-NOW host function (relay + Mainshow verbs + pool/preshow
+        # emulation); zones/tools/general_radio.py flashes it through zones/dbmanager/dongle.py.
+        ('General radio', 'zones/firmware/GeneralRadio', 'zones/build/GeneralRadio', C3,
+         ('zones/firmware/libraries', 'live files/libraries')),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
         ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:

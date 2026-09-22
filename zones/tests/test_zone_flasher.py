@@ -20,6 +20,14 @@ DATA = {'zcfg': dict(offset=0x210000, size=0x1000), 'zdb_a': dict(offset=0x21100
         'zdb_b': dict(offset=0x219000, size=0x8000)}
 
 
+def partition_table(parts):
+    """A binary ESP32 partition table with the given data partitions (what esptool reads at 0x8000)."""
+    entries = [(b'nvs', 1, 2, 0x9000, 0x5000), (b'app0', 0, 0x10, 0x10000, 0x200000)]
+    entries += [(name.encode(), 1, 0x40, p['offset'], p['size']) for name, p in parts.items()]
+    return b''.join(b'\xaa\x50' + bytes([kind, sub]) + offset.to_bytes(4, 'little') + size.to_bytes(4, 'little') +
+                    name.ljust(16, b'\0') + b'\0' * 4 for name, kind, sub, offset, size in entries)
+
+
 class ZoneFlasherTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -39,6 +47,8 @@ class ZoneFlasherTests(unittest.TestCase):
         self.zone_line = 'ZONE: type=1 point=2 name=Preshow 2'
         self.gain_line = None  # default: the board reports the gain it was flashed with, applied
         self.flashed_gain = None
+        self.partitions = DATA        # what the board's partition table lists
+        self.zdb_b_dirty = False      # slot B still holds a header after the erase
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -62,13 +72,17 @@ class ZoneFlasherTests(unittest.TestCase):
         if 'read-flash' in args:
             offset, size, out = int(args[-3], 0), int(args[-2], 0), Path(args[-1])
             run = out.parent
-            if offset == DATA['zcfg']['offset']:
+            if offset == 0x8000:
+                out.write_bytes(partition_table(self.partitions).ljust(size, b'\xff'))
+            elif offset == DATA['zcfg']['offset']:
                 out.write_bytes((run / 'zcfg.bin').read_bytes()[:size])
             elif offset == DATA['zdb_a']['offset']:
                 data = (run / 'zdb_a.bin').read_bytes()[:size]
                 out.write_bytes(bytes([data[0] ^ 1]) + data[1:] if self.corrupt_readback else data)
+            elif offset == DATA['zdb_b']['offset'] and self.zdb_b_dirty:
+                out.write_bytes(b'NZDB'.ljust(size, b'\0'))
             else:
-                out.write_bytes(b'\xff' * 16)
+                out.write_bytes(b'\xff' * size)
         return 'ok'
 
     def boot(self, port, runner):
@@ -95,10 +109,91 @@ class ZoneFlasherTests(unittest.TestCase):
             return ZoneFlasher(self.db_path, lambda *e: self.events.append(e)).execute(self.port, profile, point, name, params,
                                                                                    force=force, rx_gain=rx_gain)
 
+    def update(self, expected_mac=MAC):
+        with patch.object(zone_flash, 'DATA', self.root / 'data'), \
+                patch('zone_flash.Runner.__call__', side_effect=self.fake_tool), \
+                patch('zone_flash.ports', return_value=[self.port]), \
+                patch.object(ZoneFlasher, 'boot_report', side_effect=self.boot):
+            return ZoneFlasher(self.db_path, lambda *e: self.events.append(e)).update_database(self.port, expected_mac)
+
+    def test_database_update_writes_only_the_database_slots(self):
+        db = Database(self.db_path)
+        self.publish_web(db, version=7)
+        db.close()
+        record = self.update()
+        self.assertEqual(record['result'], 'success', record.get('detail'))
+        self.assertEqual((record['kind'], record['mac'], record['db_version'], record['db_count']), ('database', MAC, 7, 32))
+        self.assertIn('database v7 (32 records)', record['detail'])
+        erased = [c[c.index('erase-region') + 1] for c in self.calls if 'erase-region' in c]
+        self.assertEqual(erased, ['0x211000', '0x219000'])          # never zcfg
+        writes = [c for c in self.calls if 'write-flash' in c]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][writes[0].index('write-flash') + 7:], ['0x211000', writes[0][-1]])
+        self.assertEqual(Path(writes[0][-1]).name, 'zdb_a.bin')
+        self.assertFalse(any('0x210000' in c or '0x10000' in c for c in self.calls))  # identity and firmware untouched
+        slot = zonedb.parse_slot(Path(writes[0][-1]).read_bytes())
+        self.assertEqual((slot['version'], slot['count']), (7, 32))
+        reads = [int(c[c.index('read-flash') + 1], 0) for c in self.calls if 'read-flash' in c]
+        self.assertEqual(reads, [0x8000, 0x211000, 0x219000])       # partition table, slot A back, slot B blank
+        self.assertEqual(self.calls[-1][self.calls[-1].index('--after') + 1], 'watchdog-reset')
+        self.assertTrue(all(c[c.index('--before') + 1] == 'no-reset' for c in self.calls[2:] if '--before' in c))
+        db = Database(self.db_path)
+        zones = ZoneStore(db).zones()
+        db.close()
+        self.assertEqual([(z['mac'], z['source'], z['db_version']) for z in zones], [(MAC, 'flash', 7)])
+        receipt = next((self.root / 'data/runs').glob('*/receipt.json'))
+        self.assertIn('"kind": "database"', receipt.read_text(encoding='utf-8'))
+
+    def test_database_update_refusals_write_nothing(self):
+        def refused(expected_mac=MAC, **state):
+            self.calls.clear()
+            for key, value in state.items():
+                setattr(self, key, value)
+            record = self.update(expected_mac)
+            self.assertEqual(record['result'], 'failed', record.get('detail'))
+            self.assertFalse(any('write-flash' in c or 'erase-region' in c for c in self.calls))
+            return record['detail']
+
+        self.assertIn('not the board that was identified', refused(expected_mac='AA:BB:CC:DD:EE:FF'))
+        self.assertIn('identify it again', refused(expected_mac=None))
+        self.assertIn('pairing station', refused(expected_mac='3C:0F:02:AD:83:24', mac='3C:0F:02:AD:83:24'))
+        db = Database(self.db_path)
+        cube = db.rows()[0]
+        db.close()
+        self.assertIn('neocube', refused(expected_mac=cube['mac'], mac=cube['mac']))
+        self.assertIn('flash it with zone firmware first', refused(mac=MAC, partitions={'zcfg': DATA['zcfg']}))
+        self.partitions = DATA
+        self.port = dict(self.port, candidate=False)
+        refused()
+        self.assertEqual(self.calls, [])
+        self.port = dict(self.port, candidate=True)
+        db = Database(self.db_path)
+        with db.conn:
+            db.conn.execute("DELETE FROM metadata WHERE key LIKE 'zone_db_%'")
+        db.close()
+        self.assertIn('Zone Database Manager', refused())
+        self.assertEqual(self.calls, [])
+
+    def test_database_update_verifies_slots_and_boot(self):
+        self.corrupt_readback = True
+        record = self.update()
+        self.assertEqual((record['result'], record['detail']), ('attention', 'zdb_a read-back mismatch'))
+        self.corrupt_readback, self.zdb_b_dirty = False, True
+        record = self.update()
+        self.assertEqual((record['result'], record['detail']), ('attention', 'zdb_b was not erased'))
+        self.zdb_b_dirty, self.report = False, None
+        record = self.update()
+        self.assertEqual(record['result'], 'boot_unconfirmed')
+        self.assertIn('Written and verified', record['detail'])
+        db = Database(self.db_path)
+        zones = ZoneStore(db).zones()
+        db.close()
+        self.assertEqual(zones, [])  # nothing confirmed, nothing recorded
+
     def test_success_writes_identity_database_and_records_zone(self):
         record = self.execute()
         self.assertEqual(record['result'], 'success', record.get('detail'))
-        self.assertEqual((record['db_version'], record['db_count']), (1, 32))
+        self.assertEqual((record['kind'], record['db_version'], record['db_count']), ('flash', 1, 32))
         erased = [c[c.index('erase-region') + 1] for c in self.calls if 'erase-region' in c]
         self.assertEqual(erased, ['0x210000', '0x211000', '0x219000'])
         write = next(c for c in self.calls if 'write-flash' in c)

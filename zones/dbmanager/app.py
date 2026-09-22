@@ -41,7 +41,9 @@ COLUMNS = [('name', 'Zone', 130), ('signal', 'Signal', 120), ('kind', 'Type · p
 STATE_TEXT = {'current': '✓ current', 'behind': '↑ out of date', 'updating': '… updating', 'ahead': '⚠ newer / differs',
               'unpublished': '— nothing published'}
 STATE_COLOR = {'current': GREEN, 'behind': AMBER, 'updating': BLUE, 'ahead': RED, 'unpublished': MUTED}
-QUIET_EVENTS = {'pong', 'tag_state', 'radio', 'nfc_i2c', 'nfc_init', 'nfc_error', 'nfc_poll', 'device', 'discover_sent'}
+QUIET_EVENTS = {'pong', 'tag_state', 'radio', 'nfc_i2c', 'nfc_init', 'nfc_error', 'nfc_poll', 'device', 'discover_sent',
+                # a general radio's other roles (zones/firmware/GeneralRadio)
+                'pool_beacon', 'preshow_beacon', 'preshow_ack', 'zone_repeat', 'pool_state', 'preshow_state'}
 
 
 def signal_text(rssi):
@@ -493,8 +495,9 @@ class App:
                        'firmware has no zone relay; use Flash dongle…')
             self.radio_status.configure(text=f'{event.get("mac")} · {firmware}: {problem}', foreground=RED)
             return
-        old = firmware != dongle.FIRMWARE
+        old = firmware not in dongle.RELAY_VERSIONS
         self.radio_status.configure(text=f'Connected · {event.get("mac")} · {firmware} · channel 2' +
+                                    (' · general radio' if dongle.is_general(firmware) else '') +
                                     (f' · older relay (no RX gain control): Flash dongle… updates it to {dongle.FIRMWARE}'
                                      if old else ''),
                                     foreground=AMBER if old else GREEN)
@@ -505,7 +508,7 @@ class App:
             self.zones.query()
         if self.expect_dongle_firmware:
             self.expect_dongle_firmware = False
-            if firmware == dongle.FIRMWARE:
+            if firmware in dongle.RELAY_VERSIONS:
                 self.set_status(f'Dongle flashed and verified: {event.get("mac")} reports {firmware}', GREEN)
             else:
                 self.set_status(f'Dongle answers but reports {firmware}, expected {dongle.FIRMWARE}', AMBER)
@@ -662,7 +665,7 @@ class App:
     def set_rx_gain(self):
         self.require_dongle()
         firmware = (self.station or {}).get('firmware', '')
-        if firmware != dongle.FIRMWARE:
+        if firmware not in dongle.RELAY_VERSIONS:
             raise ValueError(f'The dongle runs {firmware or "unknown firmware"}; setting the RX gain needs '
                              f'{dongle.FIRMWARE}. Use Flash dongle… first.')
         zone = self.selected_zone()

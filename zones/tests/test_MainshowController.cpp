@@ -13,9 +13,29 @@ static Packet packetOf(const SentFrame &frame) {
   return p;
 }
 
+// Cube Packets (24 bytes) sent since `from`; SHOW_TIMECODE frames (20 bytes) are counted apart.
+static size_t packetsSince(size_t from) {
+  size_t n = 0;
+  for (size_t i = from; i < sentFrames.size(); i++) n += sentFrames[i].data.size() == sizeof(Packet);
+  return n;
+}
+
+static std::vector<nctshow::ShowTimecode> timecodesSince(size_t from) {
+  std::vector<nctshow::ShowTimecode> out;
+  for (size_t i = from; i < sentFrames.size(); i++) {
+    const auto &f = sentFrames[i];
+    if (nctshow::frameType(f.data.data(), int(f.data.size())) != nctshow::SHOW_TIMECODE) continue;
+    nctshow::ShowTimecode tc;
+    memcpy(&tc, f.data.data(), sizeof tc);
+    out.push_back(tc);
+  }
+  return out;
+}
+
 static std::vector<Packet> showStarts(size_t from) {
   std::vector<Packet> out;
   for (size_t i = from; i < sentFrames.size(); i++) {
+    if (sentFrames[i].data.size() != sizeof(Packet)) continue;
     Packet p = packetOf(sentFrames[i]);
     if (p.type == MSG_SHOW_START) out.push_back(p);
   }
@@ -39,9 +59,9 @@ int main() {
   assert(esp_now_is_peer_exist(BROADCAST) && espPeers.size() == 1);
   // The banner is what zone_detect.py identifies this board by, and the image must not
   // contain a legacy entrance-plate signature that would be matched first.
-  assert(has(Serial.output, "NCT MAINSHOW CONTROLLER") && has(Serial.output, "FW: mainshow-1.2.0"));
+  assert(has(Serial.output, "NCT MAINSHOW CONTROLLER") && has(Serial.output, "FW: mainshow-1.3.0"));
   assert(!has(Serial.output, "MAINSHOW ENTRANCE") && !has(Serial.output, "Cube READY"));
-  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"firmware\":\"mainshow-1.2.0\""));
+  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"firmware\":\"mainshow-1.3.0\""));
   assert(sentFrames.empty() && "nothing is sent until asked");
 
   // ---- Host protocol ----
@@ -52,12 +72,12 @@ int main() {
   assert(has(serial("{\"cmd\":\"ping\"}"), "Missing/invalid request id"));
   assert(has(serial("{\"cmd\":\"dance\",\"id\":\"x\"}"), "Unknown command"));
   assert(has(serial("hello"), "one JSON object per line"));
-  assert(has(serial("?"), "NCT MAINSHOW CONTROLLER\nFW: mainshow-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
+  assert(has(serial("?"), "NCT MAINSHOW CONTROLLER\nFW: mainshow-1.3.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
 
   // ---- Mainshow ready: one unicast SET_ZONE 4 ----
   size_t before = sentFrames.size();
   out = serial("{\"cmd\":\"set_zone\",\"id\":\"z1\",\"mac\":\"AC:27:6E:80:00:D0\",\"zone\":4}");
-  assert(sentFrames.size() == before + 1);
+  assert(packetsSince(before) == 1);
   assert(!memcmp(sentFrames.back().dest.data(), CUBE44, 6));
   Packet zone = packetOf(sentFrames.back());
   assert(zone.type == MSG_SET_ZONE && zone.type == 6 && zone.success == nctzone::ZONE_MAINSHOW && zone.success == 4);
@@ -71,13 +91,13 @@ int main() {
   assert(has(serial("{\"cmd\":\"set_zone\",\"id\":\"z4\",\"mac\":\"AC:27:6E:80:00\",\"zone\":4}"), "unicast MAC"));
   assert(has(serial("{\"cmd\":\"set_zone\",\"id\":\"z5\",\"mac\":\"AC:27:6E:80:00:D0\",\"zone\":5}"), "Zone must be 0-4"));
   assert(has(serial("{\"cmd\":\"set_zone\",\"id\":\"z6\",\"mac\":\"AC:27:6E:80:00:D0\"}"), "Zone must be 0-4"));
-  assert(sentFrames.size() == before && "rejected commands send nothing");
+  assert(packetsSince(before) == 0 && "rejected commands send nothing");
 
   // ---- Trigger for one cube: 5 unicast SHOW_START (type 8), one showId ----
   before = sentFrames.size();
   out = serial("{\"cmd\":\"show_start\",\"id\":\"s1\",\"target\":\"AC:27:6E:80:00:D0\"}", 400);
   auto first = showStarts(before);
-  assert(first.size() == 5 && sentFrames.size() == before + 5);
+  assert(first.size() == 5 && packetsSince(before) == 5);
   for (size_t i = before; i < sentFrames.size(); i++) assert(!memcmp(sentFrames[i].dest.data(), CUBE44, 6));
   for (auto &p : first) assert(p.type == 8 && p.cubeID == first[0].cubeID && p.success == 0);
   assert(first[0].cubeID != 0 && first[0].cubeID == lastShowId);
@@ -91,7 +111,7 @@ int main() {
   before = sentFrames.size();
   out = serial("{\"cmd\":\"show_start\",\"id\":\"s2\",\"target\":\"broadcast\"}");
   assert(has(out, "{\"event\":\"locked\",\"id\":\"s2\",\"source\":\"usb\",\"retry_ms\":"));
-  assert(sentFrames.size() == before);
+  assert(packetsSince(before) == 0);
   run(3000);
 
   // ---- Broadcast: a fresh showId, no delivered count (broadcasts are never acknowledged) ----
@@ -110,7 +130,7 @@ int main() {
   before = sentFrames.size();
   hold(TRIGGER_PIN, LOW, 20);  // a 20 ms glitch is not a press
   hold(TRIGGER_PIN, HIGH, 100);
-  assert(sentFrames.size() == before);
+  assert(packetsSince(before) == 0);
   out = hold(TRIGGER_PIN, LOW, 400);
   auto pinShow = showStarts(before);
   assert(pinShow.size() == 5 && !memcmp(sentFrames.back().dest.data(), BROADCAST, 6));
@@ -119,16 +139,16 @@ int main() {
   // nothing sent and nothing printed while it is held.
   before = sentFrames.size();
   out = hold(TRIGGER_PIN, LOW, 10 * 60 * 1000);
-  assert(sentFrames.size() == before && out.empty());
+  assert(packetsSince(before) == 0 && out.empty());
   // Dropouts in the held signal, well past the lockout: a sub-debounce blip is invisible, and a
   // longer one (up to the 1 s re-arm) is reported as ignored instead of restarting the show.
   out = hold(TRIGGER_PIN, HIGH, 30);
   out += hold(TRIGGER_PIN, LOW, 500);
-  assert(sentFrames.size() == before && out.empty());
+  assert(packetsSince(before) == 0 && out.empty());
   for (uint32_t gap : {60u, 400u, 940u}) {
     hold(TRIGGER_PIN, HIGH, gap);
     out = hold(TRIGGER_PIN, LOW, 4000);
-    assert(sentFrames.size() == before && "a dropout shorter than the re-arm time must not restart the show");
+    assert(packetsSince(before) == 0 && "a dropout shorter than the re-arm time must not restart the show");
     char expect[80];
     snprintf(expect, sizeof(expect), "{\"event\":\"ignored\",\"id\":\"\",\"source\":\"pin\",\"open_ms\":%u,", gap);
     assert(has(out, expect) && has(out, "\"rearm_ms\":1000}"));
@@ -136,7 +156,7 @@ int main() {
   // The contact bounces as it opens: neither the release nor the bounce is a trigger.
   for (int i = 0; i < 5; i++) { hold(TRIGGER_PIN, HIGH, 3); hold(TRIGGER_PIN, LOW, 4); }
   out = hold(TRIGGER_PIN, HIGH, 1000);  // open for the full re-arm time
-  assert(sentFrames.size() == before && out.empty());
+  assert(packetsSince(before) == 0 && out.empty());
   // The next show's closure starts the next show, with a new showId.
   uint32_t held = lastShowId;
   out = hold(TRIGGER_PIN, LOW, 400);
@@ -149,7 +169,7 @@ int main() {
   hold(BUTTON_PIN, HIGH, 100);
   before = sentFrames.size();
   out = hold(BUTTON_PIN, LOW, 200);  // a second press inside the lockout
-  assert(has(out, "{\"event\":\"locked\",\"id\":\"\",\"source\":\"button\"") && sentFrames.size() == before);
+  assert(has(out, "{\"event\":\"locked\",\"id\":\"\",\"source\":\"button\"") && packetsSince(before) == 0);
   hold(BUTTON_PIN, HIGH, 100);
 
   // ---- An input held low at power-on does not fire ----
@@ -160,7 +180,7 @@ int main() {
   setup();
   before = sentFrames.size();
   run(500);
-  assert(sentFrames.size() == before);
+  assert(packetsSince(before) == 0);
   pinLevels[TRIGGER_PIN] = HIGH;
 
   // ---- Status LEDs on the ex-cube strip (D10) ----
@@ -182,7 +202,7 @@ int main() {
   };
   // Long after the last trigger in the tests above: waiting.
   run(300000);
-  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h2\"}"), "\"led_pin\":10,\"led_test\":false,\"show_running\":false,\"show_length_ms\":298000}"));
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h2\"}"), "\"led_pin\":10,\"led_test\":false,\"show_running\":false,\"show_length_ms\":298000,\"timecode\":true"));
   assert(frameCheck(12, 0) >= 8 && "waiting: dim red, clearly visible");
   int at = brightestPixel();
   run(180);
@@ -227,6 +247,51 @@ int main() {
   serial("{\"cmd\":\"led_test\",\"id\":\"l2\",\"on\":0}", 40);
   assert(frameCheck(12, 0) >= 8 && "led_test off: the waiting scroll resumes");
 
-  puts("PASS: MainshowController sends SET_ZONE/SHOW_START (type 8, fresh showId x5), locks out, debounces and re-arms its inputs, scrolls red/green status LEDs, and cycles the LED test");
+  // ---- Timecode: the fallback for a ready cube that missed SHOW_START ----
+  run(3000);
+  before = sentFrames.size();
+  out = serial("{\"cmd\":\"show_start\",\"id\":\"t1\",\"target\":\"broadcast\"}", 400);
+  auto tcs = timecodesSince(before);
+  assert(tcs.size() == 1 && tcs[0].showId == lastShowId && tcs[0].tMs < 400 && "one timecode straight after the burst");
+  assert(!memcmp(sentFrames.back().dest.data(), BROADCAST, 6) && sentFrames.back().data.size() == 20);
+  run(5000);
+  tcs = timecodesSince(before);
+  assert(tcs.size() == 6 && "then one a second");
+  for (size_t i = 1; i < tcs.size(); i++) {
+    assert(tcs[i].showId == tcs[0].showId && tcs[i].tMs - tcs[i - 1].tMs >= 1000 && tcs[i].tMs - tcs[i - 1].tMs < 1010);
+  }
+  assert(packetsSince(before) == 5 && "timecode never repeats SHOW_START");
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h5\"}"), "\"show_running\":true"));
+  // show_stop ends the timecode (and allows an immediate restart).
+  assert(has(serial("{\"cmd\":\"show_stop\",\"id\":\"x1\"}"), "{\"event\":\"show_stop\",\"id\":\"x1\",\"was_running\":true"));
+  size_t stopped = sentFrames.size();
+  run(5000);
+  assert(sentFrames.size() == stopped && "no timecode after show_stop");
+  // A start for one cube sends that cube its timecode, not everyone.
+  before = sentFrames.size();
+  serial("{\"cmd\":\"show_start\",\"id\":\"t2\",\"target\":\"AC:27:6E:80:00:D0\"}", 1500);
+  tcs = timecodesSince(before);
+  assert(tcs.size() == 2);
+  for (size_t i = before; i < sentFrames.size(); i++) assert(!memcmp(sentFrames[i].dest.data(), CUBE44, 6));
+  serial("{\"cmd\":\"show_stop\",\"id\":\"x2\"}");
+
+  // show_config: the length bounds the timecode, survives a reboot, and is carried in hello.
+  assert(has(serial("{\"cmd\":\"show_config\",\"id\":\"c0\"}"), "show_config needs length_ms"));
+  assert(has(serial("{\"cmd\":\"show_config\",\"id\":\"c1\",\"length_ms\":0}"), "show_config needs length_ms"));
+  out = serial("{\"cmd\":\"show_config\",\"id\":\"c2\",\"length_ms\":4500,\"version\":7,\"crc\":3735928559}");
+  assert(has(out, "{\"event\":\"show_config\",\"id\":\"c2\",\"length_ms\":4500,\"version\":7,\"crc\":3735928559}"));
+  showLengthMs = 1; showVersion = 0;
+  esp_now_del_peer(BROADCAST);
+  setup();
+  assert(showLengthMs == 4500 && showVersion == 7 && showCrc == 3735928559u && "the config is kept in NVS");
+  run(3000);
+  before = sentFrames.size();
+  serial("{\"cmd\":\"show_start\",\"id\":\"t3\",\"target\":\"broadcast\"}", 8000);
+  tcs = timecodesSince(before);
+  assert(tcs.size() == 5 && tcs.back().tMs < 4500 && "no timecode at or after the configured length");
+  assert(tcs[0].showVersion == 7 && tcs[0].showCrc == 3735928559u);
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h6\"}"), "\"show_running\":false,\"show_length_ms\":4500"));
+
+  puts("PASS: MainshowController sends SET_ZONE/SHOW_START (type 8, fresh showId x5), locks out, debounces and re-arms its inputs, scrolls red/green status LEDs, cycles the LED test, and broadcasts timecode while a show runs");
   return 0;
 }

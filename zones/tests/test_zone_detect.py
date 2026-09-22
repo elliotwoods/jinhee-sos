@@ -46,10 +46,13 @@ class DetectTests(unittest.TestCase):
                  b'NCT DESERT TAG PLATE v1.4.1-CH2-FIX': ('legacy_zone', 'desert'), b'=== POOL RADIO v1.2.0 ===': ('legacy_zone', 'pool'),
                  b'NCT PRESHOW TAG PLATE': ('legacy_zone', 'preshow_exit'), b'Cube READY': ('cube', None),
                  b'nct-pairing-1.6-zones': ('station', None), b'=== POOL CENTRAL READY ===': ('other', None),
-                 b'NCT PRESHOW MEDIA BRIDGE': ('other', None), b'..NCT MAINSHOW CONTROLLER..': ('other', None), b'hello world': ('unknown', None), b'\xff' * 64: ('blank', None)}
+                 b'NCT PRESHOW MEDIA BRIDGE': ('other', None), b'..NCT MAINSHOW CONTROLLER..': ('other', None), b'hello world': ('unknown', None), b'\xff' * 64: ('blank', None),
+                 # The general radio speaks the relay protocol, so its image may well contain the station's needle too.
+                 b'..NCT GENERAL RADIO..nct-pairing-1.8-zones..': ('other', None)}
         for image, (kind, profile) in cases.items():
             result = zone_detect.classify_image(image if kind == 'blank' else b'\x00' * 40 + image)
             self.assertEqual((result['kind'], result['profile']), (kind, profile), image)
+        self.assertEqual(zone_detect.classify_image(b'NCT GENERAL RADIO')['label'], 'General radio (GeneralRadio)')
 
     def test_real_firmware_dumps_when_available(self):
         workspace = ROOT.parent
@@ -85,6 +88,13 @@ class DetectTests(unittest.TestCase):
         cube = self.db.rows()[0]
         self.assertEqual(zone_detect.from_flash(cube['mac'], self.db, flash(regions))['kind'], 'cube')
         self.assertEqual(zone_detect.from_flash('3C:0F:02:AD:83:24', self.db, flash(regions))['kind'], 'station')
+        # An excluded ex-cube is refused like the station but named by the firmware it runs.
+        self.db.set_role(MAC, 'excluded')
+        dongle = zone_detect.from_flash(MAC, self.db, flash({0x8000: LEGACY_TABLE, 0x10000: b'x' * 64 + b'nct-pairing-1.6-zones'}))
+        self.assertEqual((dongle['kind'], dongle['profile'], dongle['label']),
+                         ('station', None, 'Excluded from the cube registry · Pairing / registry station'))
+        regions[0x210000] = zonedb.zcfg_image(1, 3, 'Preshow 3')
+        self.assertEqual(zone_detect.from_flash(MAC, self.db, flash(regions))['label'], 'Excluded from the cube registry · zone "Preshow 3"')
 
     def test_from_report_maps_firmware_to_profile(self):
         report = zone_flash.parse_report('FW: tagplate-2.1.0\nMAC: 14:63:93:C0:EC:14\nCHANNEL: 2\nZONE: type=4 point=2 name=Mainshow 2\n'
@@ -123,7 +133,13 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(plan(dict(zone, rx_gain=23), auto=True)['rx_gain'], 23)
         self.assertEqual(plan(dict(zone, rx_gain=23))['rx_gain'], 33)  # manual flashing uses the form
         self.assertEqual(plan(dict(zone, firmware='pool-2.1.0'), auto=True)['action'], 'skip')
-        self.assertEqual(plan(dict(zone, firmware='pool-2.1.0', db_version=3), auto=True)['action'], 'flash')
+        # Current firmware with a database behind: only the database is written (identity kept); ahead: ask.
+        behind = plan(dict(zone, firmware='pool-2.1.0', db_version=3), auto=True)
+        self.assertEqual((behind['action'], behind['reason'], behind['point']), ('database', 'Update database v3 → v4', 2))
+        self.assertEqual(plan(dict(zone, firmware='pool-2.1.0', db_version=5), auto=True)['action'], 'ask')
+        self.assertEqual(plan(dict(zone, firmware='pool-2.1.0', db_crc=0xBB), auto=True)['action'], 'ask')
+        self.assertEqual(plan(dict(zone, db_version=3), auto=True)['action'], 'flash')  # old firmware: full flash
+        self.assertEqual(plan(dict(zone, firmware='pool-2.1.0', db_version=3))['action'], 'flash')  # manual: as selected
         self.assertEqual(plan(dict(zone, params=[]), auto=True)['action'], 'ask')
         self.assertEqual(plan(dict(zone, ambiguous=True), auto=True)['action'], 'ask')
         self.assertEqual(plan(dict(zone, configured=False), auto=True)['action'], 'ask')
@@ -133,6 +149,30 @@ class DetectTests(unittest.TestCase):
         blank = dict(kind='blank', label='Blank flash', profile=None)
         self.assertEqual(plan(blank, auto=True)['action'], 'ask')
         self.assertEqual(plan(blank, auto=True, allow_unidentified=True)['action'], 'flash')
+
+
+class DatabaseStateTests(unittest.TestCase):
+    def test_state_and_database_plan(self):
+        published = dict(version=4, crc=0xAA, count=32)
+        zone = dict(kind='nctzone', label='NctZone firmware', mac='14:63:93:C0:EC:14', db_version=4, db_crc=0xAA)
+        state = lambda d, p=published: zone_detect.database_state(d, p)
+        self.assertEqual(state(zone), 'current')
+        self.assertEqual(state(dict(zone, db_version=3)), 'behind')
+        self.assertEqual(state(dict(zone, db_version=0)), 'behind')          # blank slots
+        self.assertEqual(state(dict(zone, db_version=5)), 'ahead')
+        self.assertEqual(state(dict(zone, db_crc=0xBB)), 'ahead')            # same version, other content (legacy counter)
+        self.assertIsNone(state(zone, dict(version=0, crc=0)))
+        self.assertIsNone(state(dict(kind='cube', label='x')))
+        self.assertIsNone(state(dict(kind='nctzone', label='x')))            # no database evidence
+        dbplan = lambda d, p=published: zone_detect.database_plan(d, p)
+        self.assertEqual(dbplan(dict(zone, db_version=2)), dict(action='database', reason='Update database v2 → v4'))
+        self.assertEqual(dbplan(zone)['action'], 'skip')
+        self.assertIn('ahead of published v4', dbplan(dict(zone, db_version=6))['reason'])
+        self.assertEqual(dbplan(dict(zone, db_version=6))['action'], 'ask')
+        self.assertEqual(dbplan(dict(zone, mac=None))['action'], 'refuse')
+        self.assertEqual(dbplan(dict(kind='cube', label='x'))['action'], 'refuse')
+        self.assertEqual(dbplan(dict(kind='legacy_zone', label='x', mac='a'))['action'], 'refuse')
+        self.assertEqual(dbplan(dict(zone, db_version=2), dict(version=0, crc=0)), dict(action='ask', reason='No database published yet'))
 
 
 class MonitorTests(unittest.TestCase):

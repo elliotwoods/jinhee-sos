@@ -130,5 +130,56 @@ class PosixBranchTests(unittest.TestCase):
             self.assertEqual(hostos.quiet_kwargs(), {})
 
 
+class FakeWinreg:
+    """Just enough of winreg for webview2_available(): OpenKey/QueryValueEx over a dict of keys."""
+    HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER = 'HKLM', 'HKCU'
+
+    def __init__(self, values):
+        self.values = values  # (hive, key) -> pv
+
+    class _Key:
+        def __init__(self, value):
+            self.value = value
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def OpenKey(self, hive, key):
+        if (hive, key) not in self.values:
+            raise OSError(2, 'not found')
+        return self._Key(self.values[(hive, key)])
+
+    def QueryValueEx(self, handle, name):
+        return handle.value, 1
+
+
+class WebView2Tests(unittest.TestCase):
+    CLIENT = 'Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+
+    def check(self, values):
+        with patch.object(hostos, 'MAC', False), patch.object(hostos, 'WINDOWS', True), \
+                patch.dict(sys.modules, {'winreg': FakeWinreg(values)}):
+            return hostos.webview2_available()
+
+    def test_mac_always_has_a_webview(self):
+        with patch.object(hostos, 'MAC', True):
+            self.assertTrue(hostos.webview2_available())
+
+    def test_windows_runtime_found_in_any_hive(self):
+        self.assertTrue(self.check({('HKLM', 'SOFTWARE\\WOW6432Node\\' + self.CLIENT): '120.0.2210.91'}))
+        self.assertTrue(self.check({('HKCU', 'SOFTWARE\\' + self.CLIENT): '119.0.0.1'}))
+
+    def test_windows_without_runtime(self):
+        self.assertFalse(self.check({}))
+        self.assertFalse(self.check({('HKLM', 'SOFTWARE\\' + self.CLIENT): '0.0.0.0'}))
+
+    def test_linux_uses_browser_mode(self):
+        with patch.object(hostos, 'MAC', False), patch.object(hostos, 'WINDOWS', False):
+            self.assertFalse(hostos.webview2_available())
+
+
 if __name__ == '__main__':
     unittest.main()

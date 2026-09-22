@@ -14,6 +14,8 @@ import zone_build
 
 # First match wins. (needle, kind, label, profile)
 SIGNATURES = [
+    # Before the station: the general radio speaks the relay protocol and could carry that text.
+    (b'NCT GENERAL RADIO', 'other', 'General radio (GeneralRadio)', None),
     (b'nct-pairing', 'station', 'Pairing / registry station', None),
     (b'registration console READY', 'station', 'Registration console', None),
     (b'Cube READY', 'cube', 'Neocube firmware', None),
@@ -89,13 +91,20 @@ def from_flash(mac, db, read):
     if role == 'cube':
         row = db.get(mac)
         return dict(kind='cube', label=f'Neocube #{row["cube_id"]} (database)', mac=mac, profile=None, source='database')
+    if mac in PROTECTED:
+        return dict(kind='station', mac=mac, profile=None, source='database', label='Pairing station (protected)')
     if role == 'station':
-        # Both are refused, but they are not the same thing: an excluded device is a board
-        # deliberately taken out of cube service (a retired cube now carrying zone firmware,
-        # say), and calling it the pairing station sends whoever reads this the wrong way.
-        return dict(kind='station', mac=mac, profile=None, source='database',
-                    label='Pairing station (protected)' if mac in PROTECTED
-                          else 'Excluded from the cube registry')
+        # Refused like the station, but not the same thing: an excluded device is a board deliberately
+        # taken out of cube service (the registry dongle, a retired cube now carrying zone firmware), so
+        # it is named by what it actually runs rather than sent the wrong way as "the pairing station".
+        firmware = from_image(mac, read)
+        running = f'zone "{firmware["name"]}"' if firmware['kind'] == 'nctzone' and firmware.get('name') else firmware['label']
+        return dict(kind='station', mac=mac, profile=None, source='database', label=f'Excluded from the cube registry · {running}')
+    return from_image(mac, read)
+
+
+def from_image(mac, read):
+    """Detection from the flash contents alone: zone identity partition first, then firmware text signatures."""
     table = parse_partition_table(read(0x8000, 0xC00))
     if 'zcfg' in table and 'zdb_a' in table:
         zcfg = read(table['zcfg']['offset'], 0x80)
@@ -130,9 +139,45 @@ def forceable(detection):
     return detection['kind'] in NOT_FLASHABLE and (detection.get('mac') or '').upper() not in PROTECTED
 
 
+def database_state(detection, published):
+    """How an NctZone board's database compares with the published one: 'current', 'behind', 'ahead', or
+    None when there is no evidence (no NctZone board, no database read, nothing published). Same rule as
+    the Zone Database Manager's ZoneRegistry.classify: `ahead` is a higher version, or the same version
+    with different content (a legacy per-computer counter)."""
+    if detection.get('kind') != 'nctzone' or 'db_version' not in detection or not (published or {}).get('version'):
+        return None
+    if detection['db_version'] == published['version'] and detection.get('db_crc') == published['crc']:
+        return 'current'
+    if (detection['db_version'] or 0) < published['version']:
+        return 'behind'
+    return 'ahead'
+
+
+def database_plan(detection, published):
+    """What a database-only update (no firmware, no identity) would do. Returns dict(action=database|skip|ask|refuse, reason)."""
+    if detection.get('kind') != 'nctzone':
+        return dict(action='refuse', reason=NOT_FLASHABLE.get(detection.get('kind'), 'Not an NctZone board: flash it first'))
+    if not detection.get('mac'):
+        return dict(action='refuse', reason='The board\'s MAC is unknown; identify it again')
+    state = database_state(detection, published)
+    if state is None:
+        return dict(action='ask', reason='No database published yet' if not (published or {}).get('version') else
+                    'The board\'s database could not be read; identify it again')
+    return _database_action(state, detection['db_version'], published['version'])
+
+
+def _database_action(state, old, new):
+    if state == 'current':
+        return dict(action='skip', reason=f'Database v{new} is current')
+    if state == 'behind':
+        return dict(action='database', reason=f'Update database v{old} → v{new}')
+    return dict(action='ask', reason=f'Database v{old} is ahead of published v{new}; "Update database" overwrites it')
+
+
 def plan(detection, form, manifests, published, auto=False, allow_unidentified=False, force=False):
     """Decide what flashing this board would do.
-    Returns dict(action=flash|skip|refuse|ask, reason, profile, point, name, params, rx_gain).
+    Returns dict(action=flash|database|skip|refuse|ask, reason, profile, point, name, params, rx_gain).
+    `database` (auto only): the firmware is current and only the database is behind.
 
     `force` (manual flashing only, never auto) overrides a refusal for anything `forceable`."""
     kind = detection['kind']
@@ -153,10 +198,12 @@ def plan(detection, form, manifests, published, auto=False, allow_unidentified=F
         keep = dict(profile=detection['profile'], point=detection['point'], name=detection['name'], params=list(params),
                     rx_gain=detection.get('rx_gain') or zonedb.RX_GAIN_DEFAULT)
         manifest = manifests.get(profile['sketch'])
-        current = (manifest and detection.get('firmware') == manifest['version'] and published['version'] and
-                   detection.get('db_version') == published['version'] and detection.get('db_crc') == published['crc'])
-        if current:
+        firmware_current = bool(manifest and detection.get('firmware') == manifest['version'])
+        state = database_state(detection, published)
+        if firmware_current and state == 'current':
             return dict(keep, action='skip', reason=f'Already {manifest["version"]} with database v{published["version"]}')
+        if firmware_current and state in ('behind', 'ahead'):
+            return dict(keep, **_database_action(state, detection['db_version'], published['version']))
         return dict(keep, action='flash', reason=f'Update "{detection["name"]}" keeping its identity')
     if kind == 'nctzone':
         return dict(action='ask', reason='Zone identity on the board is missing or ambiguous; flash it manually once')

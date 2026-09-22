@@ -13,12 +13,25 @@ sys.path.insert(0, str(WORKSPACE / 'pairing_station'))
 from database import Database, timestamp
 from port_lock import PortLock
 
-VERSION = 'v1.4.1-USB.2'
+VERSION = 'v1.6.0-USB.1'
 FQBN = 'esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M'
 # This replacement console is documented in registration_console/README.md.
 PROTECTED = {'3C:0F:02:AD:83:24'}
 
 def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+SHOW_LIBRARY = WORKSPACE / 'zones/firmware/libraries/NctShow'
+
+def source_files():
+    """Every repository source the cube build compiles: the sketch, its generated default show, NctShow."""
+    sketch = ROOT / 'firmware/neocore_usb'
+    return [sketch/'neocore_usb.ino', sketch/'DefaultShow.h'] + sorted((SHOW_LIBRARY/'src').glob('*.h'))
+
+def source_digest():
+    h = hashlib.sha256()
+    for path in source_files():
+        h.update(path.relative_to(WORKSPACE).as_posix().encode() + b'\0' + path.read_bytes() + b'\0')
+    return h.hexdigest()
 
 def atomic_json(path, data):
     path = Path(path)
@@ -78,7 +91,7 @@ def load_manifest():
     path = ROOT / 'build' / 'manifest.json'
     m = json.loads(path.read_text(encoding='utf-8'))
     if m['version'] != VERSION or m['fqbn'] != FQBN: raise ValueError('Firmware target/version mismatch; rebuild')
-    if m['source_hash'] != digest(ROOT/'firmware/neocore_usb/neocore_usb.ino'):
+    if m['source_hash'] != source_digest():
         raise ValueError('Firmware source changed; rebuild before flashing')
     for segment in m['segments']:
         if digest(path.parent / segment['file']) != segment['sha256']:

@@ -4,11 +4,18 @@
 // broadcast MSG_SHOW_START as 7: cube firmware v1.4.x moved it to 8 (7 is MSG_TAG_STATE), so
 // cubes silently ignored the Core2.
 //
-// What a cube does (flashing_station/firmware/neocore_usb, frozen): a MSG_SET_ZONE with
+// What a cube does (flashing_station/firmware/neocore_usb): a MSG_SET_ZONE with
 // ZONE_MAINSHOW makes it "mainshow ready" (neon). A MSG_SHOW_START, carrying a showId in
 // Packet.cubeID, starts its local ~5 minute timeline only if it is ready; a repeated showId
 // is ignored. So every trigger here uses a fresh showId and sends it SHOW_REPEATS times,
 // exactly like the Core2 did.
+//
+// Timecode (mainshow-1.3.0, NctShowProtocol.h): while a show runs, SHOW_TIMECODE (showId and
+// show time) goes to the same target once a second, the first right after the start burst. A
+// cube from v1.5.0 that is ready but missed the start joins at that time, and a running one
+// corrects drift above 100 ms. Older cubes ignore it (they drop every frame that is not 24
+// bytes), and a cube never needs it: SHOW_START is unchanged. The show length comes from
+// `show_config` (kept in NVS; the console sends it after a publish), 298 s by default.
 //
 // Triggers:
 //   - USB: JSON lines at 115200 (zones/mainshow/app.py), one object per line each way;
@@ -31,8 +38,10 @@
 #include <Adafruit_NeoPixel.h>
 #include <NctCubeProtocol.h>
 #include <NctZoneProtocol.h>
+#include <NctShowProtocol.h>
+#include <Preferences.h>
 
-constexpr const char *FIRMWARE_VERSION = "mainshow-1.2.0";
+constexpr const char *FIRMWARE_VERSION = "mainshow-1.3.0";
 constexpr const char *BANNER = "NCT MAINSHOW CONTROLLER";
 constexpr uint8_t CHANNEL = nctzone::ESPNOW_CHANNEL;
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -51,12 +60,11 @@ constexpr uint32_t SEND_WAIT_MS = 100;    // wait for the MAC-layer result of on
 
 // Status on the ex-cube's eight WS2812s (XIAO D10 = GPIO10): a faint red light scrolls while waiting
 // for a show start, a strong green one while the show runs. The controller hears nothing back from
-// the cubes, so "running" means within SHOW_LENGTH_MS of the last trigger: the length of the cube's
-// timeline (updateMainShowTimeline() in flashing_station/firmware/neocore_usb). `led_test` replaces
+// the cubes, so "running" means within showLengthMs of the last trigger: the length of the cubes'
+// show (show_config; the compiled-in show's 298 s by default), unless `show_stop` ended it. `led_test` replaces
 // the status with a colour cycle, a bench check that every pixel and channel is alive.
 constexpr int LED_PIN = 10;
 constexpr int LED_COUNT = 8;
-constexpr uint32_t SHOW_LENGTH_MS = 298000;
 constexpr uint8_t WAIT_LEVEL = 12, RUN_LEVEL = 100;  // the cube caps its LEDs at 100 of 255
 constexpr uint32_t WAIT_PIXEL_MS = 180, RUN_PIXEL_MS = 60;  // scroll speed: time to move one pixel
 constexpr uint32_t SCROLL_TAIL = 3;                        // pixels of fading tail behind the head
@@ -71,6 +79,13 @@ bool radioReady = false;
 volatile int sendStatus = -1;  // -1 pending, else esp_now_send_status_t (set on the Wi-Fi task)
 uint32_t lastShowId = 0, lastTriggerAt = 0, shows = 0;
 bool triggered = false;
+uint8_t showTarget[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // where the start (and so the timecode) went
+uint32_t lastTimecodeAt = 0, timecodes = 0;
+
+// The show the cubes play, as far as this controller knows (show_config). Version/CRC are only
+// carried in the timecode for diagnostics.
+Preferences prefs;
+uint32_t showLengthMs = nctshow::DEFAULT_LENGTH_MS, showVersion = 0, showCrc = 0;
 
 struct Input {
   int pin;
@@ -157,7 +172,7 @@ void error(const char *id, const char *detail) {
 // One packet to one address, waiting briefly for the MAC-layer result. A delivered unicast
 // means the cube's radio acknowledged the frame, not that the cube acted on it; a broadcast
 // is never acknowledged at all.
-SendResult sendPacket(const uint8_t *mac, const Packet &packet) {
+SendResult sendFrame(const uint8_t *mac, const uint8_t *data, size_t length) {
   if (!radioReady) return SEND_REJECTED;
   bool broadcast = !memcmp(mac, BROADCAST_MAC, 6);
   bool temporary = !broadcast && !esp_now_is_peer_exist(mac);
@@ -171,7 +186,7 @@ SendResult sendPacket(const uint8_t *mac, const Packet &packet) {
   }
   sendStatus = -1;
   SendResult result = SEND_REJECTED;
-  if (esp_now_send(mac, (const uint8_t *)&packet, sizeof(packet)) == ESP_OK) {
+  if (esp_now_send(mac, data, length) == ESP_OK) {
     uint32_t started = millis();
     while (sendStatus < 0 && uint32_t(millis() - started) < SEND_WAIT_MS) delay(1);
     int status = sendStatus;
@@ -179,6 +194,10 @@ SendResult sendPacket(const uint8_t *mac, const Packet &packet) {
   }
   if (temporary && esp_now_is_peer_exist(mac)) esp_now_del_peer(mac);
   return result;
+}
+
+SendResult sendPacket(const uint8_t *mac, const Packet &packet) {
+  return sendFrame(mac, (const uint8_t *)&packet, sizeof(packet));
 }
 
 void setZone(const char *id, const uint8_t *mac, uint8_t zone) {
@@ -206,7 +225,30 @@ void showLedStep(uint32_t step) {
   pixels.show();
 }
 
-bool showRunning(uint32_t now) { return triggered && uint32_t(now - lastTriggerAt) < SHOW_LENGTH_MS; }
+bool showRunning(uint32_t now) { return triggered && uint32_t(now - lastTriggerAt) < showLengthMs; }
+
+void sendTimecode(uint32_t now) {
+  nctshow::ShowTimecode frame = nctshow::makeTimecode(lastShowId, uint32_t(now - lastTriggerAt), showVersion, showCrc);
+  lastTimecodeAt = now;
+  timecodes++;
+  sendFrame(showTarget, (const uint8_t *)&frame, sizeof(frame));
+}
+
+void pollTimecode() {
+  uint32_t now = millis();
+  if (showRunning(now) && radioReady && uint32_t(now - lastTimecodeAt) >= nctshow::TIMECODE_INTERVAL_MS) sendTimecode(now);
+}
+
+void loadShowConfig() {
+  prefs.begin("mainshow", true);
+  uint32_t length = prefs.getUInt("len", 0);
+  if (length >= 1 && length <= nctshow::MAX_LENGTH_MS) {
+    showLengthMs = length;
+    showVersion = prefs.getUInt("ver", 0);
+    showCrc = prefs.getUInt("crc", 0);
+  }
+  prefs.end();
+}
 
 // A head moving round the ring with a fading tail, positioned in 1/256 pixel steps so it glides.
 void drawScroll(uint32_t now, uint8_t red, uint8_t green, uint32_t pixelMs) {
@@ -263,6 +305,7 @@ bool startShow(const char *id, const char *source, const uint8_t *mac) {
   triggered = true;
   lastTriggerAt = now;
   lastShowId = newShowId();
+  memcpy(showTarget, mac, 6);
   shows++;
   Packet packet = {};
   packet.type = MSG_SHOW_START;
@@ -282,17 +325,22 @@ bool startShow(const char *id, const char *source, const uint8_t *mac) {
                    source, (unsigned long)lastShowId, text, sent, SHOW_REPEATS);
   if (!broadcast && n > 0 && n < int(sizeof(fields))) snprintf(fields + n, sizeof(fields) - n, ",\"delivered\":%d", delivered);
   reply("show_start", id, fields);
+  sendTimecode(millis());  // straight after the burst, then once a second (pollTimecode)
   return true;
 }
 
 void hello(const char *id) {
-  char fields[400];
+  bool running = showRunning(millis());
+  char fields[560];
   snprintf(fields, sizeof(fields),
            "\"firmware\":\"%s\",\"mac\":\"%s\",\"channel\":%d,\"radio_ok\":%s,\"button_pin\":%d,\"trigger_pin\":%d,"
-           "\"lockout_ms\":%lu,\"rearm_ms\":%lu,\"last_show_id\":%lu,\"shows\":%lu,\"led_pin\":%d,\"led_test\":%s,\"show_running\":%s,\"show_length_ms\":%lu",
+           "\"lockout_ms\":%lu,\"rearm_ms\":%lu,\"last_show_id\":%lu,\"shows\":%lu,\"led_pin\":%d,\"led_test\":%s,\"show_running\":%s,\"show_length_ms\":%lu,"
+           "\"timecode\":true,\"timecode_ms\":%lu,\"show_elapsed_ms\":%lu,\"show_version\":%lu,\"show_crc\":%lu",
            FIRMWARE_VERSION, WiFi.macAddress().c_str(), int(WiFi.channel()), radioReady ? "true" : "false", BUTTON_PIN,
            TRIGGER_PIN, (unsigned long)LOCKOUT_MS, (unsigned long)TRIGGER_REARM_MS, (unsigned long)lastShowId, (unsigned long)shows, LED_PIN,
-           ledTest ? "true" : "false", showRunning(millis()) ? "true" : "false", (unsigned long)SHOW_LENGTH_MS);
+           ledTest ? "true" : "false", running ? "true" : "false", (unsigned long)showLengthMs,
+           (unsigned long)nctshow::TIMECODE_INTERVAL_MS, (unsigned long)(running ? uint32_t(millis() - lastTriggerAt) : 0),
+           (unsigned long)showVersion, (unsigned long)showCrc);
   reply("hello", id, fields);
 }
 
@@ -317,6 +365,33 @@ void command(char *line) {
     char fields[40];
     snprintf(fields, sizeof(fields), "\"on\":%s,\"pin\":%d", on ? "true" : "false", LED_PIN);
     reply("led_test", id, fields);
+    return;
+  }
+  if (!strcmp(cmd, "show_config")) {
+    // The show the cubes hold: its length bounds the timecode and the status LEDs.
+    uint32_t length, version = 0, crc = 0;
+    if (!jsonUint(line, "length_ms", length) || length < 1 || length > nctshow::MAX_LENGTH_MS) {
+      error(id, "show_config needs length_ms 1-3600000"); return;
+    }
+    jsonUint(line, "version", version);
+    jsonUint(line, "crc", crc);
+    showLengthMs = length; showVersion = version; showCrc = crc;
+    prefs.begin("mainshow", false);
+    prefs.putUInt("len", length); prefs.putUInt("ver", version); prefs.putUInt("crc", crc);
+    prefs.end();
+    char fields[100];
+    snprintf(fields, sizeof(fields), "\"length_ms\":%lu,\"version\":%lu,\"crc\":%lu", (unsigned long)length,
+             (unsigned long)version, (unsigned long)crc);
+    reply("show_config", id, fields);
+    return;
+  }
+  if (!strcmp(cmd, "show_stop")) {
+    // Ends the timecode (and the green status). Cubes keep playing: stop them with SET_ZONE.
+    bool was = showRunning(millis());
+    triggered = false;
+    char fields[60];
+    snprintf(fields, sizeof(fields), "\"was_running\":%s,\"show_id\":%lu", was ? "true" : "false", (unsigned long)lastShowId);
+    reply("show_stop", id, fields);
     return;
   }
   if (!radioReady) { error(id, "Radio unavailable; reset the controller"); return; }
@@ -364,6 +439,7 @@ void pollInputs() {
 
 void setup() {
   Serial.begin(115200);
+  loadShowConfig();
   pixels.begin();
   pixels.clear();
   pixels.show();  // WS2812s keep their last colour through a reflash: clear it before the status scroll
@@ -407,6 +483,7 @@ void loop() {
     }
   }
   pollInputs();
+  pollTimecode();
   pollLeds();
   delay(1);
 }

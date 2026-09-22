@@ -22,6 +22,8 @@ sys.path.insert(0, str(WORKSPACE / 'flashing_station'))
 from core import Scheduler  # noqa: E402  (armed intake with reconnect debounce)
 import hostos  # noqa: E402
 from sync_widget import SyncWidget  # noqa: E402  (universal web Sync: inventory + zone database)
+import zone_publish  # noqa: E402  (pull the web's newer zone database before writing one)
+from web_client import WebClient, WebError, client_name  # noqa: E402
 
 BG, CARD, FG, MUTED = '#101720', '#1b2633', '#e9f0f7', '#9aafc4'
 GREEN, AMBER, RED, BLUE = '#54d6a0', '#ffc16b', '#ff7a8a', '#82b8fa'
@@ -98,6 +100,11 @@ class App:
         self.closing = False
         self.port_rows, self.detections, self.results = {}, {}, {}
         self.scheduler = Scheduler()
+        # Automatic database-only updates: their own attempted set (same reconnect debounce), remembered per
+        # published version so a new publication is tried again on a board that is still plugged in.
+        self.db_scheduler = Scheduler()
+        self.db_attempted_version = {}
+        self.db_ready = 'checking'  # None once the published database can be written; else why not
         self.pending_detect = set()
         self.remembered, self.port_keys = {}, {}
         self.last_scan = 0
@@ -189,8 +196,9 @@ class App:
         controls = ttk.Frame(tab)
         controls.pack(fill='x')
         self.buttons = []
-        for label, action in [('Flash selected', self.flash_selected), ('Detect again', self.detect_selected),
-                              ('Check report', self.check_selected), ('Build all firmware', self.build_all)]:
+        for label, action in [('Flash selected', self.flash_selected), ('Update database', self.update_selected),
+                              ('Detect again', self.detect_selected), ('Check report', self.check_selected),
+                              ('Build all firmware', self.build_all)]:
             b = ttk.Button(controls, text=label, command=action)
             b.pack(side='left', padx=(0, 8))
             self.buttons.append(b)
@@ -198,14 +206,19 @@ class App:
         self.auto_button.pack(side='right')
         self.advance = tk.BooleanVar(value=True)
         self.unidentified = tk.BooleanVar(value=False)
+        self.auto_db = tk.BooleanVar(value=True)
         ttk.Checkbutton(controls, text='Flash unidentified boards as the selected zone', variable=self.unidentified).pack(side='right', padx=12)
         ttk.Checkbutton(controls, text='Next point after each new board', variable=self.advance).pack(side='right', padx=12)
+        ttk.Checkbutton(controls, text='Update databases automatically', variable=self.auto_db,
+                        command=self.auto_db_changed).pack(side='right', padx=12)
         ttk.Label(tab, foreground=MUTED, wraplength=1180, justify='left', text=(
             'Auto-flash: boards that already carry a zone identity are updated in place (same zone, point, name). Legacy '
             'sketches are recognised from their firmware and flashed when they match the selected zone. Neocubes, the pairing '
             'station and non-zone controllers are never written automatically; "Flash selected" on a refused board offers a '
             'confirmed force-flash (never for the known pairing station); force-flashing a registered neocube unregisters it '
-            '(number and NFC tag released).')).pack(anchor='w', pady=(10, 6))
+            '(number and NFC tag released). With "Update databases automatically" ticked, any zone board whose cube database '
+            'is behind the published version gets it over USB (database only: firmware and identity untouched; a newer web '
+            'version is pulled first). A board whose database is ahead is only overwritten by "Update database".')).pack(anchor='w', pady=(10, 6))
         self.port_tree = ttk.Treeview(tab, columns=[c[0] for c in PORT_COLUMNS], show='headings', height=6, selectmode='browse')
         for key, title, width in PORT_COLUMNS:
             self.port_tree.heading(key, text=title)
@@ -301,7 +314,22 @@ class App:
                         (' · LOCAL CHANGES NOT PUBLISHED (Zone Database Manager)' if differs else ''))
         except Exception as exc:
             database = f'database: {exc}'
+        self.db_ready = self.database_ready()
+        if self.db_ready:
+            database += f' · automatic database update paused: {self.db_ready}'
         self.info.set(f'Firmware builds: {builds}' + (f' · NEEDS BUILD: {", ".join(missing)}' if missing else '') + f'   ·   {database}')
+
+    def database_ready(self):
+        """None when the published database can be written to boards, else the reason it cannot."""
+        try:
+            db = Database(self.database, recover_pending=False)
+            try:
+                ZoneStore(db).current()
+            finally:
+                db.close()
+        except Exception as exc:
+            return str(exc)
+        return None
 
     def scan_ports(self):
         # ESP32 USB devices only (the protected pairing station is listed so it is visibly refused).
@@ -314,6 +342,7 @@ class App:
             self.remembered[self.port_keys.get(gone)] = (self.detections.pop(gone), self.results.pop(gone, None), now)
         self.remembered = {k: v for k, v in self.remembered.items() if k and now - v[2] < v[0].get('remember_s', 15)}
         self.scheduler.scan(found, self.busy)
+        self.db_scheduler.scan(found, self.busy)
         for p in found:
             self.port_keys[p['port']] = p['key']
             if p['port'] in self.detections or p['port'] in self.pending_detect or p['port'] == self.monitor.port:
@@ -348,9 +377,14 @@ class App:
         existing = set(self.port_tree.get_children())
         for port in existing - set(self.port_rows):
             self.port_tree.delete(port)
+        published = self.published() if self.detections else None
         for port, info in self.port_rows.items():
             d = self.detections.get(port)
             plan = self.plan_for(port) if d else None
+            if plan and not self.scheduler.armed and self.auto_db.get() and \
+                    zone_detect.database_state(d, published) in ('behind', 'ahead'):
+                # Without auto-flash armed the plan is what the automatic database update will do.
+                plan = dict(plan, **zone_detect.database_plan(d, published))
             result = self.results.get(port)
             if port == self.monitor.port and not d:
                 values, tag = dict(detected='In use by the cube monitor', plan=''), 'muted'
@@ -365,7 +399,7 @@ class App:
                               database=f'v{d["db_version"]} · {d["db_count"]} rec' if 'db_version' in d else '—',
                               plan=(result or (plan['action'].upper() + ' · ' + plan['reason'])))
                 tag = ('ok' if result and result.startswith('SUCCESS') else 'bad' if result else
-                       {'flash': 'ok', 'skip': 'muted', 'refuse': 'bad', 'ask': 'warn'}[plan['action']])
+                       {'flash': 'ok', 'database': 'ok', 'skip': 'muted', 'refuse': 'bad', 'ask': 'warn'}[plan['action']])
             row = [values.get(c[0], '') if c[0] != 'port' else f'{port.replace("/dev/cu.", "")}' for c in PORT_COLUMNS]
             if port in existing:
                 self.port_tree.item(port, values=row, tags=(tag,))
@@ -487,6 +521,54 @@ class App:
                                   f'{port} ({detection.get("mac", "?")})?{warning}', parent=self.root):
             self.flash(port, plan)
 
+    def update_database(self, port, auto=False):
+        """Database-only update of the identified NctZone board on `port`, pulling a newer web publication first."""
+        info, detection = self.port_rows[port], self.detections[port]
+        want_pull = bool(self.web_status.status.get('zone_pull'))  # the Sync widget's status poll: web is ahead
+
+        def work():
+            if want_pull:
+                self.emit('stage', 'Pull the newer zone database from the web')
+                try:
+                    client = WebClient(client=client_name('Zone flasher'))  # stored password; never prompts here
+                    published, status = zone_publish.pull(self.database, client)
+                    self.emit('log', f'Pulled zone database v{published["version"]} from the web ({status})')
+                except (WebError, OSError) as exc:
+                    self.emit('log', f'Web pull failed ({exc}); writing the cached database instead')
+                self.web_status.refresh()
+            record = ZoneFlasher(self.database, self.emit).update_database(info, expected_mac=detection.get('mac'))
+            self.emit('flashed', (port, record, auto))
+        return self.run(f'Updating the database on {port}…', work, port)
+
+    def update_selected(self):
+        try:
+            port = self.selected_port()
+            detection = self.detections.get(port)
+            if not detection:
+                raise ValueError('This port has not been identified yet')
+            published = self.published()
+            plan = zone_detect.database_plan(detection, published)
+            if plan['action'] == 'refuse' or (plan['action'] == 'ask' and not published['version']):
+                raise ValueError(plan['reason'])
+            if self.db_ready:
+                raise ValueError(self.db_ready)
+        except Exception as exc:
+            return messagebox.showerror('Zone flasher', str(exc), parent=self.root)
+        state = zone_detect.database_state(detection, published)
+        warning = ('\n\nThis board\'s database is AHEAD of the published one (a newer or different version). It is overwritten.'
+                   if state == 'ahead' else '\n\nThe board already has this database; it is written again.' if state == 'current' else '')
+        if messagebox.askokcancel('Update database', f'Write cube database v{published["version"]} ({published["count"]} records) to\n'
+                                  f'{port} ({detection.get("mac", "?")}, {detection.get("name") or detection["label"]})?\n\n'
+                                  f'Board now: v{detection.get("db_version", "?")}. Firmware and zone identity are not changed; '
+                                  f'the board reboots once.{warning}', parent=self.root):
+            self.update_database(port)
+
+    def auto_db_changed(self):
+        if self.auto_db.get():
+            self.db_scheduler.attempted = set()
+            self.db_attempted_version = {}
+        self.render_ports()
+
     def check_selected(self):
         try:
             port = self.selected_port()
@@ -529,22 +611,48 @@ class App:
         self.render_ports()
 
     def auto_step(self):
-        if not self.scheduler.armed or self.busy:
+        if self.busy:
             return
-        for port, info in self.port_rows.items():
-            if info['key'] in self.scheduler.attempted or port not in self.detections:
-                continue
-            plan = self.plan_for(port, auto=True)
-            self.scheduler.mark(info)
-            if plan['action'] == 'flash':
-                try:
-                    zone_build.load_manifest(zone_build.PROFILES[plan['profile']]['sketch'])
-                except Exception as exc:
-                    self.results[port] = f'NOT FLASHED · {exc}'
+        if self.scheduler.armed:
+            for port, info in self.port_rows.items():
+                if info['key'] in self.scheduler.attempted or port not in self.detections:
                     continue
-                self.flash(port, plan, auto=True)
-                return
-            self.results[port] = None if plan['action'] != 'skip' else f'SUCCESS · {plan["reason"]}'
+                plan = self.plan_for(port, auto=True)
+                self.scheduler.mark(info)
+                if plan['action'] == 'flash':
+                    try:
+                        zone_build.load_manifest(zone_build.PROFILES[plan['profile']]['sketch'])
+                    except Exception as exc:
+                        self.results[port] = f'NOT FLASHED · {exc}'
+                        continue
+                    self.flash(port, plan, auto=True)
+                    return
+                if plan['action'] == 'database':  # firmware current: the database alone is behind
+                    self.db_scheduler.mark(info)
+                    self.update_database(port, auto=True)
+                    return
+                self.results[port] = None if plan['action'] != 'skip' else f'SUCCESS · {plan["reason"]}'
+        self.auto_database_step()
+
+    def auto_database_step(self):
+        """Automatic database-only update: any identified NctZone board (whatever its firmware) whose database is
+        behind the published one, once per board and publication. Boards ahead of it are left alone."""
+        if not self.auto_db.get() or self.busy or self.db_ready:
+            return
+        published = self.published()
+        current = (published['version'], published['crc'])
+        for port, info in self.port_rows.items():
+            detection = self.detections.get(port)
+            if not detection or detection['kind'] != 'nctzone' or not detection.get('mac'):
+                continue
+            if info['key'] in self.db_scheduler.attempted and self.db_attempted_version.get(info['key']) == current:
+                continue
+            if zone_detect.database_state(detection, published) != 'behind':
+                continue
+            self.db_scheduler.mark(info)
+            self.db_attempted_version[info['key']] = current
+            self.update_database(port, auto=True)
+            return
 
     # ------------------------------------------------------------------ cube monitor tab
     def build_monitor_tab(self):
@@ -797,7 +905,7 @@ class App:
             self.pending_detect.add(port)
             if record.get('unregistered'):
                 self.refresh_info()  # registry and "local changes not published" note
-            if ok and auto and self.advance.get() and record['profile'] == self.profile_key():
+            if ok and auto and record.get('kind') != 'database' and self.advance.get() and record['profile'] == self.profile_key():
                 points = zone_build.PROFILES[record['profile']]['points']
                 later = [p for p in points if p > record['point_id']]
                 if later and record['point_id'] == self.point.get():

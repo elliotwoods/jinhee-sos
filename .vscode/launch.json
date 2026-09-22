@@ -2,6 +2,19 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "NCT Console",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
+      "program": "${workspaceFolder}/console/app.py",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
+    },
+    {
       "name": "PoolZone Calibration & Diagnostics",
       "type": "debugpy",
       "request": "launch",

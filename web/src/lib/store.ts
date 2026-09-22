@@ -12,6 +12,12 @@ export type ZoneDbDoc = {
   published_at: string | null; published_by: string; inventory_revision: number;
 };
 
+/** The main show the cubes play, with its universal version (see show.ts). `source` is the editor JSON. */
+export type ShowDoc = {
+  version: number; hash: string; crc: number; length: number; image_b64: string; source: unknown;
+  published_at: string | null; published_by: string;
+};
+
 /** Last contact from one computer/app. Stored per client so it never contends with the inventory. */
 export type Presence = { client: string; action: string; at: string; ip: string };
 
@@ -35,6 +41,9 @@ export interface Store {
   readZoneDb(dataset: string): Promise<{ doc: ZoneDbDoc; etag: string | null }>;
   /** Same compare-and-swap contract as write(). */
   writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null): Promise<void>;
+  readShow(dataset: string): Promise<{ doc: ShowDoc; etag: string | null }>;
+  /** Same compare-and-swap contract as write(). */
+  writeShow(dataset: string, doc: ShowDoc, etag: string | null): Promise<void>;
   touch(dataset: string, presence: Presence): Promise<void>;
   presence(dataset: string): Promise<Presence[]>;
   /** Replace one computer's sightings report (one blob per computer: no contention). */
@@ -46,7 +55,11 @@ export const emptyDoc = (): InventoryDoc => ({ revision: 0, records: {}, changes
 export const emptyZoneDb = (): ZoneDbDoc => ({
   version: 0, hash: "", count: 0, crc: 0, records_b64: "", published_at: null, published_by: "", inventory_revision: 0,
 });
+export const emptyShow = (): ShowDoc => ({
+  version: 0, hash: "", crc: 0, length: 0, image_b64: "", source: null, published_at: null, published_by: "",
+});
 const pathFor = (dataset: string) => `inventory/${dataset}.json`;
+const showPath = (dataset: string) => `show/${dataset}.json`;
 const zoneDbPath = (dataset: string) => `zonedb/${dataset}.json`;
 const presencePrefix = (dataset: string) => `presence/${dataset}/`;
 const sightingsPrefix = (dataset: string) => `sightings/${dataset}/`;
@@ -91,6 +104,14 @@ export class BlobStore implements Store {
 
   writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null) {
     return this.writePath(zoneDbPath(dataset), doc, etag);
+  }
+
+  async readShow(dataset: string) {
+    return this.readPath(showPath(dataset), emptyShow);
+  }
+
+  writeShow(dataset: string, doc: ShowDoc, etag: string | null) {
+    return this.writePath(showPath(dataset), doc, etag);
   }
 
   async touch(dataset: string, presence: Presence) {
@@ -160,6 +181,14 @@ export class MemoryStore implements Store {
 
   writeZoneDb(dataset: string, doc: ZoneDbDoc, etag: string | null) {
     return this.writePath(zoneDbPath(dataset), doc, etag);
+  }
+
+  async readShow(dataset: string) {
+    return this.readPath(showPath(dataset), emptyShow);
+  }
+
+  writeShow(dataset: string, doc: ShowDoc, etag: string | null) {
+    return this.writePath(showPath(dataset), doc, etag);
   }
 
   private seen = new Map<string, Presence>();

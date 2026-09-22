@@ -57,6 +57,12 @@ class SessionTests(unittest.TestCase):
         self.connect()
         self.assertTrue(self.session.usable())
         self.assertIsNone(self.session.problem)
+        # A general radio answers the same verbs (no physical trigger inputs in its hello).
+        self.connect(firmware='general-radio-1.0.0', zones=1, button_pin=None, trigger_pin=None)
+        self.assertTrue(self.session.usable())
+        self.assertIsNone(self.session.problem)
+        self.session.set_zone(CUBE, 4, '#44')
+        self.assertEqual(self.sent[-1]['cmd'], 'set_zone')
 
     def test_ready_trigger_idle_and_wording(self):
         self.connect()
@@ -122,10 +128,10 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.sent[-1]['cmd'], 'hello')
 
     def test_timeline_matches_the_cube_firmware(self):
-        source = (ROOT.parent / 'flashing_station/firmware/neocore_usb/neocore_usb.ino').read_text(encoding='utf-8')
-        body = source[source.index('void updateMainShowTimeline()'):source.index('MAIN SHOW TIMELINE END')]
-        import re
-        ends = [int(v) for v in re.findall(r't\s*<\s*(\d+)\s*\)', body)]
+        # The cube's compiled-in show is generated from shows/mainshow.json (test_ShowEngine.cpp proves it
+        # renders the v1.4.1 hard-coded timeline exactly), and TIMELINE is read from the same file.
+        ends = [31000, 36000, 60000, 68000, 74000, 74300, 79000, 114000, 119000, 124000, 169000, 184000, 192000,
+                221000, 231000, 234000, 237000, 277000, 287000, 295000, 298000]
         self.assertEqual(ends, [end for end, _ in mainshow.TIMELINE])
         self.assertEqual(mainshow.segment_at(0), 'Neon hold (entrance)')
         self.assertEqual(mainshow.segment_at(74100), 'Neon flash')
@@ -198,6 +204,14 @@ class WindowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'No cube'):
                 app.make_ready()
             self.assertIsNone(app.cube)
+            # A general radio on the port is usable but never recorded as the controller.
+            general = dict(HELLO, mac='AC:27:6E:82:68:99', firmware='general-radio-1.0.0', zones=1)
+            del general['button_pin'], general['trigger_pin']
+            app.transport.inbox.put(general)
+            app.poll()
+            self.assertIn('general radio', app.link_status.cget('text'))
+            self.assertFalse(app.ready_button.instate(['disabled']))
+            self.assertEqual(mainshow.dongle.controllers(app.db), {HELLO['mac']})
         finally:
             app.closing = True
             app.transport.port = None

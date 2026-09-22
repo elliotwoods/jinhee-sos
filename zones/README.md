@@ -166,9 +166,23 @@ Steps 2-4 briefly put the board in its bootloader. The table shows what each por
   - reads the data back
   - reboots
   - checks the zone's own report
+- **Database updates over USB** (no reflash). *Update databases automatically* is ticked by default: any board
+  identified as an NctZone zone whose cube database is **behind** the published version gets the published
+  database as soon as it is plugged in, whatever firmware it runs and without arming auto-flash. Only the two
+  database slots are written (`zdb_a` written, `zdb_b` erased); the firmware and the zone identity are untouched,
+  the board's MAC is checked again in the bootloader, and the board reboots once. If the web has a newer zone
+  database than this computer's copy, it is pulled first (the stored web password; offline, the cached copy is
+  written and the log says so). Each board is tried once per publication; the Plan column shows `DATABASE · Update
+  database vX → vY` beforehand and the result afterwards. A board whose database is **ahead** of the published one
+  (a higher version, or the same version with different content from a legacy per-computer counter) is flagged
+  `ASK` and left alone; **Update database** on the selected board overwrites it after a confirmation. Neocubes, the
+  pairing station and boards without zone partitions are never written. When nothing is published, or this
+  computer's mappings differ from the publication, the header says the automatic update is paused. With auto-flash
+  armed, a board with current firmware and a database behind gets a database update instead of a full reflash.
+  Headless: `zone_flash.py --update-database`. Receipts carry `kind: database`.
 - **Build all firmware** rebuilds all four sketches. Headless: `python zones/flasher/zone_build.py`.
 
-Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43 [--rx-gain 38]`, `--detect`, `--check`, `--force` (overwrite a board listed as a neocube, unregistering it, or an excluded device).
+Headless flashing: `zone_flash.py --profile pool --point 4 --param 383 --param 43 [--rx-gain 38]`, `--detect`, `--check`, `--update-database` (published database only, identity kept), `--force` (overwrite a board listed as a neocube, unregistering it, or an excluded device).
 
 Flashing takes no backup of the old firmware. Boards backed up by earlier versions can be restored from `data/backups/`:
 `pairing_station/.venv/bin/python -m esptool --chip esp32c3 --port <port> write-flash 0 zones/flasher/data/backups/<MAC>_<time>.bin`
@@ -190,7 +204,8 @@ The monitor connects by itself to a detected zone on USB (untick *Connect automa
 the pairing app's **Zones → Zone Database Manager…** opens it too).
 
 - **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.8-zones** (1.7 works without
-  RX gain control, 1.6 also without signal bars). Its zone
+  RX gain control, 1.6 also without signal bars) or the general radio **general-radio-1.0.0**
+  (`firmware/GeneralRadio/`, the same relay plus the Mainshow, pool and preshow functions). Its zone
   relay needs no NFC reader. **Flash dongle…** builds that firmware if it is missing or stale, identifies the board
   and writes bootloader, partitions, boot selector and app separately, so NVS is kept. It refuses known cubes, known
   zone boards and the installed station (3C:0F:02:AD:83:24). It then records the dongle MAC as an `excluded` role so
@@ -269,7 +284,9 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
 | `firmware/MainshowController/` | Main show trigger (SET_ZONE 4 / SHOW_START over ESP-NOW, BOOT button, trigger input): not a zone board |
+| `firmware/GeneralRadio/` | General radio dongle: the pairing-station relay protocol plus the Mainshow verbs, an emulated pool radio and an emulated preshow plate, driven by `tools/general_radio.py`. Its `README.md` has the protocol. Not a zone board |
 | `tools/zonedb.py` | Python definition of every image/frame (used by the database manager, flasher and tests) |
+| `tools/general_radio.py` | General radio client (`GeneralRadio`) and bench command line: `hello`, `discover`, `zones`, `set-zone`, `show-start`, `pool`, `preshow`, `listen`, `flash` |
 | `dbmanager/` | Zone Database Manager (`app.py`) and ESP-NOW dongle flashing (`dongle.py`, also used for the Mainshow controller) |
 | `mainshow/` | Mainshow Controller app (`app.py`): cube mainshow-ready, show trigger, controller flashing |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
@@ -283,6 +300,9 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
   - The sketch's own `partitions.csv` replaces the scheme's table.
 - Pairing station firmware: add `--libraries zones/firmware/libraries` to its compile, e.g.
   `arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --libraries pairing_station/.arduino/libraries --libraries zones/firmware/libraries pairing_station/firmware/pairing_station`
+- General radio: `scripts/build_all_firmware.py` builds it (`zones/build/GeneralRadio/`);
+  `pairing_station/.venv/bin/python zones/tools/general_radio.py --port <port> flash` builds if stale and writes it
+  to a spare ESP32-C3 through `dbmanager/dongle.py` (full-flash backup first, NVS kept, refuses cubes/zones/the station).
 - Arduino IDE users: copy `zones/firmware/libraries/NctZone` into the sketchbook `libraries` folder.
 
 ## Tests

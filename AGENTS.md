@@ -11,16 +11,20 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 
 | Component | Maintained code | Responsibility |
 |---|---|---|
-| Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity |
+| Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity. From v1.5.0 the main show is data: compiled-in `DefaultShow.h` (generated from `shows/mainshow.json`) or a newer published show received over ESP-NOW and kept in NVS namespace `show`; joins a running show from `SHOW_TIMECODE` |
 | NFC pairing station | `pairing_station/firmware/pairing_station/` | PN532 scanning, selected-cube identification, registration relay, zone database distribution |
+| NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Holds every old app's instance lock while running |
 | Pairing GUI | `pairing_station/app.py` | Inventory, number assignment, NFC registration, USB pinning, zone controls |
 | Cube USB flasher | `flashing_station/app.py` | Identity checks, builds/uploads, NVS preservation, flash receipts |
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone,ResetZone}/` | NFC-driven show zones; PoolZone also has slider calibration; ResetZone returns a cube to idle (`SET_ZONE 0`) at the end of the show |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
+| Main show library | `zones/firmware/libraries/NctShow/src/`, `pairing_station/showfile.py`, `console/web/lib/showengine.js`, `shows/mainshow.json` | Show image format and renderer (C++, Python and JS kept identical, cross-checked by vectors), show update/timecode frames (`NctShowProtocol.h`). Header-only and separate from NctZone on purpose: zone manifests hash `NctZone/src` |
 | Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
-| Mainshow controller | `zones/firmware/MainshowController/`, `zones/mainshow/app.py` | Makes a cube mainshow-ready (`SET_ZONE 4`) and triggers the main show (`MSG_SHOW_START` = 8, fresh showId ×5) from the app, its BOOT button or a trigger input. Replaces the M5 Core2 show starter. Not a zone board |
+| Mainshow controller | `zones/firmware/MainshowController/`, `zones/mainshow/app.py` | Makes a cube mainshow-ready (`SET_ZONE 4`) and triggers the main show (`MSG_SHOW_START` = 8, fresh showId ×5) from the app, its BOOT button or a trigger input; from mainshow-1.3.0 also broadcasts `SHOW_TIMECODE` once a second while the show runs (length from `show_config`). Replaces the M5 Core2 show starter. Not a zone board |
+| General radio | `zones/firmware/GeneralRadio/`, `zones/tools/general_radio.py` | One dongle for every ESP-NOW host function: the pairing-station relay protocol (cube discover/identify/register, zone frame relay) plus the Mainshow verbs (`set_zone` to one cube or spelled-out `broadcast`, `show_start`), one emulated pool radio (`pool`: one lamp at a time through PoolCentral) and an emulated preshow plate (`preshow`: a TouchDesigner cue through the bridge). Leased outputs; no reader. From general-radio-1.1.0 also the main-show relay (`show_send`/`show_frame`, used by the console Show editor) and the show timecode. Python client + bench CLI + `flash`. Not a zone board, not the Mainshow controller |
 | Preshow media bridge | `zones/firmware/PreshowBridge/` | Receives `PreshowEvent` from the four preshow plates, acknowledges each one, writes `PRESHOW,<n>,ON|OFF` to the TouchDesigner Serial DAT. Not a zone board |
-| Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning |
+| Zone flasher | `zones/flasher/app.py` | Zone identification, configuration, firmware/database provisioning; automatic database-only updates over USB (esptool writes the `zdb` slots; identity and firmware untouched) |
+| Show editor | `console/web/panels/ShowEditor.js`, `console/showedit.py`, `pairing_station/show_registry.py`, `show_publish.py`, `web/src/lib/show.ts` | Edit the main show as cues with a cube-exact preview, publish web-allocated show versions, update cubes over a General Radio (update all / auto walk-around), send the show length to the controller |
 | Zone Database Manager | `zones/dbmanager/app.py` | Wireless zone discovery/version view, targeted, update-all and auto-update-all database updates over an ESP-NOW dongle (pairing-station firmware), dongle flashing, web publish/pull |
 | Web inventory | `web/` (Next.js on Vercel), `inventory_web/app.py`, `scripts/web_sync.py` | Shared web copy of device records (one private Vercel Blob document, shared password), desktop sync app |
 | Pool calibration | `zones/calibration/app.py` | Slider calibration, diagnostics, explicit output override, firmware update |
@@ -53,7 +57,10 @@ ACK is not independent verification of NVS persistence or visible LED behavior.
 
 ## Python architecture and threading
 
-All apps use the shared `pairing_station/.venv`. Use its Python, not an unrelated
+All apps use the shared `pairing_station/.venv`. The NCT Console (`console/`) reuses the pure
+modules below unchanged; its `hub.py` owner thread plays the role of the Tk thread (SQLite, sessions,
+controllers), `api.py`/`commands.py` are its only entry points, destructive commands need a
+confirmation token (the UI's hold; hardware buttons run on one click with a warning tooltip), and `console/simulate.py` provides fake boards for headless tests (`console/tests`). Use its Python, not an unrelated
 system interpreter. Python 3.14 with Tk is the tested Mac configuration.
 
 **Host portability:** macOS is bench-tested; Windows is supported but nobody here can run it. Never
@@ -154,13 +161,24 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
 
 - Modern cubes, pairing station, and zones use ESP-NOW channel **2**. Check legacy
   sources individually; archived settings may differ.
-- Four protocols share channel 2 and are **not** interchangeable: the cube `Packet`
+- Five protocols share channel 2 and are **not** interchangeable: the cube `Packet`
   (legacy **24-byte** C struct ABI, alignment/padding and field offsets intentional,
   never to be packed without migrating both ends), zone management
-  (`NctZoneProtocol.h`), the pool light link (`NctPoolProtocol.h`) and the preshow
-  media link (`NctPreshowProtocol.h`). The preshow media bridge additionally claims
+  (`NctZoneProtocol.h`), the pool light link (`NctPoolProtocol.h`), the preshow
+  media link (`NctPreshowProtocol.h`) and the main show link (`NctShow/src/NctShowProtocol.h`,
+  types 0x50-0x54: show image announce/chunk/query/status and `SHOW_TIMECODE`). The preshow media bridge additionally claims
   every **2-byte** frame, which is the pre-2026 packet it still accepts.
-- Pool and preshow frames carry the `NZ` header but are deliberately **absent** from
+- Main show: `MSG_SHOW_START` is unchanged and remains the only thing a cube needs; a controller
+  without timecode (mainshow-1.2.0, general-radio-1.0.0) works exactly as before, and cubes before
+  v1.5.0 drop every show frame (they only accept 24-byte frames). Show versions are web-allocated
+  and only increase (a cube accepts only a higher version; FORCE is unicast-only); never allocate one
+  locally. A cube never commits a new show while its show runs. `show_cubes` in the device database
+  records what each cube reported (the next publish is numbered above it). Changing the show
+  format means changing `NctShowEngine.h`, `showfile.py`, `showengine.js` and `web/src/lib/show.ts`
+  together; `python pairing_station/showfile.py --header` regenerates `DefaultShow.h` and the JS
+  vectors, and the firmware tests fail if either is stale. Changing `shows/mainshow.json` changes the
+  compiled-in default (a cube firmware release), not the published show.
+- Pool, preshow and show frames carry the `NZ` header but are deliberately **absent** from
   `NctZoneProtocol.h::frameType()`: `ZoneLink::receive()` queues everything that
   function accepts and `ZoneLink::handle()` drops what it does not know, so routing
   them there would swallow them. They reach the sketch through `TagPlate::onFrame`,
@@ -237,7 +255,7 @@ There is no guarantee that a historically recorded test count is current. Run an
 report the current suite. A GUI abort in a sandbox/headless process is different
 from a test assertion failure; use a desktop-capable execution environment.
 
-`python scripts/build_all_firmware.py --dry-run` lists thirteen maintained firmware
+`python scripts/build_all_firmware.py --dry-run` lists fourteen maintained firmware
 and diagnostic targets. Without `--dry-run`, it builds them, reuses existing cube/
 zone manifest builders, reports failures, and exits nonzero if any fail. No uploads.
 `live files` sketches are historical and are not all part of this build command.

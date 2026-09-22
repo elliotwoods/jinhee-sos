@@ -170,3 +170,17 @@ class WebClient:
         return self.request('POST', '/api/zonedb/publish', {
             'dataset': self.dataset, 'records_b64': records_b64, 'min_version': min_version,
             'inventory_revision': inventory_revision, 'client': name}, timeout=max(self.timeout, SLOW_TIMEOUT))
+
+    def show_head(self):
+        """Public: {version, hash, crc, length, published_at} of the published main show (no password)."""
+        return self.request('GET', f'/api/show/head?dataset={quote(self.dataset)}', public=True)
+
+    def show_pull(self):
+        """The published main show: {version, hash, crc, length, image_b64, source, published_at, published_by}."""
+        return self.request('GET', f'/api/show?dataset={quote(self.dataset)}')
+
+    def show_publish(self, source, image_b64, min_version, name):
+        """The server validates source == image and allocates the next universal show version."""
+        return self.request('POST', '/api/show/publish', {
+            'dataset': self.dataset, 'source': source, 'image_b64': image_b64, 'min_version': min_version,
+            'client': name}, timeout=max(self.timeout, SLOW_TIMEOUT))

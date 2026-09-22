@@ -19,6 +19,7 @@ def main():
     python = ENV/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
     if not python.exists():venv.EnvBuilder(with_pip=True).create(ENV)
     subprocess.run([str(python),'-m','pip','install','-r',str(ROOT/'flashing_station/requirements.txt')],check=True)
+    subprocess.run([str(python),'-m','pip','install','-r',str(ROOT/'console/requirements.txt')],check=True)
     subprocess.run([str(python),'-c',"import sys; sys.path.insert(0, 'flashing_station'); from core import load_manifest; m=load_manifest(); print('Firmware ready:',m['version'],m['build_hash'][:12])"],cwd=ROOT,check=True)
     subprocess.run([str(python), str(ROOT/'scripts/sync_inventory.py')], check=True)
     print('Ready. Run: '+str(python)+' '+str(ROOT/'flashing_station/app.py'))

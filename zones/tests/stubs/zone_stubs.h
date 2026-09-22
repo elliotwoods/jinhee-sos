@@ -42,6 +42,10 @@ inline void portEXIT_CRITICAL_ISR(portMUX_TYPE *m) { portEXIT_CRITICAL(m); }
 
 inline uint32_t randomCounter = 0;
 inline uint32_t esp_random() { return (randomCounter++ * 97u) + 13u; }
+// Arduino random(lo, hi): [lo, hi). Deterministic; the neocube's show effects use it.
+inline long random(long lo, long hi) { return hi > lo ? lo + long(esp_random() % uint32_t(hi - lo)) : lo; }
+inline void randomSeed(uint32_t) {}
+constexpr int D10 = 10;  // XIAO ESP32-C3 LED pin used by the neocube
 struct EspClass { bool restarted = false; void restart() { restarted = true; } };
 inline EspClass ESP;
 
@@ -74,6 +78,17 @@ struct SerialStub {
   void print(const char *s) { note(); output += s; }
   void println(const char *s) { note(); output += s; output += "\n"; }
   void println() { note(); output += "\n"; }
+  // Arduino Print overloads for numbers and String (the neocube prints both).
+  void print(const std::string &s) { print(s.c_str()); }
+  void println(const std::string &s) { println(s.c_str()); }
+  void print(char c) { note(); output.push_back(c); }
+  void print(unsigned long long v) { print(std::to_string(v)); }
+  void print(long long v) { print(std::to_string(v)); }
+  void print(unsigned long v) { print(std::to_string(v)); }
+  void print(long v) { print(std::to_string(v)); }
+  void print(unsigned v) { print(std::to_string(v)); }
+  void print(int v) { print(std::to_string(v)); }
+  template <typename T> void println(T v) { print(v); println(); }
   size_t write(uint8_t c) { note(); output.push_back(char(c)); return 1; }
   size_t write(const uint8_t *data, size_t len) { note(); output.append((const char *)data, len); return len; }
 };
@@ -95,6 +110,7 @@ struct WiFiStub {
   void persistent(bool on) { wifiPersistent = on; }
   void setAutoReconnect(bool on) { wifiAutoReconnect = on; }
   std::string macAddress() { return "02:AA:BB:CC:DD:EE"; }
+  void macAddress(uint8_t *mac) { const uint8_t self[6] = {0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE}; memcpy(mac, self, 6); }
   int channel() { return radioChannel; }
 };
 inline WiFiStub WiFi;
@@ -107,7 +123,10 @@ inline int esp_wifi_get_channel(uint8_t *primary, wifi_second_chan_t *second) {
 }
 
 // ---- ESP-NOW ----
-struct esp_now_recv_info_t { uint8_t *src_addr; uint8_t *des_addr; };
+// rx_ctrl carries the signal strength on the real driver; the dongles report it to the zone
+// manager. Left null by tests that do not care (aggregate-initialised from two members).
+struct wifi_pkt_rx_ctrl_t { int rssi; };
+struct esp_now_recv_info_t { uint8_t *src_addr; uint8_t *des_addr; wifi_pkt_rx_ctrl_t *rx_ctrl = nullptr; };
 struct esp_now_send_info_t { uint8_t *des_addr; uint8_t *src_addr; };
 enum esp_now_send_status_t { ESP_NOW_SEND_SUCCESS = 0, ESP_NOW_SEND_FAIL };
 struct esp_now_peer_info_t { uint8_t peer_addr[6]; uint8_t lmk[16]; uint8_t channel; wifi_interface_t ifidx; bool encrypt; };
@@ -127,7 +146,8 @@ inline bool esp_now_is_peer_exist(const uint8_t *mac) {
   return false;
 }
 inline int esp_now_add_peer(const esp_now_peer_info_t *peer) {
-  assert(peer->channel == 2 && !peer->encrypt);
+  // Channel 0 means "the current channel" (the neocube's peers), acceptable only once the radio is on 2.
+  assert((peer->channel == 2 || (peer->channel == 0 && radioChannel == 2)) && !peer->encrypt);
   assert(!esp_now_is_peer_exist(peer->peer_addr));
   if (espPeers.size() >= 20) return ESP_FAIL;  // ESP-NOW unencrypted peer limit
   espPeers.emplace_back(peer->peer_addr, peer->peer_addr + 6);
@@ -365,6 +385,8 @@ struct Adafruit_NeoPixel {
     assert(i >= 0 && i < int(buffer.size()));
     buffer[i] = (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
   }
+  void setPixelColor(int i, uint32_t c) { setPixelColor(i, uint8_t(c >> 16), uint8_t(c >> 8), uint8_t(c)); }
+  static uint32_t Color(uint8_t r, uint8_t g, uint8_t b) { return (uint32_t(r) << 16) | (uint32_t(g) << 8) | b; }
   void show() { neoShown = buffer; ++neoShows; }
 };
 
@@ -413,4 +435,15 @@ struct Preferences {
     if (it == blobs.end() || it->second.size()!=n) return 0;
     memcpy(p, it->second.data(), n); return n;
   }
+  // Scalars are stored as little-endian blobs of their own size (the neocube keeps its
+  // registration and show version this way).
+  template <typename T> T getScalar(const char *key, T fallback) {
+    auto it = blobs.find(at(key));
+    if (it == blobs.end() || it->second.size() != sizeof(T)) return fallback;
+    T v; memcpy(&v, it->second.data(), sizeof v); return v;
+  }
+  uint32_t getUInt(const char *key, uint32_t fallback = 0) { return getScalar<uint32_t>(key, fallback); }
+  uint8_t getUChar(const char *key, uint8_t fallback = 0) { return getScalar<uint8_t>(key, fallback); }
+  size_t putUInt(const char *key, uint32_t v) { return putBytes(key, &v, sizeof v); }
+  size_t putUChar(const char *key, uint8_t v) { return putBytes(key, &v, sizeof v); }
 };

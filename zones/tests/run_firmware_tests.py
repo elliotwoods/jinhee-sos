@@ -11,21 +11,24 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(WORKSPACE / 'scripts'))
+sys.path.insert(0, str(WORKSPACE / 'pairing_station'))
 import host_cxx  # noqa: E402
+import showfile  # noqa: E402
 import zonedb  # noqa: E402
 
 LIBRARY = ROOT / 'firmware/libraries/NctZone/src'
+SHOW_LIBRARY = ROOT / 'firmware/libraries/NctShow/src'
 SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone', 'ResetZone']
 # Sketches that are not zone boards (no zcfg/zdb partitions, not a zone-flasher target)
 # but are still compiled for the host against the same stubs.
-EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController']
+EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController', 'GeneralRadio']
 # Packet definitions a sketch may never re-declare: the pool packet used to be copied into
 # five sketches with nothing cross-checking them, and the preshow media packet was copied
 # into the plate and the bridge with the same result.
 PRIVATE_STRUCTS = ['Packet', 'PoolState', 'PoolBeacon', 'RadioPacket',
                    'PreshowMediaPacket', 'PreshowEvent', 'PreshowAck', 'PreshowBeacon', 'PreshowLegacy']
 SHIMS = ['Arduino.h', 'WiFi.h', 'esp_now.h', 'esp_wifi.h', 'Wire.h', 'Adafruit_PN532.h', 'esp_partition.h', 'VL53L4CD.h', 'Preferences.h',
-         'freertos/FreeRTOS.h', 'freertos/queue.h', 'Adafruit_NeoPixel.h']
+         'freertos/FreeRTOS.h', 'freertos/queue.h', 'Adafruit_NeoPixel.h', 'esp_system.h']
 
 
 def packet_text(source):
@@ -44,6 +47,54 @@ def frames(name, publication):
             f'constexpr uint32_t {name}_CRC = {publication.crc}u; constexpr uint16_t {name}_COUNT = {publication.count};\n')
 
 
+def show_fixtures():
+    text = array('DEFAULT_IMAGE', showfile.pack(showfile.load()))
+    doc = showfile.vector_doc()
+    image = showfile.pack(doc)
+    text += array('VECTOR_IMAGE', image)
+    sets = []
+    for cube in showfile.VECTOR_CUBES:  # fanning makes every cube number render differently
+        rows = showfile.vectors(doc, cube=cube)
+        sets.append('{' + str(cube) + ',{' + ','.join('{' + ','.join(map(str, row)) + '}' for row in rows) + '}}')
+    text += ('const std::vector<std::pair<uint32_t, std::vector<std::array<uint32_t, 5>>>> VECTOR_SETS = {'
+             + ','.join(sets) + '};\n')
+    bad = []
+    def mutate(offset, *values):
+        b = bytearray(image); b[offset:offset + len(values)] = bytes(values); bad.append(bytes(b))
+    cue = showfile.HEADER.size
+    mutate(0, ord('X'))                      # magic
+    mutate(4, 2)                             # format
+    mutate(cue + 8, 101)                     # colour above the cap
+    mutate(cue + showfile.CUE.size + 4, 9)   # unknown cue type
+    mutate(cue + showfile.CUE.size, 0, 0, 0, 0)  # second cue starts at 0 (not after the first)
+    mutate(cue + 2 * showfile.CUE.size + 20, 200)  # blink on_ms > period_ms
+    mutate(cue + 7, 1)                       # a solid cue cannot fan
+    mutate(cue + 7, 3)                       # unknown fan mode
+    fanned = next(i for i, c in enumerate(doc['cues']) if c.get('fan', {}).get('mode') == 'sequential')
+    mutate(cue + fanned * showfile.CUE.size + 6, 0)   # sequential fan without a group size
+    bad.append(image + b'\0')                # trailing byte
+    bad.append(image[:-1])                   # truncated
+    for b in bad:
+        try:
+            showfile.unpack(b)
+        except showfile.ShowError:
+            continue
+        raise AssertionError('showfile accepted an image the vectors call invalid')
+    text += 'const std::vector<std::vector<uint8_t>> INVALID_IMAGES = {' + ','.join(
+        '{' + ','.join(map(str, b)) + '}' for b in bad) + '};\n'
+    text += array('SHOW_ANNOUNCE_V5', showfile.announce(5, image))
+    text += array('SHOW_ANNOUNCE_V5_FORCE', showfile.announce(5, image, force=True))
+    text += array('SHOW_ANNOUNCE_V4', showfile.announce(4, image))
+    text += 'const std::vector<std::vector<uint8_t>> SHOW_CHUNKS_V5 = {' + ','.join(
+        '{' + ','.join(map(str, c)) + '}' for c in showfile.chunks(5, image)) + '};\n'
+    text += 'const std::vector<std::vector<uint8_t>> SHOW_CHUNKS_V4 = {' + ','.join(
+        '{' + ','.join(map(str, c)) + '}' for c in showfile.chunks(4, image)) + '};\n'
+    text += f'constexpr uint32_t VECTOR_CRC = {showfile.crc32(image)}u;\n'
+    text += array('SHOW_QUERY_FRAME', showfile.query(0xC0FFEE, 300))
+    text += array('SHOW_TIMECODE_FRAME', showfile.timecode(0x11223344, 5000, 7, 0xAABBCCDD))
+    return text
+
+
 def fixtures():
     rows = json.loads((WORKSPACE / 'pairing_station/original_32.json').read_text(encoding='utf-8'))
     v1 = zonedb.records_from_rows(rows)
@@ -51,7 +102,7 @@ def fixtures():
     v2 = zonedb.records_from_rows(rows + [extra])
     rollback = zonedb.records_from_rows(rows[:-1])
     first = rows[0]
-    text = '#pragma once\n#include <vector>\n#include <cstdint>\n'
+    text = '#pragma once\n#include <array>\n#include <vector>\n#include <cstdint>\n'
     text += array('SLOT_V1', zonedb.slot_image(v1, 1))
     text += f'constexpr uint32_t SLOT_V1_CRC = {zonedb.crc32(zonedb.pack_records(v1))}u;\n'
     text += array('CONFIG_POINT2', zonedb.config_image(1, 2, 'Preshow 2'))
@@ -84,7 +135,7 @@ def fixtures():
     legacy[24:28] = zonedb.crc32(bytes(legacy[:24])).to_bytes(4, 'little')
     text += array('CONFIG_LEGACY_GAIN', bytes(legacy))
     text += array('CONFIG_POOL4_GAIN23', zonedb.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430], rx_gain=23))
-    return text
+    return text + show_fixtures()
 
 
 def main():
@@ -108,9 +159,10 @@ def main():
             path.write_text('#include "zone_stubs.h"\n', encoding='utf-8')
         (directory / 'fixtures.h').write_text(fixtures(), encoding='utf-8')
         flags = [host_cxx.compiler(), '-std=c++17', '-Wall', '-Wno-unused-function', '-g'] + host_cxx.SANITIZE + [
-                 '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY)]
+                 '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY), '-I' + str(SHOW_LIBRARY)]
         tests = (['test_library.cpp', 'test_PoolProtocol.cpp', 'test_PreshowProtocol.cpp',
-                  'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] +
+                  'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp', 'test_ShowEngine.cpp',
+                  'test_NeocoreShow.cpp'] +
                  [f'test_{name}.cpp' for name in SKETCHES + EXTRA_SKETCHES])
         for test in tests:
             binary = host_cxx.executable(directory / test.replace('.cpp', ''))

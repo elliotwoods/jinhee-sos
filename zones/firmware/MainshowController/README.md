@@ -10,7 +10,7 @@ zone flasher recognises the banner `NCT MAINSHOW CONTROLLER` and refuses it
 
 ## How a show starts
 
-The cube firmware is frozen and is not changed by any of this:
+What the cube does (flashing_station/firmware/neocore_usb):
 
 1. `MSG_SET_ZONE` with `ZONE_MAINSHOW` (4) makes a cube **mainshow-ready** (neon). The mainshow
    entrance plates (`TagPlateZone`) send this when a cube is tapped, and the app's **Mainshow ready** button sends it too.
@@ -18,6 +18,20 @@ The cube firmware is frozen and is not changed by any of this:
    on a cube that is ready. A repeated showId is ignored, and when the timeline ends the cube leaves ready mode.
 
 Every trigger uses a fresh random showId. Each trigger is sent **5 times, 30 ms apart**, as the Core2 did.
+
+### Show timecode (mainshow-1.3.0)
+
+While a show runs, the controller sends `SHOW_TIMECODE` (showId and the show time,
+`NctShowProtocol.h`) once a second to the start's target: broadcast for the button, the trigger input and
+a broadcast start, or the one cube for a unicast start. The first timecode goes straight after the burst.
+- A cube on v1.5.0 or later that is mainshow-ready but missed the start **joins** at that time.
+- A running cube snaps its clock back when it has drifted more than 100 ms.
+- Cubes older than v1.5.0 ignore timecode (they accept only 24-byte frames), and no cube needs it: the
+  start is unchanged, so an older controller still works.
+
+The show length bounds the timecode and the green status. It comes from `show_config` and is kept in NVS;
+the default is 298 s. The console's Show editor sends it after a publish. `show_stop` ends the timecode.
+It does not stop the cubes; `SET_ZONE 0` does.
 
 ## Triggers
 
@@ -49,8 +63,8 @@ This runs on ex-cube boards, which carry the cube's eight WS2812s on XIAO **D10*
 | Show running | strong green (100, the cube's cap) scrolling fast, one pixel per 60 ms |
 | `led_test` on | red, green, blue, white (1 s each), then each pixel alone in white, repeating |
 
-- The controller hears nothing back from the cubes, so **"running" means within 298 s of the last trigger**. That is the length
-  of the cube's timeline (`SHOW_LENGTH_MS`). It covers every trigger source, including a unicast trigger from the app.
+- The controller hears nothing back from the cubes, so **"running" means within the show length of the last trigger**
+  (298 s unless `show_config` set another; `show_stop` ends it early). It covers every trigger source, including a unicast trigger from the app.
 - Green therefore means "a show was started less than 4:58 ago", not "cubes are playing". A cube that was not
   mainshow-ready, or did not hear the start, is not playing.
 - The status also doesn't follow a trigger input that stays closed longer than the show. It turns red again at 4:58 while the input is still held.
@@ -60,7 +74,9 @@ This runs on ex-cube boards, which carry the cube's eight WS2812s on XIAO **D10*
 
 | Request | Reply |
 |---|---|
-| `{"cmd":"hello","id":"…"}` | `hello` with `firmware`, `mac`, `channel`, `radio_ok`, `button_pin`, `trigger_pin`, `lockout_ms`, `rearm_ms`, `last_show_id`, `shows`, `led_pin`, `led_test`, `show_running`, `show_length_ms` |
+| `{"cmd":"hello","id":"…"}` | `hello` with `firmware`, `mac`, `channel`, `radio_ok`, `button_pin`, `trigger_pin`, `lockout_ms`, `rearm_ms`, `last_show_id`, `shows`, `led_pin`, `led_test`, `show_running`, `show_length_ms`, and from 1.3.0 `timecode:true`, `timecode_ms`, `show_elapsed_ms`, `show_version`, `show_crc` |
+| `{"cmd":"show_config","id":"…","length_ms":N,"version":V,"crc":C}` | `show_config` echoing them (1.3.0; stored in NVS) |
+| `{"cmd":"show_stop","id":"…"}` | `show_stop` with `was_running`, `show_id` (1.3.0; ends the timecode only) |
 | `{"cmd":"ping","id":"…"}` | `pong` |
 | `{"cmd":"set_zone","id":"…","mac":"AA:BB:…","zone":0-4}` | `zone_sent` with `status`: `delivered` \| `unconfirmed` \| `rejected` \| `no_result` |
 | `{"cmd":"show_start","id":"…","target":"broadcast"\|"AA:BB:…"}` | `show_start` with `source`, `show_id`, `target`, `sent`, `repeats` and, for unicast only, `delivered` (out of `repeats`) |

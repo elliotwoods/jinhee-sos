@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "length_ms": 298000,
+  "cues": [
+    {"start_ms": 0, "label": "Neon hold (entrance)", "type": "solid", "colours": [[18, 20, 1]], "params": {}},
+    {"start_ms": 31000, "label": "Off: main video starts", "type": "off", "colours": [], "params": {}},
+    {"start_ms": 36000, "label": "White blink, 1 Hz", "type": "blink", "colours": [[20, 20, 20], [0, 0, 0]], "params": {"period_ms": 1000, "on_ms": 500}},
+    {"start_ms": 60000, "label": "White fades up to maximum", "type": "fade", "colours": [[20, 20, 20], [100, 100, 100]], "params": {"duration_ms": 8000}},
+    {"start_ms": 68000, "label": "Neon", "type": "solid", "colours": [[18, 20, 1]], "params": {}},
+    {"start_ms": 74000, "label": "Neon flash", "type": "pulse", "colours": [[18, 20, 1], [81, 100, 23]], "params": {"attack_ms": 120, "release_ms": 180}},
+    {"start_ms": 74300, "label": "Neon", "type": "solid", "colours": [[18, 20, 1]], "params": {}},
+    {"start_ms": 79000, "label": "Crystal dissolve: grey, blue, red", "type": "cycle", "colours": [[17, 17, 18], [11, 16, 18], [18, 12, 12]], "params": {"step_ms": 3000}},
+    {"start_ms": 114000, "label": "Fades up to maximum white", "type": "fade", "colours": [[17, 17, 18], [100, 100, 100]], "params": {"duration_ms": 5000}},
+    {"start_ms": 119000, "label": "Maximum neon fades to neon", "type": "fade", "colours": [[81, 100, 23], [18, 20, 1]], "params": {"duration_ms": 5000}},
+    {"start_ms": 124000, "label": "Random neon brightness", "type": "random", "colours": [[81, 100, 23]], "params": {"level_min": 12, "level_max": 50, "dur_min_ms": 700, "dur_max_ms": 1500, "start_level": 20}},
+    {"start_ms": 169000, "label": "Off", "type": "off", "colours": [], "params": {}},
+    {"start_ms": 184000, "label": "Desert fades in", "type": "fade", "colours": [[0, 0, 0], [24, 18, 13]], "params": {"duration_ms": 8000}},
+    {"start_ms": 192000, "label": "Desert fades out", "type": "fade", "colours": [[24, 18, 13], [0, 0, 0]], "params": {"duration_ms": 29000}},
+    {"start_ms": 221000, "label": "Off", "type": "off", "colours": [], "params": {}},
+    {"start_ms": 231000, "label": "Pool blue fades in", "type": "fade", "colours": [[0, 0, 0], [0, 8, 30]], "params": {"duration_ms": 3000}},
+    {"start_ms": 234000, "label": "Pool blue fades out", "type": "fade", "colours": [[0, 8, 30], [0, 0, 0]], "params": {"duration_ms": 3000}},
+    {"start_ms": 237000, "label": "Off", "type": "off", "colours": [], "params": {}},
+    {"start_ms": 277000, "label": "White fades in", "type": "fade", "colours": [[0, 0, 0], [20, 20, 20]], "params": {"duration_ms": 10000}},
+    {"start_ms": 287000, "label": "White strobe", "type": "blink", "colours": [[100, 100, 100], [20, 20, 20]], "params": {"period_ms": 700, "on_ms": 120}},
+    {"start_ms": 295000, "label": "White fades out", "type": "fade", "colours": [[20, 20, 20], [0, 0, 0]], "params": {"duration_ms": 3000}}
+  ]
+}

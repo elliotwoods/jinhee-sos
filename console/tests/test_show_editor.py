@@ -1,0 +1,167 @@
+"""Show editor back end: the working copy, web publish/pull, cube updates through a relay, controller config."""
+import copy
+import sys
+import unittest
+from types import SimpleNamespace
+
+import support  # noqa: F401
+from support import simulated_hub, run_ticks
+import paths
+import commands
+import commands_show  # noqa: F401
+import showfile
+from show_sim import FakeShowCube
+
+sys.path.insert(0, str(paths.ROOT / 'pairing_station' / 'tests'))
+from fake_web_inventory import FakeWebInventory  # noqa: E402
+import web_client  # noqa: E402
+
+CUBES = ['1C:DB:D4:F0:A8:30', 'AC:27:6E:80:00:D0']
+
+
+class FakeRelay:
+    """A General Radio that speaks show_send, with two v1.5.0 cubes in range."""
+    kind = 'generalradio'
+
+    def __init__(self, hub):
+        self.hub = hub
+        self.device = SimpleNamespace(id='relay')
+        self.cubes = {mac: FakeShowCube(mac) for mac in CUBES}
+        self.transport = SimpleNamespace(send=self.send)
+        self.sent = []
+
+    def show_relay(self):
+        return True
+
+    def send(self, message):
+        self.sent.append(message)
+        data = bytes.fromhex(message['hex'])
+        broadcast = message['mac'] == 'FF:FF:FF:FF:FF:FF'
+        self.hub.showedit.event(dict(event='show_sent', id=message['id'], mac=message['mac'], status='delivered'))
+        for mac, cube in self.cubes.items():
+            if broadcast or message['mac'] == mac:
+                for reply in cube.receive(data, broadcast):
+                    self.hub.showedit.event(dict(event='show_frame', mac=mac, rssi=-55, hex=reply.hex()))
+
+    # the hub calls these on every session
+    def pump(self):
+        pass
+
+    def tick(self, now):
+        pass
+
+    def snapshot(self):
+        return {}
+
+
+def token(hub, name, args):
+    return dict(args)  # hardware commands run on click; only destructive ones need a confirming hold
+
+
+class ShowEditorTests(unittest.TestCase):
+    def setUp(self):
+        self.hub = simulated_hub()
+        self.editor = self.hub.showedit
+
+    def edited(self):
+        doc = copy.deepcopy(self.editor.draft)
+        doc['cues'][0]['colours'] = [[40, 0, 0]]
+        return doc
+
+    def test_working_copy_is_validated_and_kept_in_the_database(self):
+        self.assertEqual(self.editor.origin, 'default')
+        self.assertEqual(self.editor.summary()['crc'], showfile.crc32(showfile.pack(showfile.load())))
+        bad = self.edited()
+        bad['cues'][1]['start_ms'] = 0
+        with self.assertRaisesRegex(ValueError, 'must start after'):
+            commands.run(self.hub, 'show.save', dict(doc=bad))
+        commands.run(self.hub, 'show.save', dict(doc=self.edited()))
+        self.assertEqual(self.editor.origin, 'draft')
+        self.assertIn('[40,0,0]', self.hub.db.metadata('show_draft'))
+        # A new editor on the same database resumes the working copy.
+        from showedit import ShowEditor
+        self.assertEqual(ShowEditor(self.hub).draft['cues'][0]['colours'], [[40, 0, 0]])
+        commands.run(self.hub, 'show.revert', dict(source='default'))
+        self.assertEqual(self.editor.draft, showfile.load())
+        with self.assertRaisesRegex(ValueError, 'No show published'):
+            commands.run(self.hub, 'show.revert', dict(source='published'))
+        with self.assertRaisesRegex(ValueError, 'Not JSON'):
+            commands.run(self.hub, 'show.import', dict(text='{'))
+        run_ticks(self.hub, 3)
+        snap = support.section(self.hub, 'showedit')
+        self.assertEqual((snap['origin'], snap['summary']['cues'], snap['relay']['present']), ('default', 21, False))
+
+    def test_publish_then_update_cubes_over_a_relay(self):
+        server = FakeWebInventory()
+        self.addCleanup(server.close)
+        original = web_client.WebClient.__init__
+        def local(this, *args, **kw):
+            original(this, server.url, password=server.password, client='test')
+        web_client.WebClient.__init__ = local
+        self.addCleanup(setattr, web_client.WebClient, '__init__', original)
+        web_client.save_password(server.password)
+        commands.run(self.hub, 'show.save', dict(doc=self.edited()))
+        job = commands.run(self.hub, 'show.publish', {})
+        self.assertTrue(support.tick_until(self.hub, lambda: self.hub.jobs.jobs[job['job']].state in ('done', 'failed')))
+        self.assertEqual(self.hub.jobs.jobs[job['job']].state, 'done', self.hub.jobs.jobs[job['job']].error)
+        self.assertEqual(self.editor.registry.store.published()['version'], 1)
+        # Updates need a relay.
+        with self.assertRaisesRegex(ValueError, 'General Radio'):
+            commands.run(self.hub, 'show.update_all', token(self.hub, 'show.update_all', {}))
+        relay = FakeRelay(self.hub)
+        self.hub.sessions['relay'] = relay
+        commands.run(self.hub, 'show.query', token(self.hub, 'show.query', {}))
+        self.assertEqual({c['mac'] for c in self.editor.registry.cube_rows()}, set(CUBES))
+        self.assertTrue(all(c['state'] == 'behind' for c in self.editor.registry.cube_rows()))
+        commands.run(self.hub, 'show.update_all', token(self.hub, 'show.update_all', {}))
+        self.assertTrue(support.tick_until(self.hub, lambda: self.editor.registry.publication is None, timeout=20))
+        image = showfile.pack(self.edited())
+        self.assertTrue(all((c.version, c.image) == (1, image) for c in relay.cubes.values()))
+        snap = support.section(self.hub, 'showedit')
+        self.assertTrue(snap['draft_published'])
+        self.assertTrue(all(c['state'] == 'current' for c in snap['cubes']))
+        del self.hub.sessions['relay']
+
+    def test_controller_config_only_for_timecode_firmware(self):
+        requests = []
+        old = SimpleNamespace(device=SimpleNamespace(id='ctl'), session=SimpleNamespace(
+            info=dict(firmware='mainshow-1.2.0'), request=lambda cmd, **f: requests.append((cmd, f)), show_state=lambda: None))
+        self.hub.show_session = lambda: old
+        self.editor.registry.store.cache(dict(version=3, **self._doc_fields(self.edited())))
+        with self.assertRaisesRegex(ValueError, 'no show timecode; it still starts the show'):
+            self.editor.push_config()
+        self.editor.tick(0)
+        self.assertEqual(requests, [], 'an old controller is left alone')
+        old.session.info = dict(firmware='mainshow-1.3.0', timecode=True, show_length_ms=298000)
+        self.editor.tick(0)
+        self.assertEqual(requests, [('show_config', dict(length_ms=298000, version=3, crc=showfile.crc32(showfile.pack(self.edited()))))])
+        self.editor.tick(0)
+        self.assertEqual(len(requests), 1, 'sent once per publication')
+
+    def test_update_through_the_simulated_general_radio(self):
+        """The real GeneralRadioSession + FakeGeneralRadio (general-radio-1.1.0) + a simulated v1.5.0 cube."""
+        self.assertTrue(support.tick_until(self.hub, lambda: self.editor.relay() is not None, timeout=10))
+        radio = self.editor.relay()
+        self.editor.registry.store.cache(dict(version=4, **self._doc_fields(self.edited())))
+        commands.run(self.hub, 'show.query', {})
+        self.assertTrue(support.tick_until(self.hub, lambda: self.editor.registry.cube_rows(), timeout=5))
+        cube_mac = self.editor.registry.cube_rows()[0]['mac']
+        commands.run(self.hub, 'show.update_all', {})
+        self.assertTrue(support.tick_until(self.hub, lambda: self.editor.registry.publication is None, timeout=30))
+        self.assertIn('confirmed on 1 cube', self.editor.registry.message)
+        rows = {c['mac']: c for c in self.editor.registry.cube_rows()}
+        self.assertEqual((rows[cube_mac]['version'], rows[cube_mac]['state']), (4, 'current'))
+        # A timecode-capable radio is told the published show's length once.
+        self.assertTrue(support.tick_until(self.hub, lambda: radio.status.get('show_version') == 4, timeout=5))
+        self.assertEqual(radio.status.get('show_length_ms'), self.edited()['length_ms'])
+
+    def _doc_fields(self, doc):
+        import base64
+        from show_registry import image_hash
+        image = showfile.pack(doc)
+        return dict(hash=image_hash(image), crc=showfile.crc32(image), length=len(image),
+                    image_b64=base64.b64encode(image).decode(), source=doc)
+
+
+if __name__ == '__main__':
+    unittest.main()

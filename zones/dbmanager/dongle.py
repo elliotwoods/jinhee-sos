@@ -5,13 +5,17 @@ NFC reader, so a bare ESP32-C3 with that firmware is a complete dongle. Flashing
 bootloader, partition table, boot selector and application separately so NVS is preserved,
 and refuses boards the inventory knows as cubes or zones.
 
-The same pipeline writes the Mainshow controller firmware (`MAINSHOW`, used by zones/mainshow).
+The same pipeline writes the Mainshow controller firmware (`MAINSHOW`, used by zones/mainshow)
+and the general radio (`GENERAL`, zones/firmware/GeneralRadio: the relay protocol plus the
+Mainshow verbs, pool-lamp and preshow-cue emulation, driven by zones/tools/general_radio.py).
 A board recorded as the controller is refused when writing anything else, so the dongle
-flasher cannot quietly turn the show trigger back into a relay.
+flasher cannot quietly turn the show trigger back into a relay. A general radio is just an
+`excluded` board, like a relay dongle: the cube and zone flashers leave it alone by role.
 """
 from pathlib import Path
 import json
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'flashing_station'))
@@ -41,10 +45,27 @@ class Firmware:
 PAIRING = Firmware('pairing-station relay', 'nct-pairing-1.8-zones',  # 1.7 adds signal strength, 1.8 RX gain control
                    ROOT / 'pairing_station/firmware/pairing_station', ROOT / 'pairing_station/build',
                    (ROOT / 'pairing_station/.arduino/libraries', ROOT / 'zones/firmware/libraries'))
-MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.2.0', ROOT / 'zones/firmware/MainshowController',
+MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.3.0',  # 1.3 adds the show timecode
+                    ROOT / 'zones/firmware/MainshowController',
                     ROOT / 'zones/build/MainshowController',
                     (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))  # Adafruit_NeoPixel, as the cube build
+GENERAL = Firmware('General radio', 'general-radio-1.1.0',  # 1.1 adds the show relay and timecode
+                   ROOT / 'zones/firmware/GeneralRadio',
+                   ROOT / 'zones/build/GeneralRadio',
+                   (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))
 FIRMWARE = PAIRING.version
+# Firmwares that speak the current zone relay (RX gain control included): what the Zone
+# Database Manager accepts without asking for a reflash.
+RELAY_VERSIONS = {PAIRING.version, GENERAL.version, 'general-radio-1.0.0'}  # 1.0.0: zone relay only, no show relay
+
+
+def is_general(firmware):
+    return (firmware or '').startswith('general-radio-')
+
+
+def show_capable(firmware):
+    """Answers the Mainshow verbs (set_zone / show_start): the controller, or a general radio."""
+    return (firmware or '').startswith('mainshow-') or is_general(firmware)
 
 
 def artifacts(firmware=PAIRING):
@@ -55,7 +76,8 @@ def artifacts(firmware=PAIRING):
 
 def sources(firmware=PAIRING):
     files = [p for p in firmware.sketch.iterdir() if p.suffix in ('.ino', '.h', '.cpp')]
-    files += [p for p in (ROOT / 'zones/firmware/libraries/NctZone/src').iterdir() if p.suffix in ('.h', '.cpp')]
+    for library in ('NctZone', 'NctShow'):
+        files += [p for p in (ROOT / 'zones/firmware/libraries' / library / 'src').iterdir() if p.suffix in ('.h', '.cpp')]
     return files
 
 
@@ -130,11 +152,13 @@ def refusal(mac, known, firmware=PAIRING):
     return None
 
 
-def flash(port, known, folder, emit, force_build=False, firmware=PAIRING):
+def flash(port, known, folder, emit, force_build=False, firmware=PAIRING, backup='first'):
     """Build if needed, identify, refuse cubes/zones, write `firmware` (the relay by default). Returns the board MAC.
 
     Runs on a worker thread (no SQLite here: `known` comes from known_boards()); the caller records
     the dongle's excluded role afterwards so the cube and zone flashers leave it alone.
+    `backup`: 'first' reads the full flash once per board (the GUIs); 'always' reads it again into a
+    timestamped file before this write (the command line, for a board being moved between roles).
     """
     runner = Runner(emit, folder / 'dongle.log')
     folder.mkdir(parents=True, exist_ok=True)
@@ -169,15 +193,16 @@ def flash(port, known, folder, emit, force_build=False, firmware=PAIRING):
         reason = refusal(mac, known, firmware)
         if reason:
             raise RuntimeError(reason + '; nothing was written')
-        backup = BACKUPS / f'{mac.replace(":", "")}.bin'
-        if not backup.is_file():
-            emit('stage', f'Back up {mac} (full flash, first time only)')
+        stem = mac.replace(':', '')
+        image = BACKUPS / (f'{stem}.bin' if backup == 'first' else f'{stem}-{time.strftime("%Y%m%d-%H%M%S")}.bin')
+        if backup == 'always' or not image.is_file():
+            emit('stage', f'Back up {mac} (full flash{", first time only" if backup == "first" else ""})')
             BACKUPS.mkdir(parents=True, exist_ok=True)
-            partial = backup.with_suffix('.partial')
+            partial = image.with_suffix('.partial')
             tool('read-flash', '0x0', '0x400000', str(partial), timeout=300)
             if not partial.is_file() or partial.stat().st_size != 0x400000:
                 raise RuntimeError('Backup incomplete; nothing was written')
-            partial.replace(backup)
+            partial.replace(image)
         emit('stage', f'Write {firmware.label} firmware to {mac}')
         args = ['write-flash', '--flash-mode', 'keep', '--flash-freq', 'keep', '--flash-size', 'keep']
         for offset, path in segments:

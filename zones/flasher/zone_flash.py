@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Flash a zone board: firmware + zone identity (zcfg) + the current published cube database (zdb_a).
+`--update-database` writes only the published database to a board that already runs zone firmware.
 
 Reuses flashing_station's pinned esptool runner and USB port detection. Usable from the GUI (app.py)
 or headless:  ../../pairing_station/.venv/bin/python zone_flash.py --point 1 [--build] [--port ...]
@@ -91,7 +92,7 @@ class ZoneFlasher:
         folder = DATA / 'runs' / ident
         folder.mkdir(parents=True)
         runner = Runner(self.emit, folder / 'upload.log')
-        record = dict(id=ident, started_at=timestamp(), port=port['port'], profile=profile_name, sketch=sketch, point_id=point_id,
+        record = dict(id=ident, kind='flash', started_at=timestamp(), port=port['port'], profile=profile_name, sketch=sketch, point_id=point_id,
                       name=name, params=params, rx_gain=rx_gain,
                       firmware=manifest['version'], build_hash=manifest['build_hash'], result='failed', forced=bool(force))
         db = Database(self.database, recover_pending=False)
@@ -193,6 +194,111 @@ class ZoneFlasher:
                                                        f'v{publication.version} ({publication.count} records)' +
                                                        (f' · was neocube #{record["unregistered"]["cube_id"]} (unregistered)'
                                                         if 'unregistered' in record else ''))
+        except Exception as exc:
+            record.update(result='attention' if written else 'failed', detail=str(exc))
+            runner.line(str(exc))
+        finally:
+            record['finished_at'] = timestamp()
+            atomic_json(folder / 'receipt.json', record)
+            db.close()
+        self.emit('result', record)
+        return record
+
+    def update_database(self, port, expected_mac):
+        """Write only the published cube database (zdb_a, zdb_b erased) to an already-flashed NctZone board.
+        Firmware and zone identity (zcfg) are never touched. `expected_mac` is the MAC the board was identified
+        with; a different board on the port is refused. Like a full flash, the board is rebooted by esptool."""
+        ident = uuid.uuid4().hex
+        folder = DATA / 'runs' / ident
+        folder.mkdir(parents=True)
+        runner = Runner(self.emit, folder / 'upload.log')
+        expected_mac = (expected_mac or '').upper()
+        record = dict(id=ident, kind='database', started_at=timestamp(), port=port['port'], mac=expected_mac, result='failed')
+        db = Database(self.database, recover_pending=False)
+        written = False
+        try:
+            if not port.get('candidate'):
+                raise RuntimeError('This USB device is not a flashable ESP32 (or is the protected pairing station)')
+            if not expected_mac:
+                raise RuntimeError('The board was not identified by MAC; identify it again before updating its database')
+            store = ZoneStore(db)
+            publication = store.current()  # the web-published database; versions are never allocated here
+            slot = zonedb.slot_image(publication.records, publication.version)
+            record.update(db_version=publication.version, db_count=publication.count, db_crc=publication.crc)
+            (folder / 'zdb_a.bin').write_bytes(slot)
+            with PortLock(port['port']):
+                self.emit('stage', 'Check flashing tool')
+                if '5.3.1' not in runner(tool_command() + ['version'], timeout=10):
+                    raise RuntimeError('Flashing tool did not start correctly; expected esptool 5.3.1')
+                connected = False
+
+                def tool(*args, after='no-reset-stub', timeout=120):
+                    nonlocal connected
+                    current = next((p for p in ports() if p['port'] == port['port']), None)
+                    if current is None or current['key'] != port['key']:
+                        raise RuntimeError('USB device disconnected or changed; reconnect and retry')
+                    output = runner(tool_command() + ['--chip', 'esp32c3', '--port', port['port'], '--baud', '460800',
+                                                      '--before', 'no-reset' if connected else 'default-reset', '--after', after, *args], timeout)
+                    connected = True
+                    return output
+
+                self.emit('stage', 'Identify')
+                identity = tool('flash-id')
+                match = MAC_RE.search(identity)
+                if not match:
+                    raise RuntimeError('ESP32 bootloader did not report a MAC; nothing was written')
+                mac = match[1].upper()
+                self.emit('identity', dict(mac=mac, port=port['port']))
+                if mac != expected_mac:
+                    raise RuntimeError(f'{mac} is not the board that was identified ({expected_mac}); nothing was written')
+                if mac in zone_detect.PROTECTED:
+                    raise RuntimeError(f'{mac} is the pairing station; refusing to write a zone database to it')
+                role = zone_detect.database_role(db, mac)
+                if role == 'cube':
+                    raise RuntimeError(f'{mac} is registered as neocube #{db.get(mac)["cube_id"]}; refusing to write a zone database to it')
+                if role == 'station':
+                    raise RuntimeError(f'{mac} is an excluded device; refusing to write a zone database to it')
+                reset = 'watchdog-reset' if 'USB-Serial/JTAG' in identity else 'hard-reset'
+
+                self.emit('stage', 'Read partition table')
+                table_file = folder / 'partitions-readback.bin'
+                tool('read-flash', hex(0x8000), hex(0xC00), table_file)
+                table = zone_detect.parse_partition_table(table_file.read_bytes())
+                data = {p: table.get(p) for p in ('zcfg', 'zdb_a', 'zdb_b')}
+                if not all(data.values()):
+                    raise RuntimeError('No zone database partitions on this board; flash it with zone firmware first')
+                if len(slot) > data['zdb_a']['size']:
+                    raise RuntimeError(f'Database v{publication.version} ({len(slot)} bytes) does not fit the board\'s database slot')
+
+                self.emit('stage', 'Write database')
+                for part in ('zdb_a', 'zdb_b'):  # both slots: the board must boot the new version, not a stale slot B
+                    tool('erase-region', hex(data[part]['offset']), hex(data[part]['size']))
+                tool('write-flash', '--flash-mode', 'keep', '--flash-freq', 'keep', '--flash-size', 'keep',
+                     hex(data['zdb_a']['offset']), folder / 'zdb_a.bin', timeout=240)
+                written = True
+
+                self.emit('stage', 'Verify database')
+                readback = folder / 'zdb_a-readback.bin'
+                tool('read-flash', hex(data['zdb_a']['offset']), hex(len(slot)), readback)
+                if readback.read_bytes() != slot:
+                    raise RuntimeError('zdb_a read-back mismatch')
+                readback = folder / 'zdb_b-readback.bin'
+                tool('read-flash', hex(data['zdb_b']['offset']), hex(zonedb.SLOT_HEADER.size), readback, after=reset)
+                if readback.read_bytes().strip(b'\xff'):
+                    raise RuntimeError('zdb_b was not erased')
+
+            self.emit('stage', 'Confirm boot')
+            report = self.boot_report(port, runner)
+            expected = dict(mac=mac, db_version=publication.version, db_count=publication.count, db_crc=publication.crc)
+            mismatches = {k: (report or {}).get(k) for k, v in expected.items() if (report or {}).get(k) != v}
+            if mismatches:
+                record.update(result='boot_unconfirmed', detail=f'Written and verified; boot report mismatch {mismatches}')
+            else:
+                store.seen(mac, dict(report, staging_version=0, staging_chunks=0, staging_total=0, uptime=0, tags=0,
+                                     unknown_tags=0, send_fail=0), source='flash')
+                record.update(name=report.get('name'), firmware=report['firmware'], result='success',
+                              detail=f'{report.get("name") or "unconfigured zone"} ({mac}) database v{publication.version} '
+                                     f'({publication.count} records)')
         except Exception as exc:
             record.update(result='attention' if written else 'failed', detail=str(exc))
             runner.line(str(exc))
@@ -308,6 +414,8 @@ def main():
     parser.add_argument('--build', action='store_true', help='Build the firmware before flashing')
     parser.add_argument('--check', action='store_true', help='Only read the report of a running zone (no reset)')
     parser.add_argument('--detect', action='store_true', help='Only identify the connected board (may reboot it)')
+    parser.add_argument('--update-database', action='store_true',
+                        help='Write only the published cube database to a board already running zone firmware (identity kept)')
     parser.add_argument('--force', action='store_true',
                         help='Overwrite a board the database lists as a neocube (unregistering it) or excluded device (never the pairing station)')
     args = parser.parse_args()
@@ -333,6 +441,18 @@ def main():
     if args.detect:
         print(json.dumps(flasher.detect(port), indent=2))
         raise SystemExit(0)
+    if args.update_database:
+        detection = flasher.detect(port)
+        db = Database(args.database, recover_pending=False)
+        try:
+            plan = zone_detect.database_plan(detection, ZoneStore(db).published())
+        finally:
+            db.close()
+        print(f'{detection["label"]} ({detection.get("mac")}): {plan["reason"]}')
+        if plan['action'] == 'refuse':
+            raise SystemExit(1)
+        record = flasher.update_database(port, detection['mac'])
+        raise SystemExit(0 if record['result'] == 'success' else 1)
     if args.point is None:
         raise SystemExit('--point is required')
     profile = zone_build.PROFILES[args.profile]

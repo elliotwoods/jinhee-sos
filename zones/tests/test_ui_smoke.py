@@ -30,6 +30,15 @@ preshow_test_app = load('preshow_test_app', ROOT / 'preshow_test/app.py')
 STATION = dict(zones=1, channel=2, mac='3C:0F:02:AD:83:24')
 
 
+def publish(db, version):
+    """Cache a web publication of the database's committed mappings (versions come from the web, never locally)."""
+    store = flasher_app.ZoneStore(db)
+    records = store.records()
+    p = zonedb.Publication(version, records)
+    store.cache(dict(version=version, hash=zonedb.content_hash(records), count=p.count, crc=p.crc,
+                     records_b64=base64.b64encode(p.body).decode(), published_at='now', published_by='laptop'))
+
+
 class UiSmokeTests(unittest.TestCase):
     def setUp(self):
         # The Sync widget's background status check must not reach the real web from tests.
@@ -102,6 +111,16 @@ class UiSmokeTests(unittest.TestCase):
             self.assertEqual(manager_app.signal_text(-75), '▂▄· -75 dBm')
             self.assertEqual(manager_app.signal_text(-88), '▂·· -88 dBm')
             self.assertIn('Flash dongle', app.radio_status['text'])  # 1.6 dongle: hint to update (signal bars, RX gain)
+            # A general radio is a current relay too: connected, no reflash hint.
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, mac='AA:BB:CC:00:11:22',
+                                         firmware='general-radio-1.0.0', nfc_ok=False))
+            app.poll()
+            self.assertTrue(app.connected)
+            self.assertIn('general radio', app.radio_status['text'])
+            self.assertNotIn('Flash dongle', app.radio_status['text'])
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, mac='AA:BB:CC:00:11:22',
+                                         firmware='nct-pairing-1.6-zones', nfc_ok=False))  # back to the 1.6 dongle for the rest
+            app.poll()
             self.assertIn('1 out of date', app.summary['text'])
             self.assertIn('Published v3', app.published_label['text'])
             app.render(force=True)
@@ -300,8 +319,55 @@ class UiSmokeTests(unittest.TestCase):
                 self.assertEqual(window.plan_for('/dev/cu.zone', auto=False)['rx_gain'], 23)
                 self.assertEqual(window.plan_for('/dev/cu.zone', auto=True)['rx_gain'], 38)  # auto-flash keeps the board's
                 self.assertIn('REFUSE', rows['/dev/cu.station'][PLAN])
-                self.assertIn('FLASH', rows['/dev/cu.zone'][PLAN])
+                self.assertIn('FLASH', rows['/dev/cu.zone'][PLAN])  # nothing published yet: no database plan
                 self.assertEqual(list(window.monitor_ports['values']), ['/dev/cu.zone'])
+                # Automatic database update (on by default): a zone behind the published database is updated once per
+                # publication; one ahead of it never is; an unticked box stops it; a manual update is always offered.
+                self.assertTrue(window.auto_db.get())
+                self.assertIn('Update database', [b['text'] for b in window.buttons])
+                updates = []
+                window.update_database = lambda port, auto=False: updates.append((port, auto)) or True
+                db = flasher_app.Database(Path(self.tmp.name) / 'devices.sqlite3')
+                publish(db, 3)
+                db.close()
+                window.refresh_info()
+                self.assertIsNone(window.db_ready)
+                window.render_ports()
+                self.assertEqual(window.port_tree.item('/dev/cu.zone', 'values')[PLAN], 'DATABASE · Update database v1 → v3')
+                window.auto_step()
+                self.assertEqual(updates, [('/dev/cu.zone', True)])
+                window.auto_step()
+                self.assertEqual(len(updates), 1)                   # attempted: not again while it stays plugged in
+                db = flasher_app.Database(Path(self.tmp.name) / 'devices.sqlite3')
+                publish(db, 4)                                       # a new publication is tried again
+                db.close()
+                window.auto_step()
+                self.assertEqual(len(updates), 2)
+                window.handle('detected', ('/dev/cu.zone', dict(window.detections['/dev/cu.zone'], db_version=9)))
+                window.db_scheduler.attempted.clear()
+                window.render_ports()
+                self.assertIn('ASK · Database v9 is ahead', window.port_tree.item('/dev/cu.zone', 'values')[PLAN])
+                window.auto_step()
+                self.assertEqual(len(updates), 2)                    # ahead: left alone automatically
+                window.handle('detected', ('/dev/cu.zone', dict(window.detections['/dev/cu.zone'], db_version=1)))
+                window.auto_db.set(False)
+                window.auto_db_changed()
+                window.auto_step()
+                self.assertEqual(len(updates), 2)                    # unticked
+                self.assertIn('FLASH', window.port_tree.item('/dev/cu.zone', 'values')[PLAN])
+                window.port_tree.selection_set('/dev/cu.zone')
+                with patch.object(flasher_app.messagebox, 'askokcancel', return_value=True) as ask:
+                    window.update_selected()
+                self.assertEqual(updates[-1], ('/dev/cu.zone', False))
+                self.assertIn('v4', ask.call_args[0][1])
+                window.port_tree.selection_set('/dev/cu.station')
+                with patch.object(flasher_app.messagebox, 'showerror') as error:
+                    window.update_selected()
+                self.assertIn('pairing station', error.call_args[0][1])
+                self.assertEqual(len(updates), 3)
+                window.auto_db.set(True)
+                window.auto_db_changed()
+                window.port_tree.selection_set('/dev/cu.zone')
                 # Switching zone type relabels the form and hides parameters.
                 window.profile_label.set(zone_build_labels['desert'])
                 window.profile_changed()

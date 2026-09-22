@@ -125,3 +125,28 @@ def same_folder(a, b):
         return os.path.samefile(a, b)
     except OSError:
         return False
+
+
+def webview2_available():
+    """Can pywebview open a native window here? macOS ships WKWebView; Windows needs the WebView2
+    runtime (Edge), detected from its registry `pv` version; Linux is out of scope (browser mode)."""
+    if MAC:
+        return True
+    if not WINDOWS:
+        return False
+    try:
+        import winreg
+    except ImportError:
+        return False
+    client = 'Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    for hive, key in ((winreg.HKEY_LOCAL_MACHINE, 'SOFTWARE\\WOW6432Node\\' + client),
+                      (winreg.HKEY_LOCAL_MACHINE, 'SOFTWARE\\' + client),
+                      (winreg.HKEY_CURRENT_USER, 'SOFTWARE\\' + client)):
+        try:
+            with winreg.OpenKey(hive, key) as handle:
+                version, _ = winreg.QueryValueEx(handle, 'pv')
+                if version and version != '0.0.0.0':
+                    return True
+        except OSError:
+            continue
+    return False

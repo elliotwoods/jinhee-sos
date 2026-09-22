@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import inventory_sync  # noqa: E402
+import showfile  # noqa: E402
 import web_client  # noqa: E402
 
 # Tests must never read or overwrite this computer's stored web password (pairing_station/data/web_password).
@@ -33,6 +34,8 @@ class FakeWebInventory:
         self.zonedb = dict(version=0, hash='', count=0, crc=0, records_b64='', published_at=None, published_by='',
                            inventory_revision=0)
         self.zonedb_missing = False  # simulate a server deployed before /api/zonedb existed
+        self.show = dict(version=0, hash='', crc=0, length=0, image_b64='', source=None, published_at=None,
+                         published_by='')
         self.lock = threading.Lock()
         owner = self
 
@@ -80,6 +83,9 @@ class FakeWebInventory:
                 if url.path == '/api/zonedb/head' and not owner.zonedb_missing:  # public: no records
                     with owner.lock:
                         return self.reply(200, {k: owner.zonedb[k] for k in ('version', 'hash', 'count', 'published_at')})
+                if url.path == '/api/show/head':
+                    with owner.lock:
+                        return self.reply(200, {k: owner.show[k] for k in ('version', 'hash', 'crc', 'length', 'published_at')})
                 if not self.authorized():
                     return
                 assert parse_qs(url.query).get('dataset') == ['jinhee-sos']
@@ -90,6 +96,8 @@ class FakeWebInventory:
                         self.reply(200, {'revision': owner.revision, 'records': json.loads(json.dumps(owner.records))})
                     elif url.path == '/api/zonedb' and not owner.zonedb_missing:
                         self.reply(200, dict(owner.zonedb))
+                    elif url.path == '/api/show':
+                        self.reply(200, dict(owner.show))
                     else:
                         self.reply(404, {'error': 'not found'})
 
@@ -142,6 +150,24 @@ class FakeWebInventory:
                                             records_b64=body['records_b64'], published_at='2026-09-21T00:00:00Z',
                                             published_by=body['client'], inventory_revision=body['inventory_revision'])
                         return self.reply(200, dict(owner.zonedb, changed=True))
+                if path == '/api/show/publish':  # like web/src/lib/show.ts
+                    image = base64.b64decode(body['image_b64'])
+                    try:
+                        if showfile.pack(body['source']) != image:
+                            return self.reply(400, {'error': 'Show image does not match its source'})
+                    except showfile.ShowError as exc:
+                        return self.reply(400, {'error': str(exc)})
+                    digest = hashlib.sha256(image).hexdigest()
+                    source = showfile.validate(body['source'])
+                    with owner.lock:
+                        doc = owner.show
+                        if doc['hash'] == digest and doc['version'] >= body['min_version'] and doc['source'] == source:
+                            return self.reply(200, dict(doc, changed=False))
+                        owner.show = dict(version=max(doc['version'], body['min_version']) + 1, hash=digest,
+                                          crc=zlib.crc32(image) & 0xFFFFFFFF, length=len(image),
+                                          image_b64=body['image_b64'], source=source,
+                                          published_at='2026-09-23T00:00:00Z', published_by=body['client'])
+                        return self.reply(200, dict(owner.show, changed=True))
                 self.reply(404, {'error': 'not found'})
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
