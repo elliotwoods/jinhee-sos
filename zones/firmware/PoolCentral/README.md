@@ -15,7 +15,7 @@ PoolZone x6 ──PoolState (unicast, ESP-NOW ACK + retries)──▶ PoolCentra
 |---|---|
 | Board | ESP32-C3, FQBN `esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashFreq=40` (**not** the SuperMini profile) |
 | I2C | SDA GPIO8, SCL GPIO9, 100 kHz, 25 ms transaction timeout |
-| Outputs | Output index 1-16 = `0x40` channels 0-15, 17-23 = `0x41` channels 0-6; full-on/full-off only, no PWM |
+| Outputs | Output index 1-16 = `0x40` channels 0-15, 17-24 = `0x41` channels 0-7, one per relay on three 8-channel modules; full-on/full-off only, no PWM. 24 outputs for 23 frames: one (currently output 16) has no lamp and stays dark |
 | Wiring | Outputs are **not** wired to frames in order — see `POOL_OUTPUT_FOR_MEMBER` |
 | Polarity | **Active low.** Channels drive relays, not lamps: lamp ON = channel LOW = relay energised |
 | Radio | ESP-NOW channel 2, shared with the cubes, all zones and the pairing station |
@@ -74,10 +74,13 @@ output indices. Note that `boardMask()` is therefore not a contiguous range: the
 frames across both driver boards, so which frames a board carries must be derived, never
 assumed.
 
-A compile-time check rejects a table that is not a permutation of 1..23, and the host tests
-re-derive the map from the raw readings independently, so a transcription error cannot pass.
+A compile-time check rejects a table that does not send the 23 frames to 23 distinct outputs
+in 1..24. There are no host tests for the table itself: the measurement comment is the
+record, and `poolzone_test/tests/frame_map.py` derives the corrected table from new readings.
 
 If the looms are re-terminated, re-measure, update the comment, and regenerate the table.
+The table was last re-measured on 2026-09-23 after the 16-channel relay module was replaced
+by three 8-channel modules (`poolcentral-4.2.2`).
 
 ## Output polarity
 

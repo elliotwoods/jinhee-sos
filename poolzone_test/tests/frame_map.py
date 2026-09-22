@@ -23,6 +23,7 @@ from port_lock import PortLock                   # noqa: E402
 
 HEADER = ROOT / 'zones/firmware/PoolCentral/PoolOutput.h'
 COUNT = 23
+OUTPUTS = 24   # three 8-channel relay modules; one output has no frame
 
 
 def current_map():
@@ -32,8 +33,8 @@ def current_map():
     if not body:
         raise SystemExit(f'Could not find POOL_OUTPUT_FOR_MEMBER in {HEADER}')
     table = [int(v) for v in body[1].replace('\n', ' ').split(',')]
-    if sorted(table) != list(range(1, COUNT + 1)):
-        raise SystemExit('POOL_OUTPUT_FOR_MEMBER is not a permutation of 1..23')
+    if len(table) != COUNT or len(set(table)) != COUNT or not all(1 <= v <= OUTPUTS for v in table):
+        raise SystemExit(f'POOL_OUTPUT_FOR_MEMBER must map {COUNT} frames to distinct outputs 1..{OUTPUTS}')
     return table
 
 
@@ -93,9 +94,9 @@ def main():
     print('\nCorrected POOL_OUTPUT_FOR_MEMBER for PoolOutput.h:\n')
     print('constexpr uint8_t POOL_OUTPUT_FOR_MEMBER[23] = {' + ', '.join(str(v) for v in corrected) + '};')
     print('\nAlso update the measurement comment above it:')
-    print('  output index driven : ' + ' '.join(f'{o:2d}' for o in range(1, COUNT + 1)))
+    print('  output index driven : ' + ' '.join(f'{o:2d}' for o in range(1, OUTPUTS + 1)))
     lamp_for_output = {corrected[lamp-1]: lamp for lamp in range(1, COUNT + 1)}
-    print('  frame that lit      : ' + ' '.join(f'{lamp_for_output[o]:2d}' for o in range(1, COUNT + 1)))
+    print('  frame that lit      : ' + ' '.join(f'{lamp_for_output.get(o, "--"):>2}' for o in range(1, OUTPUTS + 1)))
     return 0
 
 

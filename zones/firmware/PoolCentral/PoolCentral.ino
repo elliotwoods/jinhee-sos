@@ -34,7 +34,7 @@
 using namespace nctzone;
 using namespace nctpool;
 
-constexpr const char *FIRMWARE_VERSION = "poolcentral-4.2.0";
+constexpr const char *FIRMWARE_VERSION = "poolcentral-4.2.2";
 constexpr uint8_t SDA_PIN = 8, SCL_PIN = 9, CHANNEL = ESPNOW_CHANNEL;
 constexpr uint32_t HEALTH_MS = 500, RECOVERY_MS = 1000, AUDIT_MS = 20, STATUS_MS = 1000;
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -458,7 +458,7 @@ void status() {
 // told to do. The one place that reports the electrical level as well as the lamp state,
 // so a wiring question can be answered without a meter.
 void outputDump() {
-  logLine("OUTPUT polarity by output: active-low mask=0x%06lX (0x40 outputs 1-16, 0x41 outputs 17-23)",
+  logLine("OUTPUT polarity by output: active-low mask=0x%06lX (0x40 outputs 1-16, 0x41 outputs 17-24)",
           (unsigned long)POOL_ACTIVE_LOW_OUTPUTS);
   for (uint8_t m = 1; m <= POOL_MEMBER_COUNT; ++m) {
     uint8_t b = memberBoard(m), channel = memberChannel(m), actual[4];

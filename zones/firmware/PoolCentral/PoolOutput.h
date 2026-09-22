@@ -6,33 +6,39 @@ inline uint32_t memberBit(uint8_t member) { return member>=1 && member<=23 ? uin
 // Physical wiring map. The driver outputs are not wired to the frames in order, so member
 // number and output index are different things and must not be conflated.
 //
-// Measured on the installation on 2026-09-21 by selecting each slider index in turn and
-// recording which frame actually lit:
+// Measured on the installation on 2026-09-23, after the 16-channel relay module was replaced
+// by three 8-channel modules, by moving a slider through each index and recording which frame
+// lit. Driven through the previous table, so these rows are in terms of the output index:
 //
 //   output index driven :  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
-//   frame that lit      :  1 15 20 16  5  7 23 21 12 18  6 13  8 22  3 17 14 10  2 11 19  4  9
+//   frame that lit      : 21  3 22  8 13  6 12 18  1 15 20 16  5  7 23  -- 17  9  4 19 11  2 10
 //
-// This table is the inverse of that: POOL_OUTPUT_FOR_MEMBER[m-1] is the output to drive to
-// light frame m. Re-measure and replace the row above (and regenerate this one) if the
-// looms are ever re-terminated.
-constexpr uint8_t POOL_OUTPUT_FOR_MEMBER[23] = {1, 19, 15, 22, 5, 11, 6, 13, 23, 18, 20, 9, 12, 17, 2, 4, 16, 10, 21, 3, 8, 14, 7};
+// Output 16 lit nothing: relay 16 has no lamp. Frame 14 was reached by no output: its lamp
+// is on relay 24, the eighth relay of the third module, which output 24 (0x41 channel 7)
+// drives. Output n drives relay n except that relays 7 and 8 are crossed (output 7 -> relay 8,
+// output 8 -> relay 7); the table absorbs that.
+//
+// There are 24 outputs for 23 frames, so one output is always unused. It is left dark by the
+// ALL_LED write in initializeBoard() and never written again.
+constexpr uint8_t POOL_OUTPUT_COUNT = 24;
+constexpr uint8_t POOL_OUTPUT_FOR_MEMBER[23] = {9, 22, 2, 19, 13, 6, 14, 4, 18, 23, 21, 7, 5, 24, 10, 12, 17, 8, 20, 11, 1, 3, 15};
 
-// Guards against a mistyped table: every frame must be reachable by exactly one output.
-constexpr bool poolMapIsPermutation() {
-  bool seen[24] = {};
+// Guards against a mistyped table: every frame must be reachable, by its own output.
+constexpr bool poolMapIsInjective() {
+  bool seen[POOL_OUTPUT_COUNT + 1] = {};
   for (uint8_t i = 0; i < 23; ++i) {
     uint8_t out = POOL_OUTPUT_FOR_MEMBER[i];
-    if (out < 1 || out > 23 || seen[out]) return false;
+    if (out < 1 || out > POOL_OUTPUT_COUNT || seen[out]) return false;
     seen[out] = true;
   }
   return true;
 }
-static_assert(poolMapIsPermutation(), "POOL_OUTPUT_FOR_MEMBER must be a permutation of 1..23");
+static_assert(poolMapIsInjective(), "POOL_OUTPUT_FOR_MEMBER must map 23 frames to distinct outputs 1..24");
 
 inline uint8_t outputForMember(uint8_t member) {
   return member >= 1 && member <= 23 ? POOL_OUTPUT_FOR_MEMBER[member - 1] : 0;
 }
-// Outputs 1-16 are board 0x40 channels 0-15; outputs 17-23 are board 0x41 channels 0-6.
+// Outputs 1-16 are board 0x40 channels 0-15; outputs 17-24 are board 0x41 channels 0-7.
 inline uint8_t memberBoard(uint8_t member) { return outputForMember(member) > 16; }
 inline uint8_t memberChannel(uint8_t member) {
   uint8_t out = outputForMember(member);
@@ -54,7 +60,7 @@ inline bool validMode(uint8_t mode1,uint8_t mode2) { return (mode1&0x7F)==0x20 &
 //     lamp ON  -> channel LOW   when active-low, HIGH when active-high
 //     lamp OFF -> channel HIGH  when active-low, LOW  when active-high
 //
-// All 23 are active low: every relay behaves the same way round on the installation as
+// All 24 are active low: every relay behaves the same way round on the installation as
 // wired. It is expressed per output rather than as one flag because the two driver boards
 // were at one point observed to behave oppositely - sixteen frames on 0x40 inverted while
 // the seven on 0x41 were correct - which a single flag cannot describe. That turned out to
@@ -64,10 +70,10 @@ inline bool validMode(uint8_t mode1,uint8_t mode2) { return (mode1&0x7F)==0x20 &
 // This is the only place polarity is expressed. Every write, readback comparison, audit and
 // ALL_LED clear derives from encodeOutput(), and the logs and telemetry stay in terms of the
 // lamp, never the relay.
-constexpr uint32_t POOL_ACTIVE_LOW_OUTPUTS = 0x7FFFFFu;  // all 23 outputs
+constexpr uint32_t POOL_ACTIVE_LOW_OUTPUTS = 0xFFFFFFu;  // all 24 outputs
 
 inline bool outputActiveLow(uint8_t out) {
-  return out >= 1 && out <= 23 && ((POOL_ACTIVE_LOW_OUTPUTS >> (out - 1)) & 1u) != 0;
+  return out >= 1 && out <= POOL_OUTPUT_COUNT && ((POOL_ACTIVE_LOW_OUTPUTS >> (out - 1)) & 1u) != 0;
 }
 
 // bytes are LEDn_ON_L, LEDn_ON_H, LEDn_OFF_L, LEDn_OFF_H. Bit 4 of each _H byte is the
@@ -82,7 +88,7 @@ inline void encodeOutputFor(uint8_t out, bool lamp, uint8_t *bytes) {
 // rather than assumed: a mixed board falls back to per-channel writes.
 inline bool boardPolarityUniform(uint8_t board, bool *activeLow) {
   bool seen = false, first = false;
-  for (uint8_t out = 1; out <= 23; ++out) {
+  for (uint8_t out = 1; out <= POOL_OUTPUT_COUNT; ++out) {
     if ((out > 16) != (board != 0)) continue;
     bool low = outputActiveLow(out);
     if (!seen) { first = low; seen = true; }
