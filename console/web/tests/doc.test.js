@@ -12,10 +12,13 @@ test('parseDoc reads every field and tolerates a leading ?', () => {
   assert.equal(doc.still, true);
   assert.equal(doc.explainers, true);
   assert.equal(doc.search, '#44');
+  assert.equal(doc.cube, null);
+  assert.equal(parseDoc('cube=44').cube, 44);
+  assert.equal(parseDoc('cube=x').cube, null);
 });
 
 test('parseDoc defaults: empty query, unknown theme, dock=0', () => {
-  assert.deepEqual(parseDoc(''), { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '' });
+  assert.deepEqual(parseDoc(''), { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null });
   assert.deepEqual(parseDoc(undefined).hl, []);
   const doc = parseDoc('theme=blue&dock=0&hl=,,relay.table,');
   assert.equal(doc.theme, null);

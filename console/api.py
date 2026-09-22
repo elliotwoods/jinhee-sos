@@ -12,6 +12,7 @@ import commands
 import commands_extra  # noqa: F401  (registers into commands.COMMANDS)
 import commands_show  # noqa: F401  (registers into commands.COMMANDS)
 import uitext
+import uitext_ko
 
 
 def plain(value):
@@ -49,7 +50,7 @@ class Api:
             return dict(ok=False, error=str(exc))
 
     def get_copy(self):
-        return plain(dict(copy=uitext.as_dict(), commands=commands.catalogue()))
+        return plain(dict(copy=dict(uitext.as_dict(), ko=uitext_ko.as_dict()), commands=commands.catalogue()))
 
     def get_lines(self, device, since_seq=0, limit=500):
         try:

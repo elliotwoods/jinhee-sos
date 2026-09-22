@@ -43,7 +43,9 @@ def update_db_job(hub, device):
     mac = device.mac or (device.details or {}).get('mac')
     if not mac:
         raise ValueError('The board has no known MAC; identify it again before updating its database')
-    hub.store.current()   # raises the operator-readable reason when nothing is publishable
+    publication = hub.store.current()   # raises the operator-readable reason when nothing is publishable
+    if getattr(hub, 'fake_zone_db', None):   # --simulate: no esptool (simulate.fake_zone_db)
+        return hub.fake_zone_db(hub, device, publication)
     port = hub.port_dict(device)
     job = Job('zone.db_usb', device.key, f'Update zone database over USB on {device.port}', hardware=True, device=device.id)
     hub.hold_port(device, job)

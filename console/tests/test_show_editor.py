@@ -155,6 +155,87 @@ class ShowEditorTests(unittest.TestCase):
         self.assertTrue(support.tick_until(self.hub, lambda: radio.status.get('show_version') == 4, timeout=5))
         self.assertEqual(radio.status.get('show_length_ms'), self.edited()['length_ms'])
 
+    def test_live_mirror_reaches_numbered_cubes_through_a_relay(self):
+        entries = [[7, [10, 20, 30]], [8, [0, 100, 0]]]
+        with self.assertRaisesRegex(ValueError, 'general-radio-1.2.0 and cubes with firmware v1.7.0-USB.1'):
+            commands.run(self.hub, 'show.live', dict(entries=entries))
+        relay = FakeRelay(self.hub)
+        cube7, cube8 = relay.cubes.values()
+        cube7.cube_id, cube8.cube_id = 7, 8
+        self.hub.sessions['relay'] = relay
+        self.addCleanup(self.hub.sessions.pop, 'relay', None)
+        now = [100.0]
+        self.editor.clock = lambda: now[0]
+        result = commands.run(self.hub, 'show.live', dict(entries=entries))
+        self.assertEqual(result, dict(sent=1, cubes=2))
+        message = relay.sent[-1]
+        self.assertEqual((message['cmd'], message['mac']), ('show_send', 'FF:FF:FF:FF:FF:FF'))
+        self.assertEqual(showfile.frame_type(bytes.fromhex(message['hex'])), showfile.SHOW_LIVE)
+        self.assertEqual((cube7.live['rgb'], cube7.live['lease_ms']), ((10, 20, 30), 600))
+        self.assertEqual(cube8.live['rgb'], (0, 100, 0))
+        # Fire-and-forget: the relay's show_sent is swallowed, not counted by the registry.
+        self.assertEqual((self.editor.live_ids, self.editor.registry.send_failures), ({}, 0))
+        # Rate limit: a call within 40 ms of the last send is dropped.
+        now[0] += 0.02
+        self.assertEqual(commands.run(self.hub, 'show.live', dict(entries=[[7, [1, 1, 1]]])), dict(sent=0, dropped=True))
+        self.assertEqual((cube7.live['rgb'], len(relay.sent)), ((10, 20, 30), 1))
+        now[0] += 0.05
+        commands.run(self.hub, 'show.live', dict(entries=[[7, [1, 1, 1]]], lease_ms=300))
+        self.assertEqual((cube7.live['rgb'], cube7.live['lease_ms'], cube8.live['rgb']), ((1, 1, 1), 300, (0, 100, 0)))
+        self.assertTrue(self.editor.snapshot()['live']['active'])
+        with self.assertRaisesRegex(ValueError, 'bad live entry'):
+            now[0] += 1
+            commands.run(self.hub, 'show.live', dict(entries=[[7, [101, 0, 0]]]))
+        # A cube playing a show ignores it.
+        cube7.show_running = True
+        now[0] += 1
+        commands.run(self.hub, 'show.live', dict(entries=[[7, [5, 5, 5]]]))
+        self.assertEqual(cube7.live['rgb'], (1, 1, 1))
+
+    def test_live_mirror_holds_during_a_show_update_or_a_running_show(self):
+        relay = FakeRelay(self.hub)
+        relay.cubes[CUBES[0]].cube_id = 3
+        self.hub.sessions['relay'] = relay
+        self.addCleanup(self.hub.sessions.pop, 'relay', None)
+        self.editor.registry.publication = object()  # a show update in progress
+        result = commands.run(self.hub, 'show.live', dict(entries=[[3, [9, 9, 9]]]))
+        self.assertEqual(result['sent'], 0)
+        self.assertIn('show update', result['held'])
+        self.assertEqual((relay.sent, relay.cubes[CUBES[0]].live), ([], None))
+        self.editor.registry.publication = None
+        self.editor.controller_show_running = lambda: True
+        self.assertIn('show is running', commands.run(self.hub, 'show.live', dict(entries=[[3, [9, 9, 9]]]))['held'])
+        self.assertEqual(relay.sent, [])
+        del self.editor.controller_show_running
+        self.assertEqual(commands.run(self.hub, 'show.live', dict(entries=[[3, [9, 9, 9]]]))['sent'], 1)
+        self.assertEqual(relay.cubes[CUBES[0]].live['rgb'], (9, 9, 9))
+
+    def test_live_refusal_by_an_older_radio_is_swallowed_then_reported(self):
+        relay = FakeRelay(self.hub)
+        self.hub.sessions['relay'] = relay
+        self.addCleanup(self.hub.sessions.pop, 'relay', None)
+
+        def refuse(message):  # general-radio-1.1.0 does not know SHOW_LIVE
+            relay.sent.append(message)
+            self.hub.showedit.event(dict(event='error', id=message['id'], detail='unknown show frame'))
+        relay.transport.send = refuse
+        commands.run(self.hub, 'show.live', dict(entries=[[1, [1, 2, 3]]]))
+        self.assertNotIn(relay.sent[0]['id'], self.editor.registry.requests)
+        self.assertEqual(self.editor.snapshot()['live']['error'], 'unknown show frame')
+        self.editor.live_last = None
+        with self.assertRaisesRegex(ValueError, 'refused the live colours .*general-radio-1.2.0'):
+            commands.run(self.hub, 'show.live', dict(entries=[[1, [1, 2, 3]]]))
+
+    def test_live_through_the_simulated_general_radio(self):
+        self.assertTrue(support.tick_until(self.hub, lambda: self.editor.relay() is not None, timeout=10))
+        board = next(b for b in __import__('simulate').BOARDS.values() if hasattr(b, 'show_cubes'))
+        cube = next(iter(board.show_cubes.values()))
+        cube.cube_id = 12
+        self.assertEqual(commands.run(self.hub, 'show.live', dict(entries=[[12, [4, 5, 6]]]))['sent'], 1)
+        self.assertTrue(support.tick_until(self.hub, lambda: cube.live is not None, timeout=5))
+        self.assertEqual(cube.live['rgb'], (4, 5, 6))
+        self.assertTrue(support.tick_until(self.hub, lambda: not self.editor.live_ids, timeout=5))
+
     def _doc_fields(self, doc):
         import base64
         from show_registry import image_hash

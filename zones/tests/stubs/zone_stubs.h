@@ -181,6 +181,13 @@ inline int xQueueSend(QueueHandle_t q, const void *item, int) {
   q->items.emplace_back((const uint8_t *)item, (const uint8_t *)item + q->itemSize);
   return pdTRUE;
 }
+// FreeRTOS allows overwrite only on a one-deep queue: the item replaces whatever is unread.
+inline int xQueueOverwrite(QueueHandle_t q, const void *item) {
+  assert(q->capacity == 1);
+  q->items.clear();
+  q->items.emplace_back((const uint8_t *)item, (const uint8_t *)item + q->itemSize);
+  return pdTRUE;
+}
 inline int xQueueReceive(QueueHandle_t q, void *item, int) {
   if (q->items.empty()) return pdFALSE;
   memcpy(item, q->items.front().data(), q->itemSize);

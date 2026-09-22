@@ -49,14 +49,15 @@ MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.3.0',  # 1.3 adds the sho
                     ROOT / 'zones/firmware/MainshowController',
                     ROOT / 'zones/build/MainshowController',
                     (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))  # Adafruit_NeoPixel, as the cube build
-GENERAL = Firmware('General radio', 'general-radio-1.1.0',  # 1.1 adds the show relay and timecode
+GENERAL = Firmware('General radio', 'general-radio-1.2.0',  # 1.1 adds the show relay and timecode; 1.2 SHOW_LIVE
                    ROOT / 'zones/firmware/GeneralRadio',
                    ROOT / 'zones/build/GeneralRadio',
                    (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))
 FIRMWARE = PAIRING.version
 # Firmwares that speak the current zone relay (RX gain control included): what the Zone
 # Database Manager accepts without asking for a reflash.
-RELAY_VERSIONS = {PAIRING.version, GENERAL.version, 'general-radio-1.0.0'}  # 1.0.0: zone relay only, no show relay
+# 1.0.0: zone relay only, no show relay; 1.1.0: show relay without SHOW_LIVE.
+RELAY_VERSIONS = {PAIRING.version, GENERAL.version, 'general-radio-1.0.0', 'general-radio-1.1.0'}
 
 
 def is_general(firmware):

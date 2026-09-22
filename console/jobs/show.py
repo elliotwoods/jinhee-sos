@@ -9,8 +9,10 @@ from jobs.base import Job
 from jobs.sync import client
 
 
-def show_pull_job(hub):
+def show_pull_job(hub, auto=False):
+    """`auto`: started by the console itself (hub.auto_show_pull); logs only a new show or a changed error."""
     job = Job('show.pull', 'web', 'Pull the published main show')
+    job.quiet = job.mute = auto
     database = hub.database
 
     def work(emit, cancel):
@@ -24,7 +26,10 @@ def show_pull_job(hub):
             text = {'none': 'No show published on the web yet', 'current': f'Show v{p["version"]} is already here',
                     'updated': f'Pulled show v{p["version"]}'}[job.result['status']]
             job.outcome = dict(level='verified', text=text)
-            hub.log(text, 'ok', source='show')
+            if not auto or job.result['status'] == 'updated':
+                hub.log(text, 'ok', source='auto' if auto else 'show')
+        if auto:
+            hub.auto_error('show pull', job.error if job.state == 'failed' else None)
 
     hub.jobs.start(job, work, done)
     return job

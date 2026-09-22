@@ -130,4 +130,52 @@ Observations from the rerun (report only, nothing changed):
 - The `zones.set_rx_gain` command takes `db`, not `rx_gain`; the first attempt with `rx_gain=` failed with a TypeError (operator-facing UI passes the right name; noted for scripts).
 - Desert boards answer at −86…−96 dBm from the bench, the preshow plates at −61…−71 dBm: the "in range" rule (a status frame within 20 s) held for all 27 without a walk-around.
 
+## Screenshot pipeline and front-end verification — 2026-09-23 03:20–04:05 KST (simulation)
+
+- `console/docscenes.py` stages 36 documented situations on the `docs` simulation bench (`simdocs.py`); `tests/test_docscenes.py`
+  proves every one of them settles in-process, and `tests/test_docshots.py` proves every highlighted control (`hl`/`open` token)
+  exists in the page (`data-doc`) or is a command name. Console suite: 168 tests OK (1 opt-in Chrome smoke skipped);
+  `node --test console/web/tests`: 23 OK; `test_static` (no literal colours, no inline spacing) green.
+- `console/tools/docshots.py` captured all 36 scenarios from headless Chrome at 1440×1000 @2x into `console/docs/shots/`
+  (`manifest.json`: every capture `settled: true`, console 0.1.0, git de08bb0 + working tree). Two independent review passes
+  (chapters 03–07 and 08–C) checked every PNG for rendering, highlight visibility, state-vs-title agreement, leaked host data
+  and legibility; the 30 findings were fixed (canned firmware builds and a seeded v32 publication in simulation, publication
+  CRCs on the fake boards, per-card dismiss-menu tokens, table outlines no longer clipped, gentler outlines on text rows,
+  tooltip kept open for captures, free-point prefill on the zone form, humanised inventory statuses, `?cube=` and
+  `show.controller` on the Show section, sync/plan/lease/job state reset between steps, a fake station MAC that is not
+  in the shared inventory) and the set was recaptured. Spot-checked by the coordinator: 06-2 (publishing v32, 2 pending,
+  Stop publishing outlined) and 07-1 (blank board, identity form prefilled Point 2 / Preshow 2, Flash outlined).
+- Evidence class for everything in this section: **simulation-verified**. The captures show the console's behaviour against
+  fake boards; they are not hardware evidence.
+
+## Show system bench checks — 2026-09-23 (cube #17, spare #138)
+
+Reported by the show/timecode task; details in `flashing_station/README.md`, `zones/firmware/MainshowController/README.md`
+and `zones/firmware/GeneralRadio/README.md`. Evidence class: **hardware, serial logs only** (the LEDs were not watched).
+
+- Cube #17 (`1C:DB:D4:F0:A8:30`), v1.5.0-USB.1: the old-style SET_ZONE 4 + SHOW_START still starts the show; timecode
+  join; wireless show update; an update is deferred while a show runs and committed when it ends; the stored show
+  survives a reboot.
+- #17 on v1.6.0-USB.1: accepted a fanned show over the air (it now holds show v4, recorded in `show_cubes`).
+- #17 on v1.7.0-USB.1: `SHOW_LIVE` starts live mode and the lease ends it; frames for other cube numbers are ignored;
+  a unicast live frame is refused by the radio; a running show ignores live frames; mirroring through the real
+  console's `show.live` command.
+- #138 (`AC:27:6E:82:68:54`) temporarily on mainshow-1.3.0: normal start with no drift; a cube that missed the start
+  joined from the timecode at T = 3132 ms. #138 was then flashed back and runs general-radio-1.2.0.
+- Not on hardware: the Show editor UI (headless Chrome + simulator, including video sync and a synthetic file drop), a
+  real Finder drag into the pywebview window, audio. The installed controller #134 is still on mainshow-1.2.0; every
+  other cube is on v1.4.1-USB.2. Web `/api/show*` is deployed; no show is published on the site dataset.
+
+## Register page and automatic updates — 2026-09-23 (simulation and unit tests only)
+
+- Register page (`console/regflow.py`): `tests/test_regflow.py` (13 tests: new number, reserved numbers skipped,
+  existing number, scan → ACK → sync against `FakeWebInventory`, unconfirmed with no automatic retry, second cube
+  interrupting, no station, renumber, the simulation web guard). Screenshots 03-A1…03-A3 settle in `test_docscenes`.
+  Not run with a real station, cube or tag.
+- Automatic updates (Settings › Automatic updates): `tests/test_auto_update.py` (6 tests: persistence across restart,
+  one walking relay with General Radio fallback, the show toggle, a behind zone gets exactly one USB update in
+  simulation, the USB switch, pull gating). Not run against real zones, the dongle or the web pull.
+- Safety: a simulated console refuses every non-loopback web server (`jobs/sync.client`, `SimulatedWeb`), after a
+  simulated run at about 03:48 KST synced fake cubes to the real web inventory and published zone database v38.
+
 <!-- web/screenshot results to be appended -->

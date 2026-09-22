@@ -8,6 +8,7 @@ import { state } from '../store.js';
 import { useCopy } from '../lib/hooks.js';
 import { notify } from '../lib/notify.js';
 import { useDocOpen } from '../lib/doc.js';
+import { t, lang } from '../lib/i18n.js';
 
 let tipSeq = 0;
 const kindOf = (name) => ((state.commands || {})[name] || {}).kind || 'safe';
@@ -24,6 +25,9 @@ export function Tip({ name, label, what, hazard, needs, reason, disabled, childr
     title: label || copy.label, what: what || copy.what, hazard: hazard || copy.hazard, needs: needs || copy.needs,
     reason: disabled ? (reason || copy.disabled) : null,
   };
+  // In Korean the English command label is shown too: the handover docs quote the English names.
+  const english = lang() === 'ko' ? (((state.copy || {}).actions || {})[name] || {}).label : null;
+  if (english && english !== body.title) body.english = english;
   const has = body.what || body.hazard || body.needs || body.reason;
   const show = (now) => {
     clearTimeout(timer.current);
@@ -36,12 +40,13 @@ export function Tip({ name, label, what, hazard, needs, reason, disabled, childr
     };
     if (now) place(); else timer.current = setTimeout(place, delay);
   };
-  const hide = () => { clearTimeout(timer.current); setPos(null); };
+  const hide = (force) => { if (initialOpen && force !== true) return; clearTimeout(timer.current); setPos(null); };   // a documentation link keeps it open
   useEffect(() => {
     if (!pos) return undefined;
-    const esc = (e) => { if (e.key === 'Escape') hide(); };
-    window.addEventListener('keydown', esc, true); window.addEventListener('scroll', hide, true);
-    return () => { window.removeEventListener('keydown', esc, true); window.removeEventListener('scroll', hide, true); };
+    const esc = (e) => { if (e.key === 'Escape') hide(true); };
+    const scrolled = () => (initialOpen ? show(true) : hide());
+    window.addEventListener('keydown', esc, true); window.addEventListener('scroll', scrolled, true);
+    return () => { window.removeEventListener('keydown', esc, true); window.removeEventListener('scroll', scrolled, true); };
   }, [pos]);
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => { if (initialOpen) { const id = setTimeout(() => show(true), 50); return () => clearTimeout(id); } return undefined; }, [initialOpen, has]);
@@ -51,10 +56,11 @@ export function Tip({ name, label, what, hazard, needs, reason, disabled, childr
     ${children}
     ${pos && html`<span class="tip-panel" role="tooltip" id=${id} style=${style}>
       ${body.title && html`<strong class="tip-title">${body.title}</strong>`}
+      ${body.english && html`<span class="tip-needs">EN: ${body.english}</span>`}
       ${body.what && html`<span class="tip-what">${body.what}</span>`}
       ${body.hazard && html`<span class="tip-hazard">▲ ${body.hazard}</span>`}
-      ${body.needs && html`<span class="tip-needs"><b>Needs:</b> ${body.needs}</span>`}
-      ${body.reason && html`<span class="tip-reason"><b>Unavailable:</b> ${body.reason}</span>`}</span>`}</span>`;
+      ${body.needs && html`<span class="tip-needs"><b>${t('Needs:')}</b> ${body.needs}</span>`}
+      ${body.reason && html`<span class="tip-reason"><b>${t('Unavailable:')}</b> ${body.reason}</span>`}</span>`}</span>`;
 }
 
 // One click runs the command (or `invoke`). Commands with a physical effect are marked `.physical`.
@@ -96,7 +102,7 @@ export function HoldButton({ name, args, label, className = 'btn danger', disabl
   return html`<${Tip} name=${doc || key} label=${label} what=${what} hazard=${hazard} needs=${needs} reason=${reason} disabled=${disabled} initialOpen=${docOpen}>
     <button class=${className + (fill ? ' holding' : '')} data-doc=${doc || key} style=${`--fill:${fill * 100}%`} disabled=${disabled || busy} aria-busy=${busy ? 'true' : 'false'}
     onMouseDown=${begin} onMouseUp=${stop} onMouseLeave=${stop} onTouchStart=${begin} onTouchEnd=${stop}
-    onKeyDown=${(e) => { if (isKey(e)) begin(e); }} onKeyUp=${(e) => { if (isKey(e)) stop(); }}>${busy ? `${label}…` : `Hold: ${label}`}</button></${Tip}>`;
+    onKeyDown=${(e) => { if (isKey(e)) begin(e); }} onKeyUp=${(e) => { if (isKey(e)) stop(); }}>${busy ? `${label}…` : t('Hold: {label}', { label })}</button></${Tip}>`;
 }
 
 // A leased toggle: turning it on starts the device's host override, then pings `touch` until it is turned off.
@@ -113,5 +119,5 @@ export function LeaseToggle({ on, onName, touchName, offName, args, label, disab
     try { if (on) await run(offName, args); else await run(onName, args); } catch (e) { notify(e.message, 'bad'); } finally { setBusy(false); }
   };
   return html`<${Tip} name=${onName} label=${label} what=${what} hazard=${hazard} needs=${needs} reason=${reason} disabled=${disabled}>
-    <button class=${'btn physical' + (on ? ' on' : '')} data-doc=${onName} aria-pressed=${on ? 'true' : 'false'} aria-busy=${busy ? 'true' : 'false'} disabled=${disabled || busy} onClick=${click}>${on ? `${label} · ON (leased)` : label}</button></${Tip}>`;
+    <button class=${'btn physical' + (on ? ' on' : '')} data-doc=${onName} aria-pressed=${on ? 'true' : 'false'} aria-busy=${busy ? 'true' : 'false'} disabled=${disabled || busy} onClick=${click}>${on ? t('{label} · ON (leased)', { label }) : label}</button></${Tip}>`;
 }

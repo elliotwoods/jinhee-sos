@@ -13,7 +13,7 @@ sys.path.insert(0, str(WORKSPACE / 'pairing_station'))
 from database import Database, timestamp
 from port_lock import PortLock
 
-VERSION = 'v1.6.0-USB.1'
+VERSION = 'v1.7.0-USB.1'
 FQBN = 'esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota,FlashSize=4M'
 # This replacement console is documented in registration_console/README.md.
 PROTECTED = {'3C:0F:02:AD:83:24'}

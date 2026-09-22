@@ -28,7 +28,7 @@ CUE = struct.Struct('<IBBBB9sB3H')             # startMs, type, nColours, aux, r
 MAX_IMAGE = HEADER.size + CUE.size * MAX_CUES
 
 MAGIC, PROTO = b'NZ', 1
-SHOW_ANNOUNCE, SHOW_CHUNK, SHOW_QUERY, SHOW_STATUS, SHOW_TIMECODE = 0x50, 0x51, 0x52, 0x53, 0x54
+SHOW_ANNOUNCE, SHOW_CHUNK, SHOW_QUERY, SHOW_STATUS, SHOW_TIMECODE, SHOW_LIVE = 0x50, 0x51, 0x52, 0x53, 0x54, 0x55
 CHUNK_DATA = 200
 ANNOUNCE_FORCE = 0x01
 ANNOUNCE = struct.Struct('<2sBBIIHHBB')
@@ -36,6 +36,9 @@ CHUNK_HEADER = struct.Struct('<2sBBIHB')
 QUERY = struct.Struct('<2sBBIH')
 STATUS = struct.Struct('<2sBBIIIHIHHIBBBBBI16s')
 TIMECODE = struct.Struct('<2sBBIIII')
+LIVE_HEADER = struct.Struct('<2sBBHB')   # lease_ms, n; then n x LIVE_ENTRY
+LIVE_ENTRY = struct.Struct('<HBBB')      # cube number, r, g, b (levels 0..100)
+LIVE_MAX_ENTRIES, LIVE_LEASE_MAX_MS = 48, 2000
 SOURCES = {0: 'builtin', 1: 'nvs'}
 ERRORS = {0: '', 1: 'update: out of memory', 2: 'update: CRC mismatch', 3: 'update: invalid show',
           4: 'update: NVS write failed', 5: 'update: timed out', 6: 'update: bad announce'}
@@ -424,9 +427,33 @@ def timecode(show_id, t_ms, version=0, crc=0):
     return TIMECODE.pack(MAGIC, PROTO, SHOW_TIMECODE, show_id, t_ms, version, crc)
 
 
+def live(entries, lease_ms=600):
+    """SHOW_LIVE: [(cube_number, (r, g, b)), ...] -> frames of at most LIVE_MAX_ENTRIES entries each.
+
+    Authoring cubes (firmware v1.7.0+) whose number is listed show that colour for lease_ms, then return
+    to what they showed; a cube playing a show ignores it.
+    """
+    if not 1 <= lease_ms <= LIVE_LEASE_MAX_MS:
+        raise ValueError(f'lease_ms must be 1-{LIVE_LEASE_MAX_MS}')
+    clean = []
+    for cube, rgb in entries:
+        if not 1 <= int(cube) <= 0xFFFF or len(rgb) != 3 or any(not 0 <= int(v) <= LEVEL_MAX for v in rgb):
+            raise ValueError(f'bad live entry {cube}: {rgb}')
+        clean.append((int(cube), tuple(int(v) for v in rgb)))
+    frames = []
+    for i in range(0, len(clean), LIVE_MAX_ENTRIES):
+        part = clean[i:i + LIVE_MAX_ENTRIES]
+        frames.append(LIVE_HEADER.pack(MAGIC, PROTO, SHOW_LIVE, lease_ms, len(part)) +
+                      b''.join(LIVE_ENTRY.pack(c, *rgb) for c, rgb in part))
+    return frames
+
+
 def frame_type(data):
     if len(data) < 4 or len(data) in (2, 24) or data[:2] != MAGIC or data[2] != PROTO:
         return 0
+    if data[3] == SHOW_LIVE:
+        n = data[LIVE_HEADER.size - 1] if len(data) >= LIVE_HEADER.size else 0
+        return SHOW_LIVE if 1 <= n <= LIVE_MAX_ENTRIES and len(data) == LIVE_HEADER.size + LIVE_ENTRY.size * n else 0
     sizes = {SHOW_ANNOUNCE: ANNOUNCE.size, SHOW_CHUNK: CHUNK_HEADER.size + CHUNK_DATA, SHOW_QUERY: QUERY.size,
              SHOW_STATUS: STATUS.size, SHOW_TIMECODE: TIMECODE.size}
     return data[3] if sizes.get(data[3]) == len(data) else 0

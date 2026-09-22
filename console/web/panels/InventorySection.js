@@ -37,7 +37,7 @@ export function Cubes() {
   ];
   return html`<div><${Explainer} id="inventory" />
     <div class="card"><div class="row"><div class="filters" role="radiogroup" aria-label="filter">${FILTERS.map((f) => html`<button class=${'btn small' + (filter === f ? ' primary' : '')} role="radio" aria-checked=${filter === f ? 'true' : 'false'} onClick=${() => setFilter(f)}>${f}</button>`)}</div>
-      <input class="field" type="search" data-doc="inventory.search" placeholder="Search number, MAC, UID, original number" value=${ui.search} onInput=${(e) => setSearch(e.target.value)} aria-label="search inventory" />
+      <input class="field" type="search" data-doc="inventory.search" placeholder="Search inventory" value=${ui.search} onInput=${(e) => setSearch(e.target.value)} aria-label="search inventory" />
       <span class="spacer"></span><button class="btn small quiet" onClick=${() => setView(view === 'table' ? 'grid' : 'table')}>${view === 'table' ? '▦ Grid view' : '☰ Table view'}</button></div>
       <div class="row"><span class="note">${rows.length} shown</span><span class="btn-group">
         <${ActionButton} name="pairing.transmit_originals" args=${{}} label="Transmit original 32" disabled=${!connected} hazard="Sends each original mapping to its cube; refuses changed originals." />

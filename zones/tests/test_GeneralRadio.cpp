@@ -127,13 +127,13 @@ int main() {
   assert(radioOk && radioChannel == 2);
   assert(!wifiSleep && !wifiPersistent && !wifiAutoReconnect);
   assert(esp_now_is_peer_exist(BROADCAST) && esp_now_is_peer_exist(LEGACY) && espPeers.size() == 2);
-  assert(has(Serial.output, "NCT GENERAL RADIO\nFW: general-radio-1.1.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2\nRADIO: OK\nREADY"));
+  assert(has(Serial.output, "NCT GENERAL RADIO\nFW: general-radio-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2\nRADIO: OK\nREADY"));
   // Signatures zone_detect.py would match first, and what the cube identifier looks for.
   for (const char *needle : {"nct-pairing", "Cube READY", "Cube MAC:", "MAINSHOW ENTRANCE", "POOL RADIO", "DESERT TAG PLATE",
                              "MEDIA BRIDGE PEER", "PRESHOW EXIT TAG", "NCT PRESHOW TAG PLATE", "NCT MAINSHOW CONTROLLER",
                              "NCT PRESHOW MEDIA BRIDGE", "POOL CENTRAL", "NCT RANGE TEST"})
     assert(!has(Serial.output, needle));
-  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"protocol\":1,\"firmware\":\"general-radio-1.1.0\",\"zones\":1,\"show\":1"));
+  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"protocol\":1,\"firmware\":\"general-radio-1.2.0\",\"zones\":1,\"show\":1"));
   assert(sentFrames.empty() && "nothing is sent until asked");
 
   // ---- Host protocol ----
@@ -148,7 +148,7 @@ int main() {
   assert(has(serial("{\"cmd\":\"dance\",\"id\":\"x\"}"), "Unknown command"));
   assert(has(serial("{\"cmd\":\"nfc_status\",\"id\":\"n\"}"), "No NFC reader on this radio"));
   assert(has(serial("hello"), "one JSON object per line"));
-  assert(has(serial("?"), "NCT GENERAL RADIO\nFW: general-radio-1.1.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
+  assert(has(serial("?"), "NCT GENERAL RADIO\nFW: general-radio-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
   assert(has(serial("{\"cmd\":\"led_test\",\"id\":\"l\",\"on\":1}"), "\"event\":\"led_test\",\"id\":\"l\",\"on\":true,\"pin\":10"));
   assert(neoShown.size() == 8 && neoShown[0] == 0x3C0000u);  // red, whole strip
   assert(has(serial("{\"cmd\":\"led_test\",\"id\":\"l\",\"on\":0}"), "\"on\":false"));
@@ -467,7 +467,7 @@ int main() {
   assert(has(serial("{\"cmd\":\"preshow\",\"id\":\"w6\",\"point\":5,\"state\":1}"), "point: 1-4"));
   assert(has(serial("{\"cmd\":\"preshow\",\"id\":\"w7\",\"point\":1,\"state\":2}"), "state: 1 (ON) or 0 (OFF)"));
 
-  // ---- Show relay (general-radio-1.1.0): the host's SHOW_ANNOUNCE/CHUNK/QUERY out, SHOW_STATUS back ----
+  // ---- Show relay (general-radio-1.1.0; SHOW_LIVE 1.2.0): the host's show frames out, SHOW_STATUS back ----
   run(3100);
   ping();
   before = sentFrames.size();
@@ -493,6 +493,23 @@ int main() {
   }
   assert(has(serial(("{\"cmd\":\"show_send\",\"id\":\"s5\",\"mac\":\"01:00:5E:00:00:01\",\"hex\":\"" +
                      hex(SHOW_QUERY_FRAME.data(), SHOW_QUERY_FRAME.size()) + "\"}").c_str()), "Invalid show MAC"));
+  assert(sentFrames.size() == before);
+  // SHOW_LIVE (general-radio-1.2.0): the show editor's live frame, broadcast only; the largest
+  // (48 entries, 247 bytes) is bigger than a chunk and still fits.
+  for (const auto &frame : {LIVE_23, LIVE_FULL}) {
+    out = serial(("{\"cmd\":\"show_send\",\"id\":\"s6\",\"mac\":\"FF:FF:FF:FF:FF:FF\",\"hex\":\"" +
+                  hex(frame.data(), frame.size()) + "\"}").c_str());
+    assert(has(out, "{\"event\":\"show_sent\",\"id\":\"s6\",\"mac\":\"FF:FF:FF:FF:FF:FF\",\"kind\":85,\"status\":\"delivered\"}"));
+    assert(sentFrames.back().data == frame && !memcmp(sentFrames.back().dest.data(), BROADCAST, 6));
+  }
+  before = sentFrames.size();
+  assert(has(serial(("{\"cmd\":\"show_send\",\"id\":\"s7\",\"mac\":\"AC:27:6E:80:00:D0\",\"hex\":\"" +
+                     hex(LIVE_23.data(), LIVE_23.size()) + "\"}").c_str()), "SHOW_LIVE is broadcast only"));
+  {
+    std::vector<uint8_t> torn(LIVE_FULL.begin(), LIVE_FULL.end() - 1);  // n says 48, one byte short
+    assert(has(serial(("{\"cmd\":\"show_send\",\"id\":\"s8\",\"mac\":\"FF:FF:FF:FF:FF:FF\",\"hex\":\"" +
+                       hex(torn.data(), torn.size()) + "\"}").c_str()), "Invalid show frame"));
+  }
   assert(sentFrames.size() == before);
   // A cube's SHOW_STATUS goes up as show_frame; another host's announce heard on the air does not.
   {

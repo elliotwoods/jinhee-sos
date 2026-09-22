@@ -41,6 +41,12 @@ export function SettingsSection() {
       <label class="check"><input type="checkbox" checked=${!!s.auto_sessions} onChange=${toggle('auto_sessions')} /> Open a live session automatically for every identified board</label>
       <label class="check"><input type="checkbox" checked=${!!s.preview_flash} onChange=${toggle('preview_flash')} /> Preview the selected cube with a 1 s flash (pairing station)</label>
       <label class="check"><input type="checkbox" checked=${!!s.audio} onChange=${toggle('audio')} /> Audio cues (not yet wired)</label></div></div>
+    <div class="card" data-doc="settings.auto"><h3>Automatic updates</h3><div class="stack">
+      <label class="check"><input type="checkbox" checked=${!!s.auto_zone_db_radio} onChange=${toggle('auto_zone_db_radio')} /> Zone databases over the air: the pairing station (else a General Radio) walks every out-of-date zone in range</label>
+      <label class="check"><input type="checkbox" checked=${!!s.auto_zone_db_usb} onChange=${toggle('auto_zone_db_usb')} /> Zone databases over USB: database-only update for any configured zone board plugged in that is behind</label>
+      <label class="check"><input type="checkbox" checked=${!!s.auto_show} onChange=${toggle('auto_show')} /> Main show over the air: cubes in range on an older show are updated (General Radio; never mid-show)</label>
+      <label class="check"><input type="checkbox" checked=${!!s.auto_pull} onChange=${toggle('auto_pull')} /> Pull a newer zone database and show from the web (needs the web password)</label>
+      <div class="note">Saved on this computer; on by default.</div></div></div>
     <div class="card"><h3>Keyboard</h3><div class="stack note"><div><kbd>Esc</kbd> close a tooltip, else stop every active operation</div><div><kbd>/</kbd> search</div><div><kbd>⌘1</kbd>–<kbd>⌘4</kbd> sections</div><div><kbd>j</kbd>/<kbd>k</kbd> move the rail selection</div><div><kbd>?</kbd> this list</div></div></div>
     <div class="card"><h3>About</h3><${KeyValue} items=${[['Console', meta.console_version], ['Database', meta.database], ['Python API', meta.api_url || 'disabled'], ['Mode', meta.simulate ? 'SIMULATION (fake boards, temporary database copy)' : 'live'], ['Repository', meta.root]]} /></div></div>`;
 }

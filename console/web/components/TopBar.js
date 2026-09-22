@@ -20,7 +20,7 @@ export function ThemeSwitch() {
   return html`<span class="theme-switch" role="radiogroup" aria-label="theme" data-doc="topbar.theme">${THEMES.map(([id, glyph, label]) => html`<button role="radio" aria-checked=${current === id ? 'true' : 'false'} title=${`${label} theme`} aria-label=${`${label} theme`} data-doc=${'theme.' + id} onClick=${() => set(id)}>${glyph}</button>`)}</span>`;
 }
 
-const SECTIONS = [['devices', 'Devices'], ['inventory', 'Inventory & database'], ['show', 'Show'], ['showedit', 'Show editor'], ['bench', 'Bench']];
+const SECTIONS = [['devices', 'Devices'], ['register', 'Register'], ['inventory', 'Inventory & database'], ['show', 'Show'], ['showedit', 'Show editor'], ['bench', 'Bench']];
 
 export function SyncButton() {
   const sync = section('sync') || {};
@@ -51,7 +51,7 @@ export function TopBar({ onToggleDock, dockOpen, onToggleSide, sideOpen }) {
   return html`<header class="topbar">
     <span class="brand">NCT <span class="brand-dim">CONSOLE</span></span>
     <nav class="sections" aria-label="sections">${SECTIONS.map(([id, label], i) => html`<button aria-current=${ui.route.section === id ? 'true' : 'false'} title=${`⌘${i + 1}`} onClick=${() => navigate('#/' + id)}>${label}</button>`)}</nav>
-    <input id="search" class="search" type="search" placeholder="Search  /   number, MAC, UID, original number" value=${ui.search} onInput=${(e) => setSearch(e.target.value)} />
+    <input id="search" class="search" type="search" placeholder="Search  /  number, MAC, UID" value=${ui.search} onInput=${(e) => setSearch(e.target.value)} />
     <span class="topbar-spacer"></span>
     <${SyncButton} />
     <${ActionButton} name="device.stop" args=${{}} label="■ Stop" title="Stop every active operation (Esc)" className="btn danger small" />

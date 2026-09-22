@@ -1,5 +1,6 @@
 """Web sync and zone-database publish/pull as jobs (network calls never run on the owner thread)."""
 import paths  # noqa: F401
+from urllib.parse import urlsplit
 
 import sync_all
 import web_client
@@ -13,8 +14,18 @@ from jobs.base import Job
 from locks import SUFFIXES
 
 
+class SimulatedWeb(ValueError):
+    pass
+
+
 def client(hub, password=web_client.STORED):
-    return WebClient(password=password, client=client_name('NCT Console'))
+    # A simulated console runs on fake boards and a throwaway database: it must never reach the real web
+    # inventory (a simulated Sync once uploaded fake cubes and published a zone database). Only a loopback
+    # server (the tests' fake web inventory) is allowed.
+    web = WebClient(password=password, client=client_name('NCT Console'))
+    if getattr(hub, 'simulate', False) and urlsplit(web.server).hostname not in ('127.0.0.1', 'localhost', '::1'):
+        raise SimulatedWeb('The simulated console never talks to the real web inventory')
+    return web
 
 
 def status_job(hub):
@@ -32,6 +43,8 @@ def status_job(hub):
             hub.sync['status'] = dict(state='error', message=job.error)
         hub.sync['password_known'] = bool(web_client.load_password())
         hub.mark_dirty('sync')
+        if job.state == 'done' and isinstance(job.result, dict) and job.result.get('zone_pull'):
+            hub.auto_zone_pull(job.result.get('web_version'))
 
     job.quiet = True
     hub.jobs.start(job, work, done)
@@ -113,8 +126,10 @@ def signin_job(hub, password):
     return job
 
 
-def zone_pull_job(hub):
+def zone_pull_job(hub, auto=False):
+    """`auto`: started by the console itself (hub.auto_zone_pull); reports once through hub.auto_error."""
     job = Job('zone.pull', 'web', 'Pull the published zone database')
+    job.quiet = job.mute = auto
     database = hub.database
 
     def work(emit, cancel):
@@ -124,6 +139,10 @@ def zone_pull_job(hub):
         hub.mark_dirty('inventory', 'registry')
         if job.state == 'done':
             job.outcome = dict(level='verified', text=str(job.result))
+            if auto:
+                hub.log(f'Automatic zone database pull: {job.result}', 'ok', source='auto')
+        if auto:
+            hub.auto_error('zone database pull', job.error if job.state == 'failed' else None)
         status_job(hub)
 
     hub.jobs.start(job, work, done)

@@ -7,6 +7,7 @@ import { ActionButton, HoldButton, LeaseToggle } from '../components/actions.js'
 import { DataTable, Console, JobCard } from '../components/data.js';
 import { LedRing, BandDiagram, Chart } from '../components/canvas.js';
 import { DeviceHeader, sessionOf, rowByMac, rowByNumber, RawConsole, JobHistory } from './common.js';
+import { statusLabel } from './CubePanel.js';
 import { hhmmss, crc, ago } from '../lib/format.js';
 import { run } from '../api.js';
 import { notify } from '../lib/notify.js';
@@ -15,7 +16,7 @@ const ZONE_NAMES = { 0: 'idle', 1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainsh
 
 function registryText(cubeId) {
   const row = rowByNumber(cubeId);
-  return row ? `#${cubeId} · ${row.status}` : 'not in inventory';
+  return row ? `#${cubeId} · ${statusLabel(row.status)}` : 'not in inventory';
 }
 
 export function Monitor({ device, s }) {
@@ -58,14 +59,14 @@ export function Monitor({ device, s }) {
 function rowByUid(uid) {
   const rows = (section('inventory') || {}).rows || [];
   const r = rows.find((x) => x.uid === uid);
-  if (r) return `tag of cube ${r.cube_id != null ? '#' + r.cube_id : r.mac} (${r.status}) — not in this plate's database`;
+  if (r) return `tag of cube ${r.cube_id != null ? '#' + r.cube_id : r.mac} (${statusLabel(r.status)}) — not in this plate's database`;
   const p = rows.find((x) => x.pending_uid === uid);
-  if (p) return `pending tag of ${p.cube_id != null ? '#' + p.cube_id : p.mac} (${p.status})`;
+  if (p) return `pending tag of ${p.cube_id != null ? '#' + p.cube_id : p.mac} (${statusLabel(p.status)})`;
   return 'unknown to this computer';
 }
 
 export function FirmwareDb({ device, s }) {
-  useSections(['builds', 'inventory', 'registry']);
+  useSections(['builds', 'inventory', 'registry', 'settings']);
   const copy = useCopy();
   const [profiles, setProfiles] = useState(null);
   const report = s.report || device.details || {};
@@ -76,7 +77,7 @@ export function FirmwareDb({ device, s }) {
     const detection = device.detection || {};
     const profile = detection.profile || guessProfile(report, profiles);
     const p = profiles.profiles[profile] || Object.values(profiles.profiles)[0];
-    const point = report.point_id || detection.point || p.points[0];
+    const point = report.point_id || detection.point || freePoint(p, device.mac);
     setForm({ profile, point, name: report.name || detection.name || p.name.replace('{point}', point), params: (report.params || detection.params || p.params.map((x) => Math.round(x[1] * x[2]))), rx_gain: report.rx_gain || profiles.rx_gain_default });
   }, [profiles, device.id]);
   const inv = section('inventory') || {};
@@ -86,6 +87,9 @@ export function FirmwareDb({ device, s }) {
   const sketch = form && profiles ? profiles.profiles[form.profile].sketch : null;
   const build = sketch ? (builds.zones || {})[sketch] : null;
   const busy = device.state === 'job';
+  const autoResult = ((inv.intake || {}).results || {})[device.key];
+  const autoText = !(section('settings') || {}).auto_zone_db_usb ? 'off (Settings › Automatic updates)'
+    : state === 'current' ? 'on · current' : autoResult ? `on · ${autoResult}` : state === 'behind' ? 'on · starting' : 'on';
   const refused = device.detection && ['cube', 'station', 'other'].includes(device.detection.kind);
   const set = (k, v) => setForm({ ...form, [k]: v });
   const args = form ? { device: device.id, profile: form.profile, point: Number(form.point), name: form.name, params: form.params.map(Number), rx_gain: Number(form.rx_gain) } : null;
@@ -93,6 +97,7 @@ export function FirmwareDb({ device, s }) {
     <${KeyValue} items=${[['Board', report.firmware ? `${report.firmware} · ${report.name || 'unconfigured'} · type ${report.zone_type ?? '?'} point ${report.point_id ?? '?'}` : 'no zone report', 'zone.fw.identity'],
       ['Board database', report.db_version != null ? html`v${report.db_version} · ${report.db_count} records · CRC ${crc(report.db_crc)} <${Pill} status=${'zonedb.' + state} />` : '—'],
       ['Published database', pub.version ? `v${pub.version} · ${pub.count} records · CRC ${crc(pub.crc)}${inv.local_differs ? ' · local mappings differ (Sync to publish)' : ''}` : 'nothing published'],
+      ['Automatic database update', autoText],
       ['Local build', build ? (build.error ? `${sketch}: ${build.error}` : `${sketch} ${build.version}`) : '—'],
       ['RX gain', report.rx_gain ? `${report.rx_gain} dB${report.rx_gain_applied ? '' : ' (not applied)'}` : '—']]} />
     <div class="row">
@@ -101,7 +106,7 @@ export function FirmwareDb({ device, s }) {
       <${ActionButton} name="zone.detect" args=${{ device: device.id }} label="Identify via bootloader" disabled=${busy} hazard="Reads flash through the bootloader and reboots the board." />
       ${device.mac && html`<${ActionButton} name="zones.reboot" args=${{ mac: device.mac }} label="Reboot (over the air)" hazard="Sends ZONE_REBOOT over the radio." />`}</div>
     ${profiles && form && html`<div data-doc="zone.fw.form"><h3>Identity</h3><div class="form">
-      <div><label class="lbl">Zone</label><select class="field" value=${form.profile} onChange=${(e) => { const p = profiles.profiles[e.target.value]; setForm({ ...form, profile: e.target.value, point: p.points[0], name: p.name.replace('{point}', p.points[0]), params: p.params.map((x) => Math.round(x[1] * x[2])) }); }}>${Object.entries(profiles.profiles).map(([k, p]) => html`<option value=${k}>${p.label}</option>`)}</select></div>
+      <div><label class="lbl">Zone</label><select class="field" value=${form.profile} onChange=${(e) => { const p = profiles.profiles[e.target.value]; const point = freePoint(p, device.mac); setForm({ ...form, profile: e.target.value, point, name: p.name.replace('{point}', point), params: p.params.map((x) => Math.round(x[1] * x[2])) }); }}>${Object.entries(profiles.profiles).map(([k, p]) => html`<option value=${k}>${p.label}</option>`)}</select></div>
       <div><label class="lbl">Point</label><select class="field" value=${form.point} onChange=${(e) => set('point', Number(e.target.value))}>${profiles.profiles[form.profile].points.map((p) => html`<option value=${p}>${p}</option>`)}</select></div>
       <div><label class="lbl">Name</label><input class="field" value=${form.name} onInput=${(e) => set('name', e.target.value)} maxlength="15" /></div>
       ${profiles.profiles[form.profile].params.map((p, i) => html`<div><label class="lbl">${p[0]} (×${p[2]})</label><input class="field num" value=${form.params[i]} onInput=${(e) => { const params = [...form.params]; params[i] = e.target.value; set('params', params); }} /></div>`)}
@@ -114,6 +119,13 @@ export function FirmwareDb({ device, s }) {
       ${build && build.error && html`<div class="warn-text">${build.error} — build it under This computer › Firmware builds.</div>`}</div>`}
     ${Number(report.zone_type) === 3 && html`<${RadioId} device=${device} s=${s} report=${report} />`}
   </div>`;
+}
+
+// The lowest point of a profile that no other known zone of that kind holds (registry, else the inventory's zones).
+function freePoint(profile, ownMac) {
+  const zones = [...(((section('registry') || {}).zones) || []), ...(((section('inventory') || {}).zones) || [])];   // radio + recorded
+  const used = new Set(zones.filter((z) => z.mac !== ownMac && Number(z.zone_type) === Number(profile.zone_type)).map((z) => Number(z.point_id)));
+  return profile.points.find((pt) => !used.has(Number(pt))) ?? profile.points[0];
 }
 
 function guessProfile(report, profiles) {
@@ -136,14 +148,15 @@ export function Calibration({ device, s }) {
     <div class="row"><${LeaseToggle} on=${s.armed} onName="pool.arm" touchName="pool.touch" offName="pool.disarm" args=${{ device: device.id }} label="Override output without a cube" disabled=${!live || !s.ready} hazard="Leased: the console pings the radio every 0.35 s; the lease lapses 1.5 s after it stops." />
       <span class="readout medium">${sample && sample.distance != null ? `${Number(sample.distance).toFixed(0)} mm · index ${sample.index > 0 ? sample.index : '—'}` : '— mm'}</span></div>
     <${BandDiagram} doc="pool.bands" ticks=${ticks} distance=${sample && sample.distance} index=${sample && sample.index} />
-    <div class="note" data-doc="pool.saved">${cal.saved ? 'Saved calibration loaded' : 'Calibration is not saved on the board'} · ${s.note || ''}${s.pending ? ` · waiting for ${s.pending}` : ''}</div>
+    <div class="note">${[s.note, s.pending ? `waiting for ${s.pending}` : ''].filter(Boolean).join(' · ') || (cal.saved ? 'Saved calibration loaded' : 'Calibration is not saved on the board')}</div>
     <h3>Control points</h3>
     <${DataTable} columns=${[{ key: 'index', label: 'Member' }, { key: 'mm', label: 'mm', render: (r) => r.mm == null ? '—' : r.mm.toFixed(1) }, { key: 'anchor', label: 'Anchor', render: (r) => r.anchor ? '●' : '' },
       { key: 'draft', label: 'Set to', render: (r) => html`<input class="field num" value=${r.draft ?? ''} placeholder=${sample && sample.distance != null ? Number(sample.distance).toFixed(1) : ''} onInput=${(e) => setDraft({ ...draft, [r.index]: e.target.value })} />` },
       { key: 'capture', label: '', render: (r) => html`<button class="btn small" data-doc="pool.capture" disabled=${!sample || sample.distance == null} onClick=${() => setDraft({ ...draft, [r.index]: Number(sample.distance).toFixed(1) })}>Capture</button>` }]} rows=${rows} keyOf=${(r) => r.index} rowDoc=${(r) => `pool.point:${r.index}`} maxRows=${23} />
     <div class="row"><button class="btn primary" data-doc="pool.cal_set" disabled=${!Object.keys(draft).length || !live} onClick=${applyDraft}>Send control points</button>
       <${ActionButton} name="pool.cal_save" args=${{ device: device.id }} label="Apply & save to flash" disabled=${!live} hazard="Writes the calibration to the radio's flash." />
-      <${ActionButton} name="pool.cal_load" args=${{ device: device.id }} label="Reload saved" disabled=${!live} /></div>
+      <${ActionButton} name="pool.cal_load" args=${{ device: device.id }} label="Reload saved" disabled=${!live} />
+      <span class=${'note ' + (cal.saved ? 'ok-text' : 'warn-text')} data-doc="pool.saved">${cal.saved ? 'Saved calibration loaded (saved=true)' : 'Calibration is not saved on the board'}</span></div>
     <h3>Tuning ${s.tune_supported === false ? '(not supported by this firmware; update to pool-2.8.0 or newer)' : s.tuning_saved ? '· saved to flash' : s.tuning ? '· live only, not saved' : ''}</h3>
     ${s.tuning && html`<div class="form">${Object.entries(s.fields || {}).map(([k, f]) => html`<div><label class="lbl">${f[0]}</label><input class="field num" value=${tune[k] ?? s.tuning[k]} onInput=${(e) => setTune({ ...tune, [k]: e.target.value })} /></div>`)}</div>
       <div class="row"><button class="btn" data-doc="pool.tune_live" disabled=${!live} onClick=${() => run('pool.tune_apply', { device: device.id, values: merged(s.tuning, tune, s.fields), save: false }).then(() => setTune({})).catch((e) => notify(e.message, 'bad'))}>Apply live</button>
@@ -223,8 +236,9 @@ export function RadioId({ device, s, report }) {
   const used = new Map();
   pools.forEach((z) => { if (z.point_id != null) used.set(Number(z.point_id), z); });
   const clash = current != null ? used.get(Number(current)) : null;
-  let suggested = null;
-  for (let i = 1; i <= 6; i++) if (!used.has(i) && (clash || i !== Number(current))) { suggested = i; break; }
+  // Keep the current id when nobody else holds it; otherwise the lowest free id.
+  let suggested = current != null && !clash ? Number(current) : null;
+  if (suggested == null) for (let i = 1; i <= 6; i++) if (!used.has(i)) { suggested = i; break; }
   const [id, setId] = useState(null);
   const chosen = id ?? (clash ? suggested : current) ?? suggested ?? 1;
   const chosenClash = used.get(Number(chosen));
@@ -245,7 +259,7 @@ export function CueTest({ device, s }) {
   return html`<div class="card"><${Explainer} id="preshow.cue" />
     <div class="row"><${LeaseToggle} on=${s.armed} onName="preshow.arm" offName="preshow.disarm" args=${{ device: device.id }} label="Cue override" disabled=${!live} hazard="Leased 1.5 s: the console keeps it alive while this is on; switch it off when done." />
       <${Pill} tone=${host.mode === 'modern' ? 'ok' : 'warn'} label=${host.mode ? `${host.mode} mode` : 'no host status yet'} tip=${host.mode === 'legacy' ? 'No bridge beacon heard: the plate also sends the 2-byte packet the original bridge reads. Expected today.' : 'A bridge answers; cues are acknowledged end to end.'} /></div>
-    <div class="row">${[1, 2, 3, 4].map((p) => html`<${ActionButton} name="preshow.cue" args=${{ device: device.id, point: p, on: held !== p }} label=${`POINT ${p} ${held === p ? 'OFF' : 'ON'}`} className=${'btn big' + (held === p ? ' on' : '')} disabled=${!s.armed} hazard="Raises a TouchDesigner cue." />`)}</div>
+    <div class="row point-row">${[1, 2, 3, 4].map((p) => html`<${ActionButton} name="preshow.cue" args=${{ device: device.id, point: p, on: held !== p }} label=${`POINT ${p} ${held === p ? 'OFF' : 'ON'}`} className=${'btn big' + (held === p ? ' on' : '')} disabled=${!s.armed} hazard="Raises a TouchDesigner cue." />`)}</div>
     <${KeyValue} items=${[['Cue', `${host.state || '?'} on point ${host.point ?? '?'} · acknowledged ${host.acked ? `yes, ${host.ack_ms} ms` : host.mode === 'legacy' ? 'n/a (old bridge cannot acknowledge)' : 'NO'}`, 'preshow.state'],
       ['Counters', `seq ${host.seq ?? '?'} · sent ${host.sent ?? '?'} · legacy ${host.legacy_sent ?? '?'} · retries ${host.retries ?? '?'} · acks ${host.acks ?? '?'} · failed ${host.failed ?? '?'} · errors ${host.errors ?? '?'}`],
       ['Bridge', `${host.bridge_mac || 'not heard from'} · last beacon ${host.bridge_seen_ms ?? '?'} ms ago · sees me: ${host.bridge_sees_me ? 'yes' : 'no'}`]]} /></div>`;

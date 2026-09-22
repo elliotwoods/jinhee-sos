@@ -56,12 +56,12 @@ function SafeButton({ label, invoke, onDone, doc }) {
 
 export function SuggestionCard({ s, flash }) {
   const [details, setDetails] = useState(false);
-  const [menu, setMenu] = useState(useDocOpen('attention.menu'));
+  const [menu, setMenu] = useState(useDocOpen(`attention.menu:${s.rule}`));
   const dismiss = async (scope) => { setMenu(false); try { await run('advisor.dismiss', { id: s.group ? s.group[0].id : s.id, scope }); } catch (e) { notify(e.message, 'bad'); } };
   return html`<article class=${'sugg ' + s.severity + (flash ? ' flash' : '')} aria-label=${s.title} data-doc=${`attention.card:${s.rule}`}>
     <div class="head"><div class="head-text"><span class=${'sev ' + s.severity + '-text'}>${s.severity.toUpperCase()}</span><span class="title">${s.title}</span>
         ${s.device && html`<div class="scope"><a href="#" onClick=${(e) => { e.preventDefault(); goDevice(s.device); }}>${withMacs(s.device)}</a></div>`}</div>
-      <span class="menu"><button class="btn small quiet" data-doc="attention.menu" onClick=${() => setMenu(!menu)} aria-haspopup="true" aria-expanded=${menu ? 'true' : 'false'} title="dismiss">Dismiss ▾</button>
+      <span class="menu"><button class="btn small quiet" data-doc=${`attention.menu:${s.rule}`} onClick=${() => setMenu(!menu)} aria-haspopup="true" aria-expanded=${menu ? 'true' : 'false'} title="dismiss">Dismiss ▾</button>
         ${menu && html`<div class="pop"><button data-doc="attention.dismiss" onClick=${() => dismiss('once')}>Dismiss this occurrence</button><button onClick=${() => dismiss('scope')}>Dismiss for this device</button><button onClick=${() => dismiss('rule')}>Don't show this rule again</button></div>`}</span></div>
     ${s.group && html`<p class="note">${withMacs((s.members || []).join(' · '))}</p>`}
     ${s.know && html`<p><span class="lbl">What we know: </span>${withMacs(s.know)}</p>`}

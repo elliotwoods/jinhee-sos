@@ -14,6 +14,7 @@ import time
 from urllib.parse import quote
 
 import simdocs
+import simulate
 from jobs.base import Job
 
 SCENARIOS = []
@@ -86,7 +87,7 @@ def route(hub, s):
     if s['search']:
         query.append('search=' + quote(s['search']))
     query.append('still=1')
-    return r + ('?' + '&'.join(query) if query else '')
+    return r + (('&' if '?' in r else '?') + '&'.join(query) if query else '')
 
 
 def wait(hub, predicate, timeout=8.0, dt=0.02):
@@ -104,8 +105,6 @@ def base(hub):
     """Every chapter starts here: boards identified, sessions open, the station discovered its cubes,
     the published database is v32 and the sync status is 'up to date'."""
     sim(hub)['station'].hold_register = False
-    simdocs.seed_publication(hub, 32)
-    simdocs.docs_sync(hub, 'ok', web_version=32)
     ok = wait(hub, lambda: all(hub.sessions.get(device(hub, k).id) for k in ('station', 'plate', 'pool', 'radio', 'mainshow'))
               and hub.station_session().controller.connected, timeout=12)
     if not ok:
@@ -113,12 +112,14 @@ def base(hub):
     cmd(hub, 'pairing.discover', device=device(hub, 'station').id)
     wait(hub, lambda: sim(hub)['known_mac'] in hub.station_session().controller.discovered, timeout=4)
     cmd(hub, 'zones.query', device=device(hub, 'station').id)
-    wait(hub, lambda: len(hub.station_session().zones.snapshot().get('zones') or {}) >= 2, timeout=4)
+    wait(hub, lambda: len(hub.station_session().zones.snapshot().get('zones') or []) >= 3
+         and all(r.get('in_range') for r in hub.station_session().zones.snapshot()['zones']), timeout=6)
     return True
 
 
 def reset(hub):
     """Between scenarios of one chapter: stop what runs, release holds."""
+    reset_register(hub)
     st = hub.station_session()
     if st and st.controller.mode:
         st.controller.stop()
@@ -129,8 +130,13 @@ def reset(hub):
     for key in ('station',):
         board = sim(hub)[key]
         board.hold_register = board.hold_publish = False
+        board.pending_publish = None
         if board.pending_register:
             board.release_register(True)
+    simdocs.docs_sync(hub, 'ok', web_version=32)     # C-5/C-6 change the sync status; every chapter starts synced
+    hub.sync['password_known'] = True
+    hub.sync['plan'] = None
+    hub._sim['show_ready'] = False
     for key in ('plate', 'pool'):
         simdocs.doc_release(hub, device(hub, key).id)
         sess = session(hub, key)
@@ -140,6 +146,9 @@ def reset(hub):
         session(hub, 'radio').release_all() if hasattr(session(hub, 'radio'), 'release_all') else None
     simdocs.release_job(hub)
     wait(hub, lambda: not hub.jobs.running() and not (st and st.controller.mode), timeout=6)
+    hub.jobs.jobs.clear()
+    hub.jobs.order.clear()
+    hub.mark_dirty('jobs')
 
 
 def station_route(hub, tab='station'):
@@ -154,11 +163,99 @@ def zone_route(hub, key, tab='monitor'):
     return f'#/devices/{device(hub, key).id}/{tab}'
 
 
+def plate_behind(hub):
+    """The plate holds the older v31 again (steps are replayable in any order) and every view knows it."""
+    plate = sim(hub)['plate']
+    plate.db_version, plate.db_count, plate.db_crc = 31, 32, 0x11E2A0F3
+    cmd(hub, 'zones.query', device=device(hub, 'station').id)
+    s = session(hub, 'plate')
+    if s:
+        s.last_report = 0.0   # re-read the `?` report now, so the USB evidence says v31 too
+    wait(hub, lambda: any(r.get('mac') == plate.mac and int(r.get('db_version') or 0) == 31
+                          for r in _station(hub).zones.snapshot().get('zones') or [])
+         and ((session(hub, 'plate').snapshot().get('report') or {}).get('db_version') == 31), timeout=6)
+
+
 def _station(hub):
     return hub.station_session()
 
 
-# ---------------------------------------------------------------- 03 registration
+# ---------------------------------------------------------------- 03 registration: the Register page
+NEW_CUBE = dict(port='/dev/sim.cube-new', mac='A4:CF:12:34:56:9B', uid='04:A2:2B:1C:53:80:9B')
+
+
+def reset_register(hub):
+    """Register scenes end with their chapter: switch the workflow off, unplug the new cube, forget its number."""
+    hub.settings['auto_register'] = False
+    flow = hub.regflow
+    flow.tick()   # switched off mid-flow: cancels and stops the station
+    flow.clear()
+    flow.history = []
+    flow.was_enabled = False
+    if any(d.port == NEW_CUBE['port'] for d in hub.devices.values()):
+        hub.scanner.remove(NEW_CUBE['port'])
+        wait(hub, lambda: not any(d.port == NEW_CUBE['port'] for d in hub.devices.values()), timeout=4)   # replug = a new identification
+    if hub.db.get(NEW_CUBE['mac']):
+        hub.db.unregister(NEW_CUBE['mac'], 'docs bench replay')   # the next replay is a new cube again
+    hub.mark_dirty('register')
+
+
+def register_route(hub):
+    return '#/register'
+
+
+@scenario('03-A1', 3, 1, 'Register: switch on "Register cubes as they are plugged in"', 'Register: "Register cubes as they are plugged in" 켜기',
+          register_route, hl=['register.enable'])
+def s03_a1(hub):
+    hub.pinned_mac = None
+    cmd(hub, 'register.enable', on=True)
+
+
+@settled('03-A1')
+def s03_a1_ok(hub):
+    return hub.regflow.enabled and hub.regflow.step == 'idle'
+
+
+@scenario('03-A2', 3, 2, 'A new cube plugged in: NEW NUMBER for its label, then scan its tag', '새 큐브 연결: 라벨용 새 번호, 이어서 태그 스캔',
+          register_route, hl=['register.flow', 'station.banner'], dock=True)
+def s03_a2(hub):
+    s03_a1(hub)
+    sim(hub)['station'].scan_clear()
+    hub.scanner.add(simulate.FakeCube(NEW_CUBE['port'], NEW_CUBE['mac']))
+    wait(hub, lambda: hub.regflow.armed, timeout=6)
+    sim(hub)['station'].scan_clear()   # the reader is empty: READY TO SCAN
+
+
+@settled('03-A2')
+def s03_a2_ok(hub):
+    f, c = hub.regflow, _station(hub).controller
+    return f.mac == NEW_CUBE['mac'] and f.step == 'nfc' and f.armed and c.mode == 'repair' and c.phase == 'identifying' \
+        and (c.feedback or {}).get('title', '').startswith('READY TO SCAN')
+
+
+@scenario('03-A3', 3, 3, 'Registered and synced: unplug it and plug in the next cube', '등록 및 동기화 완료: 분리하고 다음 큐브 연결',
+          register_route, hl=['register.flow'], dock=True)
+def s03_a3(hub):
+    s03_a2(hub)
+    wait(hub, lambda: s03_a2_ok(hub), timeout=6)
+    hub.sync['password_known'] = False   # hold the sync step: the bench never syncs with a web server
+    sim(hub)['station'].scan(NEW_CUBE['uid'])
+    wait(hub, lambda: _station(hub).controller.phase == 'removal', timeout=4)
+    sim(hub)['station'].scan_clear()
+    wait(hub, lambda: hub.regflow.step == 'sync' and 'Sign in' in hub.regflow.wait, timeout=4)
+    job = Job('sync', 'web', 'Sync')
+    hub.jobs.start(job, lambda emit, cancel: dict(zone_error=None))
+    hub.sync['summary'] = 'Inventory ↑1 · zone database v33 published'
+    hub.regflow.sync_job = job.id
+    hub.sync['password_known'] = True
+
+
+@settled('03-A3')
+def s03_a3_ok(hub):
+    return hub.regflow.step == 'done' and bool(hub.regflow.history)
+
+
+# ---------------------------------------------------------------- 03 registration: from the cube panel
 @scenario('03-1', 3, 1, 'Cube card after USB identification: the pinned cube, its number and tag', 'USB 식별 후 큐브 카드: 고정된 큐브, 번호와 태그',
           lambda hub: cube_route(hub, 'cube45'), hl=['cube.number', 'pairing.register'])
 def s03_1(hub):
@@ -231,6 +328,9 @@ def s03_5_ok(hub):
 # ---------------------------------------------------------------- 04 cube firmware
 def _cube_stale(hub):
     d = device(hub, 'cube')
+    sim(hub)['cube'].firmware = 'v1.3.9-USB'
+    d.details = dict(d.details or {}, firmware='v1.3.9-USB')
+    d.firmware = 'v1.3.9-USB'
     d.fw_status = dict(status='differs', reported='v1.3.9-USB', expected=hub.builds.get('cube', {}).get('version') or 'v1.4.1-USB.2',
                        text='Reported firmware v1.3.9-USB differs from the local build')
     hub.usb_firmware[d.mac] = d.fw_status
@@ -269,6 +369,9 @@ def s04_2_ok(hub):
 
 def _cube_verified(hub):
     d = device(hub, 'cube')
+    sim(hub)['cube'].firmware = 'v1.4.1-USB.2'
+    d.details = dict(d.details or {}, firmware='v1.4.1-USB.2')
+    d.firmware = 'v1.4.1-USB.2'
     d.fw_status = dict(status='current', reported='v1.4.1-USB.2', expected='v1.4.1-USB.2', text='Reported firmware matches the local build')
     hub.usb_firmware[d.mac] = d.fw_status
     try:
@@ -323,18 +426,20 @@ def s06_1_ok(hub):
 @scenario('06-2', 6, 2, 'Update all: chunks are being sent to the zones that are behind', 'Update all: 뒤처진 존에 청크 전송 중',
           lambda hub: station_route(hub, 'relay'), hl=['relay.progress', 'zones.stop'], dock=True)
 def s06_2(hub):
+    plate_behind(hub)
     sim(hub)['station'].hold_publish = True
     cmd(hub, 'zones.update_all', device=device(hub, 'station').id)
 
 
 @settled('06-2')
 def s06_2_ok(hub):
-    return bool(_station(hub).zones.snapshot().get('publishing'))
+    return bool((hub.sections.get('registry') or {}).get('publishing'))
 
 
 @scenario('06-3', 6, 3, 'Database v32 confirmed on the plate', '플레이트에서 데이터베이스 v32 확인됨',
           lambda hub: station_route(hub, 'relay'), hl=['relay.table', 'relay.zone:14:63:93:C0:EC:14'], dock=True)
 def s06_3(hub):
+    plate_behind(hub)
     sim(hub)['station'].hold_publish = False
     cmd(hub, 'zones.update_all', device=device(hub, 'station').id)
 
@@ -347,14 +452,14 @@ def s06_3_ok(hub):
 
 
 @scenario('06-4', 6, 4, 'Auto-update all while walking the space', '공간을 걸으며 Auto-update all',
-          lambda hub: station_route(hub, 'relay'), hl=['zones.walkaround', 'relay.auto'])
+          lambda hub: station_route(hub, 'relay'), hl=['zones.walkaround'])
 def s06_4(hub):
     cmd(hub, 'zones.walkaround', enabled=True, device=device(hub, 'station').id)
 
 
 @settled('06-4')
 def s06_4_ok(hub):
-    return bool(_station(hub).zones.snapshot().get('walkaround'))
+    return bool((hub.sections.get('registry') or {}).get('walkaround'))
 
 
 # ---------------------------------------------------------------- 07 zone provisioning
@@ -370,16 +475,16 @@ def s07_1_ok(hub):
 
 
 ZONE_STEPS = [('Building the zone image', 8, 'Using the built preshow-3.4.0 image (manifest verified)'), ('Writing firmware', 30, '$ esptool write-flash 0x10000 PreshowZone.ino.bin'),
-              (None, 52, 'Writing at 0x00090000... (52 %)'), ('Writing configuration and database', 78, 'Zone config: type=1 point=4 name=Preshow 4 · database v32'),
-              ('Reading back', 90, 'Hash of data verified.'), ('Waiting for the report', 100, 'ZONE: type=1 point=4 name=Preshow 4 · DB: version=32 · READY')]
+              (None, 52, 'Writing at 0x00090000... (52 %)'), ('Writing configuration and database', 78, 'Zone config: type=1 point=2 name=Preshow 2 · database v32'),
+              ('Reading back', 90, 'Hash of data verified.'), ('Waiting for the report', 100, 'ZONE: type=1 point=2 name=Preshow 2 · DB: version=32 · READY')]
 
 
 @scenario('07-2', 7, 2, 'Flashing the zone: firmware, configuration and database in one job', '존 플래시: 펌웨어·설정·데이터베이스를 한 작업으로',
           lambda hub: zone_route(hub, 'blank', 'firmware'), hl=['job:zone.flash'], dock=True)
 def s07_2(hub):
     d = device(hub, 'blank')
-    simdocs.scripted_job(hub, d, 'zone.flash', 'Flash Preshow 4 (point 4) with preshow-3.4.0 + database v32', ZONE_STEPS,
-                         dict(level='verified', text='Report matches: Preshow 4 · preshow-3.4.0 · database v32'), hold_at=52)
+    simdocs.scripted_job(hub, d, 'zone.flash', 'Flash Preshow 2 (point 2) with preshow-3.4.0 + database v32', ZONE_STEPS,
+                         dict(level='verified', text='Report matches: Preshow 2 · preshow-3.4.0 · database v32'), hold_at=52)
 
 
 @settled('07-2')
@@ -389,25 +494,26 @@ def s07_2_ok(hub):
 
 def _blank_provisioned(hub):
     b = sim(hub)['blank']
-    b.zone_type, b.point, b.name, b.db_version, b.db_count, b.db_crc = 1, 4, 'Preshow 4', 32, 2, 0x5A17C0DE
+    p = sim(hub)['publication']
+    b.zone_type, b.point, b.name, b.db_version, b.db_count, b.db_crc = 1, 2, 'Preshow 2', 32, p['count'], p['crc']
 
 
 @scenario('07-3', 7, 3, 'Verified: the report after reboot matches what was written', '검증 완료: 재부팅 후 보고가 기록 내용과 일치',
           lambda hub: zone_route(hub, 'blank', 'firmware'), hl=['job:zone.flash', 'zone.fw.identity'], dock=True)
 def s07_3(hub):
     d = device(hub, 'blank')
-    simdocs.scripted_job(hub, d, 'zone.flash', 'Flash Preshow 4 (point 4) with preshow-3.4.0 + database v32', ZONE_STEPS,
-                         dict(level='verified', text='Report matches: Preshow 4 · preshow-3.4.0 · database v32'), after=_blank_provisioned)
+    simdocs.scripted_job(hub, d, 'zone.flash', 'Flash Preshow 2 (point 2) with preshow-3.4.0 + database v32', ZONE_STEPS,
+                         dict(level='verified', text='Report matches: Preshow 2 · preshow-3.4.0 · database v32'), after=_blank_provisioned)
 
 
 @settled('07-3')
 def s07_3_ok(hub):
     return any(j.kind == 'zone.flash' and j.state == 'done' for j in hub.jobs.jobs.values()) and \
-        (device(hub, 'blank').details or {}).get('name') == 'Preshow 4'
+        (device(hub, 'blank').details or {}).get('name') == 'Preshow 2'
 
 
 @scenario('07-4', 7, 4, 'Cube monitor: a tag was read and the cube found', '큐브 모니터: 태그를 읽고 큐브를 찾음',
-          lambda hub: zone_route(hub, 'plate', 'monitor'), hl=['zone.monitor.card', 'zone.monitor.ring'], dock=True)
+          lambda hub: zone_route(hub, 'plate', 'monitor'), hl=['zone.monitor.ring', 'zone.monitor.card'])
 def s07_4(hub):
     plate = sim(hub)['plate']
     plate.taps = [(0.0, '04:11:22:33:44:55:66')]
@@ -421,7 +527,7 @@ def s07_4_ok(hub):
 
 
 # ---------------------------------------------------------------- 08 preshow
-@scenario('08-1', 8, 1, 'Cue test: take the lease, cue point 1 ON', 'Cue test: 리스 획득 후 포인트 1 ON',
+@scenario('08-1', 8, 1, 'Cue test: take the lease, then press a POINT button', 'Cue test: 리스를 잡은 뒤 POINT 버튼을 누름',
           lambda hub: zone_route(hub, 'plate', 'cue'), hl=['preshow.arm', 'preshow.cue'])
 def s08_1(hub):
     sim(hub)['plate'].media_mode = 'modern'
@@ -466,7 +572,7 @@ def s10_1_ok(hub):
 
 
 @scenario('10-2', 10, 2, 'Capture control point 12 from the live reading', '실시간 값으로 제어점 12 캡처',
-          lambda hub: zone_route(hub, 'pool', 'calibration'), hl=['pool.point:12', 'pool.cal_set'])
+          lambda hub: zone_route(hub, 'pool', 'calibration'), hl=['pool.point:12'])
 def s10_2(hub):
     s10_1(hub)
     wait(hub, lambda: s10_1_ok(hub), timeout=4)
@@ -480,7 +586,7 @@ def s10_2_ok(hub):
 
 
 @scenario('10-3', 10, 3, 'Apply & save: the board confirms with saved=true', 'Apply & save: 보드가 saved=true로 확인',
-          lambda hub: zone_route(hub, 'pool', 'calibration'), hl=['pool.cal_save', 'pool.saved'], dock=True)
+          lambda hub: zone_route(hub, 'pool', 'calibration'), hl=['pool.saved', 'pool.cal_save'], dock=True)
 def s10_3(hub):
     s10_2(hub)
     wait(hub, lambda: s10_2_ok(hub), timeout=4)
@@ -512,7 +618,7 @@ def s10_4_ok(hub):
 
 # ---------------------------------------------------------------- 11 mainshow
 @scenario('11-1', 11, 1, 'Show section: the controller, cube number and the two steps', 'Show 섹션: 컨트롤러, 큐브 번호와 두 단계',
-          '#/show', hl=['show.cube', 'mainshow.ready', 'mainshow.trigger'])
+          '#/show?cube=44', hl=['show.controller', 'show.cube', 'mainshow.ready', 'mainshow.trigger'])
 def s11_1(hub):
     pass
 
@@ -525,7 +631,9 @@ def s11_1_ok(hub):
 @scenario('11-2', 11, 2, '① Mainshow ready delivered: the cube turns neon', '① Mainshow ready 전달됨: 큐브가 네온으로',
           '#/show', hl=['mainshow.ready', 'show.ladder'], dock=True)
 def s11_2(hub):
-    cmd(hub, 'mainshow.ready', cube=44)
+    if not sim(hub).get('show_ready'):
+        cmd(hub, 'mainshow.ready', cube=44)
+        sim(hub)['show_ready'] = True
 
 
 @settled('11-2')
@@ -561,6 +669,44 @@ def s11_4_ok(hub):
     return bool(s and s.snapshot().get('show'))
 
 
+# ---------------------------------------------------------------- 11 the Show editor
+def seed_show(hub, version=5):
+    """A published show (the working copy as version `version`) so the Cubes card offers Update all to vN."""
+    import base64
+    import showfile
+    from show_registry import image_hash
+    doc = hub.showedit.draft
+    image = showfile.pack(doc)
+    hub.showedit.registry.store.cache(dict(version=version, hash=image_hash(image), crc=showfile.crc32(image), length=len(image),
+                                           image_b64=base64.b64encode(image).decode(), source=doc,
+                                           published_at='2026-09-23T10:00:00+09:00', published_by='documentation pass'))
+    hub.mark_dirty('showedit')
+
+
+@scenario('11-5', 11, 5, 'Show editor: transport, timeline, the previewed cubes and Send to real cubes', 'Show editor: 트랜스포트, 타임라인, 미리보기 큐브와 Send to real cubes',
+          '#/showedit', hl=['css:.show-transport', 'css:.show-cubes', 'show.publish'])
+def s11_5(hub):
+    seed_show(hub)
+
+
+@settled('11-5')
+def s11_5_ok(hub):
+    return hub.showedit.registry.store.published()['version'] >= 5 and hub.showedit.relay() is not None
+
+
+@scenario('11-6', 11, 6, 'Cubes: Query cubes, then Update all to the published version', 'Cubes: Query cubes 후 게시 버전으로 Update all',
+          '#/showedit', hl=['show.query', 'show.update_all'])
+def s11_6(hub):
+    seed_show(hub)
+    wait(hub, lambda: hub.showedit.relay() is not None, timeout=6)
+    cmd(hub, 'show.query')
+
+
+@settled('11-6')
+def s11_6_ok(hub):
+    return bool(hub.showedit.registry.cube_rows())
+
+
 # ---------------------------------------------------------------- console-specific
 @scenario('C-1', 0, 1, 'The console: device rail, attention panel, timeline dock', '콘솔: 장치 레일, Attention 패널, 타임라인 도크',
           '#/devices', hl=['rail', 'attention', 'topbar.sync'], dock=True)
@@ -577,14 +723,7 @@ def sC_1_ok(hub):
           lambda hub: zone_route(hub, 'plate', 'monitor'), hl=['attention.card:tag.known_zone_behind', 'attention.action:zone.update_db_usb'], settle=15)
 def sC_2(hub):
     plate = sim(hub)['plate']
-    plate.db_version, plate.db_count, plate.db_crc = 31, 32, 0x11E2A0F3
-    cmd(hub, 'zones.query', device=device(hub, 'station').id)
-    s = session(hub, 'plate')
-    if s:
-        s.last_report = 0.0   # re-read the `?` report now, so the USB evidence says v31 too
-    wait(hub, lambda: any(r.get('mac') == plate.mac and int(r.get('db_version') or 0) == 31
-                          for r in _station(hub).zones.snapshot().get('zones') or [])
-         and ((session(hub, 'plate').snapshot().get('report') or {}).get('db_version') == 31), timeout=6)
+    plate_behind(hub)
     plate.taps = [(0.0, sim(hub)['known_uid'])]
     plate.started = hub.clock()
 
@@ -595,7 +734,7 @@ def sC_2_ok(hub):
 
 
 @scenario('C-3', 0, 3, 'A suggestion card menu: dismiss for this session', '제안 카드 메뉴: 이 세션 동안 무시',
-          lambda hub: zone_route(hub, 'plate', 'monitor'), hl=['attention.menu'], open=['attention.menu'])
+          lambda hub: zone_route(hub, 'plate', 'monitor'), hl=['attention.menu:tag.known_zone_behind'], open=['attention.menu:tag.known_zone_behind'])
 def sC_3(hub):
     sC_2(hub)
 
@@ -617,7 +756,7 @@ def sC_4_ok(hub):
 
 
 @scenario('C-5', 0, 5, 'Sync ↑3 ↓2 and the Web sync plan', 'Sync ↑3 ↓2 및 Web sync 계획',
-          '#/inventory/websync', hl=['topbar.sync', 'websync.plan'])
+          '#/inventory/websync', hl=['websync.plan', 'topbar.sync'])
 def sC_5(hub):
     simdocs.docs_sync(hub, 'local', up=3, down=2, inventory_up=2, inventory_down=2, zone_publish=True, web_version=31, local_version=32)
     hub.sync['plan'] = dict(checked_at=hub.wall(), upload=2, download=2, lost=[], notes=['Zone database: publish v33 (2 changed mappings)'],
@@ -646,7 +785,7 @@ def sC_6_ok(hub):
 
 
 @scenario('C-7', 0, 7, 'General Radio: cubes and show verbs on one dongle', 'General Radio: 하나의 동글로 큐브와 쇼 명령',
-          lambda hub: f'#/devices/{device(hub, "radio").id}/cubes', hl=['radio.set_zone', 'radio.show_start'])
+          lambda hub: f'#/devices/{device(hub, "radio").id}/cubes?cube=44', hl=['radio.set_zone', 'radio.show_start'])
 def sC_7(hub):
     pass
 

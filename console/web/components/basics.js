@@ -58,7 +58,7 @@ export function Ladder({ level, failed, note, doc }) {
   const idx = steps.indexOf(level);
   const bad = failed || level === 'failed';
   return html`<div class=${'ladder' + (bad ? ' failed' : '')} data-doc=${doc} aria-label="delivery ladder">
-    ${steps.map((s, i) => html`${i > 0 && html`<span class="arrow">→</span>`}<span class=${'step' + (idx > i ? ' done' : idx === i ? ' current' : '')}>${(copy.ladder || {})[s] || s}</span>`)}
+    ${steps.map((s, i) => html`${i > 0 && html`<span class="arrow">→</span>`}<span class=${'step' + (idx > i ? ' done' : idx === i ? ' current' : '')} title=${(copy.ladder || {})[s] || ''}>${s}</span>`)}
     ${note && html`<span class="note">${note}</span>`}</div>`;
 }
 

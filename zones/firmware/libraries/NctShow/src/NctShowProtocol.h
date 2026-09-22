@@ -36,7 +36,14 @@ enum ShowMessageType : uint8_t {
   SHOW_QUERY = 0x52,     // host -> cubes; each answers SHOW_STATUS unicast after a random delay
   SHOW_STATUS = 0x53,    // cube -> querier (also sent unsolicited after a commit)
   SHOW_TIMECODE = 0x54,  // show controller -> cubes, broadcast about once a second while a show runs
+  SHOW_LIVE = 0x55,      // show editor -> cubes (v1.7.0+), broadcast ~20 Hz: authoring cubes mirror the editor
 };
+
+// SHOW_LIVE: the editor's live program for authoring cubes. Each entry names a registered cube number
+// and the colour it shows now (levels 0..100). A cube that finds its number shows that colour for
+// leaseMs, then returns to what it showed before; a cube playing a show ignores it.
+constexpr uint8_t LIVE_MAX_ENTRIES = 48;
+constexpr uint16_t LIVE_LEASE_MAX_MS = 2000;
 
 constexpr uint8_t CHUNK_DATA = 200;         // every chunk carries this many bytes; the last is zero-padded
 constexpr uint16_t MAX_CHUNKS = (MAX_IMAGE + CHUNK_DATA - 1) / CHUNK_DATA;
@@ -92,6 +99,15 @@ struct ShowStatus {
   uint32_t uptimeS;
   char fw[16];             // NUL-padded firmware version
 };
+struct LiveEntry {
+  uint16_t cube;  // registered cube number (1..65535)
+  uint8_t r, g, b;
+};
+struct ShowLiveHeader {
+  Header h;
+  uint16_t leaseMs;  // 1..LIVE_LEASE_MAX_MS
+  uint8_t n;         // 1..LIVE_MAX_ENTRIES entries follow
+};
 struct ShowTimecode {
   Header h;
   uint32_t showId;       // same id as the MSG_SHOW_START burst
@@ -106,6 +122,10 @@ static_assert(sizeof(ShowChunk) == 211, "chunk layout");
 static_assert(sizeof(ShowQuery) == 10, "query layout");
 static_assert(sizeof(ShowStatus) == 55, "status layout");
 static_assert(sizeof(ShowTimecode) == 20, "timecode layout");
+static_assert(sizeof(LiveEntry) == 5 && sizeof(ShowLiveHeader) == 7, "live layout");
+inline constexpr size_t liveLength(uint8_t n) { return sizeof(ShowLiveHeader) + sizeof(LiveEntry) * size_t(n); }
+static_assert(liveLength(LIVE_MAX_ENTRIES) <= 250, "live frame exceeds ESP-NOW payload");
+// 7 + 5n is never 2 or 24.
 static_assert(sizeof(ShowAnnounce) != 24 && sizeof(ShowChunk) != 24 && sizeof(ShowQuery) != 24 &&
               sizeof(ShowStatus) != 24 && sizeof(ShowTimecode) != 24, "frame length collides with cube Packet");
 
@@ -123,6 +143,11 @@ inline uint8_t frameType(const uint8_t *data, int len) {
     case SHOW_QUERY: return len == int(sizeof(ShowQuery)) ? data[3] : 0;
     case SHOW_STATUS: return len == int(sizeof(ShowStatus)) ? data[3] : 0;
     case SHOW_TIMECODE: return len == int(sizeof(ShowTimecode)) ? data[3] : 0;
+    case SHOW_LIVE: {
+      if (len < int(liveLength(1))) return 0;
+      uint8_t n = data[offsetof(ShowLiveHeader, n)];
+      return (n >= 1 && n <= LIVE_MAX_ENTRIES && len == int(liveLength(n))) ? data[3] : 0;
+    }
     default: return 0;
   }
 }

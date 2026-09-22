@@ -20,6 +20,7 @@ Section shapes (a version counter accompanies each; the UI re-renders what chang
   show       MainshowSession.snapshot() or {present: False}
   showedit   ShowEditor.snapshot(): draft show, published show, cube show versions, update progress
   settings   hub.settings
+  register   RegistrationFlow.snapshot(): the guided registration workflow (regflow.py)
 """
 import paths  # noqa: F401
 import time
@@ -38,7 +39,7 @@ CONSOLE_VERSION = '0.1.0'
 def build(hub, dirty):
     out = {}
     if 'meta' in dirty:
-        out['meta'] = dict(database=str(hub.database), api_url=hub.api.url if hub.api else None, simulate=hub.simulate,
+        out['meta'] = dict(database='simulated (temporary copy, discarded on exit)' if hub.simulate else str(hub.database), api_url=hub.api.url if hub.api else None, simulate=hub.simulate,
                            started=hub.started_at, console_version=CONSOLE_VERSION, root=str(paths.ROOT))
     if 'ports' in dirty:
         out['ports'] = hub.sections.get('ports', [])
@@ -66,6 +67,8 @@ def build(hub, dirty):
         out['showedit'] = hub.showedit.snapshot()
     if 'settings' in dirty:
         out['settings'] = dict(hub.settings)
+    if 'register' in dirty and getattr(hub, 'regflow', None):
+        out['register'] = hub.regflow.snapshot()
     return out
 
 

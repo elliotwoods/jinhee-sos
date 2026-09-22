@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'preact/hooks';
 import { state, subscribe, section } from '../store.js';
+import { localCopy } from './i18n.js';
 
 // Re-render when any of the named sections (or 'ui', 'timeline', 'link', 'lines:<id>') change.
 export function useSections(names) {
@@ -16,7 +17,8 @@ export function useRouteTab(fallback, allowed) {
   const set = (t) => { location.hash = `#/devices/${encodeURIComponent(route.device || '')}/${encodeURIComponent(t)}`; };
   return [tab, set];
 }
-export function useCopy() { return state.copy || { panels: {}, status: {}, actions: {}, ladder: {}, glyphs: {} }; }
+// uitext copy in the interface language (Korean fields from uitext_ko laid over the English).
+export function useCopy() { return localCopy(state.copy) || { panels: {}, status: {}, actions: {}, ladder: {}, glyphs: {} }; }
 export function useInterval(fn, ms, deps = []) {
   const ref = useRef(fn); ref.current = fn;
   useEffect(() => { if (!ms) return; const id = setInterval(() => ref.current(), ms); return () => clearInterval(id); }, [ms, ...deps]);

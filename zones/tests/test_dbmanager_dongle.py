@@ -111,10 +111,10 @@ class DongleTests(unittest.TestCase):
     def test_general_radio_firmware_and_backups(self):
         stem = 'GeneralRadio.ino'
         self.assertEqual(dongle.artifacts(dongle.GENERAL)['app'].name, stem + '.bin')
-        self.assertEqual((dongle.GENERAL.sketch.name, dongle.GENERAL.version), ('GeneralRadio', 'general-radio-1.1.0'))
+        self.assertEqual((dongle.GENERAL.sketch.name, dongle.GENERAL.version), ('GeneralRadio', 'general-radio-1.2.0'))
         self.assertTrue(dongle.is_general('general-radio-1.0.0') and not dongle.is_general('nct-pairing-1.8-zones') and not dongle.is_general(None))
         self.assertTrue(dongle.show_capable('general-radio-1.0.0') and dongle.show_capable('mainshow-1.2.0') and not dongle.show_capable('nct-pairing-1.8-zones'))
-        self.assertEqual(dongle.RELAY_VERSIONS, {'nct-pairing-1.8-zones', 'general-radio-1.1.0', 'general-radio-1.0.0'})
+        self.assertEqual(dongle.RELAY_VERSIONS, {'nct-pairing-1.8-zones', 'general-radio-1.2.0', 'general-radio-1.1.0', 'general-radio-1.0.0'})
         for name, data in [('bootloader', b'B'), ('partitions', b'P'), ('app', b'G' * 10)]:
             (self.build / f'{stem}{"" if name == "app" else "." + name}.bin').write_bytes(data)
         (self.build / f'{stem}.merged.bin').write_bytes((self.build / 'pairing_station.ino.merged.bin').read_bytes())

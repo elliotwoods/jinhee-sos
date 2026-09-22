@@ -92,6 +92,15 @@ def show_fixtures():
     text += f'constexpr uint32_t VECTOR_CRC = {showfile.crc32(image)}u;\n'
     text += array('SHOW_QUERY_FRAME', showfile.query(0xC0FFEE, 300))
     text += array('SHOW_TIMECODE_FRAME', showfile.timecode(0x11223344, 5000, 7, 0xAABBCCDD))
+    # SHOW_LIVE (v1.7.0): built by the editor's Python, lease 500 ms. The full frame (48 entries, 247 bytes)
+    # is larger than a SHOW_CHUNK and names this test's cube (23) last.
+    text += array('LIVE_23', showfile.live([(5, (1, 2, 3)), (23, (40, 0, 10))], 500)[0])
+    text += array('LIVE_23_B', showfile.live([(23, (0, 50, 0))], 500)[0])
+    text += array('LIVE_23_SHOW', showfile.live([(23, (0, 0, 99))], 500)[0])
+    text += array('LIVE_OTHER', showfile.live([(5, (1, 2, 3)), (24, (9, 9, 9))], 500)[0])
+    full = showfile.live([(100 + i, (i % 100, 1, 1)) for i in range(47)] + [(23, (7, 8, 9))], 500)
+    assert len(full) == 1 and len(full[0]) == 247 and showfile.frame_type(full[0]) == showfile.SHOW_LIVE
+    text += array('LIVE_FULL', full[0])
     return text
 
 

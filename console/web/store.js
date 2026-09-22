@@ -9,7 +9,7 @@ export const state = {
   sections: {}, versions: {}, seq: 0, copy: null, commands: {}, connected: false, lastPull: 0, errors: 0,
   ui: { route: { section: 'devices' }, selected: null, search: '', theme: 'dark', dismissedCards: new Set(),
     // The documentation query parsed once at boot (lib/doc.js): hl/open tokens, dock, theme, still, explainers, search.
-    doc: { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', active: false } },
+    doc: { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null, active: false } },
 };
 export const rings = new Map();       // device id -> Ring of {seq,t,dir,text}
 export const timeline = new Ring(2000);

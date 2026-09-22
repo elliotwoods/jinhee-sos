@@ -1,0 +1,629 @@
+{
+  "generated": "2026-09-23T04:16:48",
+  "git": "de08bb0",
+  "size": [
+    1440,
+    1000
+  ],
+  "scale": 2,
+  "shots": [
+    {
+      "id": "03-A1",
+      "file": "03-A1.png",
+      "chapter": 3,
+      "step": 1,
+      "en": "Register: switch on \"Register cubes as they are plugged in\"",
+      "kr": "Register: \"Register cubes as they are plugged in\" 켜기",
+      "route": "#/register?hl=register.enable&still=1",
+      "hl": [
+        "register.enable"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-A2",
+      "file": "03-A2.png",
+      "chapter": 3,
+      "step": 2,
+      "en": "A new cube plugged in: NEW NUMBER for its label, then scan its tag",
+      "kr": "새 큐브 연결: 라벨용 새 번호, 이어서 태그 스캔",
+      "route": "#/register?hl=register.flow,station.banner&dock=1&still=1",
+      "hl": [
+        "register.flow",
+        "station.banner"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-A3",
+      "file": "03-A3.png",
+      "chapter": 3,
+      "step": 3,
+      "en": "Registered and synced: unplug it and plug in the next cube",
+      "kr": "등록 및 동기화 완료: 분리하고 다음 큐브 연결",
+      "route": "#/register?hl=register.flow&dock=1&still=1",
+      "hl": [
+        "register.flow"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-1",
+      "file": "03-1.png",
+      "chapter": 3,
+      "step": 1,
+      "en": "Cube card after USB identification: the pinned cube, its number and tag",
+      "kr": "USB 식별 후 큐브 카드: 고정된 큐브, 번호와 태그",
+      "route": "#/devices/A4:CF:12:34:56:79/overview?hl=cube.number,pairing.register&still=1",
+      "hl": [
+        "cube.number",
+        "pairing.register"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-2",
+      "file": "03-2.png",
+      "chapter": 3,
+      "step": 2,
+      "en": "Register (scan a tag)",
+      "kr": "등록 (태그 스캔)",
+      "route": "#/devices/A4:CF:12:34:56:79/overview?hl=pairing.register&open=pairing.register&still=1",
+      "hl": [
+        "pairing.register"
+      ],
+      "open": [
+        "pairing.register"
+      ],
+      "settled": true
+    },
+    {
+      "id": "03-3",
+      "file": "03-3.png",
+      "chapter": 3,
+      "step": 3,
+      "en": "READY TO SCAN: the cube flashes, the station waits for a fresh tag",
+      "kr": "READY TO SCAN: 큐브가 점멸하고 스테이션이 새 태그를 기다림",
+      "route": "#/devices/02:AA:BB:CC:DD:01/station?hl=station.banner,pairing.stop&dock=1&still=1",
+      "hl": [
+        "station.banner",
+        "pairing.stop"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-4",
+      "file": "03-4.png",
+      "chapter": 3,
+      "step": 4,
+      "en": "TAG DETECTED · REGISTERING: the mapping is being delivered over the radio",
+      "kr": "TAG DETECTED · REGISTERING: 매핑이 무선으로 전달되는 중",
+      "route": "#/devices/02:AA:BB:CC:DD:01/station?hl=station.banner,station.ladder&dock=1&still=1",
+      "hl": [
+        "station.banner",
+        "station.ladder"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "03-5",
+      "file": "03-5.png",
+      "chapter": 3,
+      "step": 5,
+      "en": "REGISTERED: acknowledged by the cube; the row shows the committed tag",
+      "kr": "REGISTERED: 큐브가 확인 응답; 행에 확정 태그 표시",
+      "route": "#/devices/A4:CF:12:34:56:79/overview?hl=cube.tag,cube.ladder&dock=1&still=1",
+      "hl": [
+        "cube.tag",
+        "cube.ladder"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-1",
+      "file": "04-1.png",
+      "chapter": 4,
+      "step": 1,
+      "en": "Cube › Firmware: the reported version differs from the local build",
+      "kr": "Cube › Firmware: 보고된 버전이 로컬 빌드와 다름",
+      "route": "#/devices/A4:CF:12:34:56:78/firmware?hl=cube.fw.verdict,cube.flash_firmware&still=1",
+      "hl": [
+        "cube.fw.verdict",
+        "cube.flash_firmware"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-2",
+      "file": "04-2.png",
+      "chapter": 4,
+      "step": 2,
+      "en": "Flashing: the job card shows the stage and progress; the port is held",
+      "kr": "플래시 중: 작업 카드에 단계와 진행률 표시, 포트 점유",
+      "route": "#/devices/A4:CF:12:34:56:78/firmware?hl=job:cube.flash&dock=1&still=1",
+      "hl": [
+        "job:cube.flash"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-3",
+      "file": "04-3.png",
+      "chapter": 4,
+      "step": 3,
+      "en": "Verified: the cube rebooted and reported the new version",
+      "kr": "검증 완료: 큐브가 재부팅 후 새 버전을 보고함",
+      "route": "#/devices/A4:CF:12:34:56:78/firmware?hl=job:cube.flash,cube.fw.verdict&dock=1&still=1",
+      "hl": [
+        "job:cube.flash",
+        "cube.fw.verdict"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-4",
+      "file": "04-4.png",
+      "chapter": 4,
+      "step": 4,
+      "en": "Cube › History and Check boot",
+      "kr": "Cube › History 및 Check boot",
+      "route": "#/devices/A4:CF:12:34:56:78/history?hl=cube.check_boot,cube.history&still=1",
+      "hl": [
+        "cube.check_boot",
+        "cube.history"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "06-1",
+      "file": "06-1.png",
+      "chapter": 6,
+      "step": 1,
+      "en": "Zone relay: every zone in range with its database version and signal",
+      "kr": "Zone relay: 범위 내 모든 존과 데이터베이스 버전, 신호",
+      "route": "#/devices/02:AA:BB:CC:DD:01/relay?hl=relay.table,zones.query&still=1",
+      "hl": [
+        "relay.table",
+        "zones.query"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "06-2",
+      "file": "06-2.png",
+      "chapter": 6,
+      "step": 2,
+      "en": "Update all: chunks are being sent to the zones that are behind",
+      "kr": "Update all: 뒤처진 존에 청크 전송 중",
+      "route": "#/devices/02:AA:BB:CC:DD:01/relay?hl=relay.progress,zones.stop&dock=1&still=1",
+      "hl": [
+        "relay.progress",
+        "zones.stop"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "06-3",
+      "file": "06-3.png",
+      "chapter": 6,
+      "step": 3,
+      "en": "Database v32 confirmed on the plate",
+      "kr": "플레이트에서 데이터베이스 v32 확인됨",
+      "route": "#/devices/02:AA:BB:CC:DD:01/relay?hl=relay.table,relay.zone:14:63:93:C0:EC:14&dock=1&still=1",
+      "hl": [
+        "relay.table",
+        "relay.zone:14:63:93:C0:EC:14"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "06-4",
+      "file": "06-4.png",
+      "chapter": 6,
+      "step": 4,
+      "en": "Auto-update all while walking the space",
+      "kr": "공간을 걸으며 Auto-update all",
+      "route": "#/devices/02:AA:BB:CC:DD:01/relay?hl=zones.walkaround&still=1",
+      "hl": [
+        "zones.walkaround"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "07-1",
+      "file": "07-1.png",
+      "chapter": 7,
+      "step": 1,
+      "en": "A blank board: Firmware & database with the provisioning form",
+      "kr": "빈 보드: 프로비저닝 폼이 있는 Firmware & database",
+      "route": "#/devices/14:63:93:C0:EC:50/firmware?hl=zone.fw.form,zone.flash&still=1",
+      "hl": [
+        "zone.fw.form",
+        "zone.flash"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "07-2",
+      "file": "07-2.png",
+      "chapter": 7,
+      "step": 2,
+      "en": "Flashing the zone: firmware, configuration and database in one job",
+      "kr": "존 플래시: 펌웨어·설정·데이터베이스를 한 작업으로",
+      "route": "#/devices/14:63:93:C0:EC:50/firmware?hl=job:zone.flash&dock=1&still=1",
+      "hl": [
+        "job:zone.flash"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "07-3",
+      "file": "07-3.png",
+      "chapter": 7,
+      "step": 3,
+      "en": "Verified: the report after reboot matches what was written",
+      "kr": "검증 완료: 재부팅 후 보고가 기록 내용과 일치",
+      "route": "#/devices/14:63:93:C0:EC:50/firmware?hl=job:zone.flash,zone.fw.identity&dock=1&still=1",
+      "hl": [
+        "job:zone.flash",
+        "zone.fw.identity"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "07-4",
+      "file": "07-4.png",
+      "chapter": 7,
+      "step": 4,
+      "en": "Cube monitor: a tag was read and the cube found",
+      "kr": "큐브 모니터: 태그를 읽고 큐브를 찾음",
+      "route": "#/devices/14:63:93:C0:EC:14/monitor?hl=zone.monitor.ring,zone.monitor.card&still=1",
+      "hl": [
+        "zone.monitor.ring",
+        "zone.monitor.card"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "08-1",
+      "file": "08-1.png",
+      "chapter": 8,
+      "step": 1,
+      "en": "Cue test: take the lease, then press a POINT button",
+      "kr": "Cue test: 리스를 잡은 뒤 POINT 버튼을 누름",
+      "route": "#/devices/14:63:93:C0:EC:14/cue?hl=preshow.arm,preshow.cue&still=1",
+      "hl": [
+        "preshow.arm",
+        "preshow.cue"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "08-2",
+      "file": "08-2.png",
+      "chapter": 8,
+      "step": 2,
+      "en": "Point 2 ON, acknowledged by the media bridge",
+      "kr": "포인트 2 ON, 미디어 브리지가 확인 응답",
+      "route": "#/devices/14:63:93:C0:EC:14/cue?hl=preshow.state,preshow.cue&dock=1&still=1",
+      "hl": [
+        "preshow.state",
+        "preshow.cue"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "10-1",
+      "file": "10-1.png",
+      "chapter": 10,
+      "step": 1,
+      "en": "Calibration: lease taken, the live reading and the band diagram",
+      "kr": "캘리브레이션: 리스 획득, 실시간 값과 밴드 다이어그램",
+      "route": "#/devices/14:63:93:C0:EC:33/calibration?hl=pool.arm,pool.bands&still=1",
+      "hl": [
+        "pool.arm",
+        "pool.bands"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "10-2",
+      "file": "10-2.png",
+      "chapter": 10,
+      "step": 2,
+      "en": "Capture control point 12 from the live reading",
+      "kr": "실시간 값으로 제어점 12 캡처",
+      "route": "#/devices/14:63:93:C0:EC:33/calibration?hl=pool.point:12&still=1",
+      "hl": [
+        "pool.point:12"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "10-3",
+      "file": "10-3.png",
+      "chapter": 10,
+      "step": 3,
+      "en": "Apply & save: the board confirms with saved=true",
+      "kr": "Apply & save: 보드가 saved=true로 확인",
+      "route": "#/devices/14:63:93:C0:EC:33/calibration?hl=pool.saved,pool.cal_save&dock=1&still=1",
+      "hl": [
+        "pool.saved",
+        "pool.cal_save"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "10-4",
+      "file": "10-4.png",
+      "chapter": 10,
+      "step": 4,
+      "en": "Guided recording: hold the slider at the prompted tick",
+      "kr": "가이드 녹화: 안내된 눈금에서 슬라이더 고정",
+      "route": "#/devices/14:63:93:C0:EC:33/diagnostics?hl=pool.record,pool.record_reached&still=1",
+      "hl": [
+        "pool.record",
+        "pool.record_reached"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "11-1",
+      "file": "11-1.png",
+      "chapter": 11,
+      "step": 1,
+      "en": "Show section: the controller, cube number and the two steps",
+      "kr": "Show 섹션: 컨트롤러, 큐브 번호와 두 단계",
+      "route": "#/show?cube=44&hl=show.controller,show.cube,mainshow.ready,mainshow.trigger&still=1",
+      "hl": [
+        "show.controller",
+        "show.cube",
+        "mainshow.ready",
+        "mainshow.trigger"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "11-2",
+      "file": "11-2.png",
+      "chapter": 11,
+      "step": 2,
+      "en": "① Mainshow ready delivered: the cube turns neon",
+      "kr": "① Mainshow ready 전달됨: 큐브가 네온으로",
+      "route": "#/show?hl=mainshow.ready,show.ladder&dock=1&still=1",
+      "hl": [
+        "mainshow.ready",
+        "show.ladder"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "11-3",
+      "file": "11-3.png",
+      "chapter": 11,
+      "step": 3,
+      "en": "② Trigger mainshow",
+      "kr": "② Trigger mainshow",
+      "route": "#/show?hl=mainshow.trigger&open=mainshow.trigger&still=1",
+      "hl": [
+        "mainshow.trigger"
+      ],
+      "open": [
+        "mainshow.trigger"
+      ],
+      "settled": true
+    },
+    {
+      "id": "11-4",
+      "file": "11-4.png",
+      "chapter": 11,
+      "step": 4,
+      "en": "Show running: the clock counts the expected timeline",
+      "kr": "쇼 진행 중: 시계가 예상 타임라인을 셈",
+      "route": "#/show?hl=show.clock,mainshow.idle&dock=1&still=1",
+      "hl": [
+        "show.clock",
+        "mainshow.idle"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "11-5",
+      "file": "11-5.png",
+      "chapter": 11,
+      "step": 5,
+      "en": "Show editor: transport, timeline, the previewed cubes and Send to real cubes",
+      "kr": "Show editor: 트랜스포트, 타임라인, 미리보기 큐브와 Send to real cubes",
+      "route": "#/showedit?hl=css:.show-transport,css:.show-cubes,show.publish&still=1",
+      "hl": [
+        "css:.show-transport",
+        "css:.show-cubes",
+        "show.publish"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "11-6",
+      "file": "11-6.png",
+      "chapter": 11,
+      "step": 6,
+      "en": "Cubes: Query cubes, then Update all to the published version",
+      "kr": "Cubes: Query cubes 후 게시 버전으로 Update all",
+      "route": "#/showedit?hl=show.query,show.update_all&still=1",
+      "hl": [
+        "show.query",
+        "show.update_all"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-1",
+      "file": "C-1.png",
+      "chapter": 0,
+      "step": 1,
+      "en": "The console: device rail, attention panel, timeline dock",
+      "kr": "콘솔: 장치 레일, Attention 패널, 타임라인 도크",
+      "route": "#/devices?hl=rail,attention,topbar.sync&dock=1&still=1",
+      "hl": [
+        "rail",
+        "attention",
+        "topbar.sync"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-2",
+      "file": "C-2.png",
+      "chapter": 0,
+      "step": 2,
+      "en": "Unknown tag on the plate, known here: Update database over USB",
+      "kr": "플레이트에서 알 수 없는 태그, 여기서는 알려짐: USB로 데이터베이스 업데이트",
+      "route": "#/devices/14:63:93:C0:EC:14/monitor?hl=attention.card:tag.known_zone_behind,attention.action:zone.update_db_usb&still=1",
+      "hl": [
+        "attention.card:tag.known_zone_behind",
+        "attention.action:zone.update_db_usb"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-3",
+      "file": "C-3.png",
+      "chapter": 0,
+      "step": 3,
+      "en": "A suggestion card menu: dismiss for this session",
+      "kr": "제안 카드 메뉴: 이 세션 동안 무시",
+      "route": "#/devices/14:63:93:C0:EC:14/monitor?hl=attention.menu:tag.known_zone_behind&open=attention.menu:tag.known_zone_behind&still=1",
+      "hl": [
+        "attention.menu:tag.known_zone_behind"
+      ],
+      "open": [
+        "attention.menu:tag.known_zone_behind"
+      ],
+      "settled": true
+    },
+    {
+      "id": "C-4",
+      "file": "C-4.png",
+      "chapter": 0,
+      "step": 4,
+      "en": "Inventory › Cubes: every record, filter and search",
+      "kr": "Inventory › Cubes: 모든 레코드, 필터와 검색",
+      "route": "#/inventory/cubes?hl=inventory.table,inventory.search&still=1",
+      "hl": [
+        "inventory.table",
+        "inventory.search"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-5",
+      "file": "C-5.png",
+      "chapter": 0,
+      "step": 5,
+      "en": "Sync ↑3 ↓2 and the Web sync plan",
+      "kr": "Sync ↑3 ↓2 및 Web sync 계획",
+      "route": "#/inventory/websync?hl=websync.plan,topbar.sync&still=1",
+      "hl": [
+        "websync.plan",
+        "topbar.sync"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-6",
+      "file": "C-6.png",
+      "chapter": 0,
+      "step": 6,
+      "en": "Sign in once: the web password is stored on this computer",
+      "kr": "한 번만 로그인: 웹 비밀번호는 이 컴퓨터에 저장",
+      "route": "#/inventory/websync?hl=sync.signin&open=sync.signin&still=1",
+      "hl": [
+        "sync.signin"
+      ],
+      "open": [
+        "sync.signin"
+      ],
+      "settled": true
+    },
+    {
+      "id": "C-7",
+      "file": "C-7.png",
+      "chapter": 0,
+      "step": 7,
+      "en": "General Radio: cubes and show verbs on one dongle",
+      "kr": "General Radio: 하나의 동글로 큐브와 쇼 명령",
+      "route": "#/devices/02:AA:BB:CC:DD:EE/cubes?cube=44&hl=radio.set_zone,radio.show_start&still=1",
+      "hl": [
+        "radio.set_zone",
+        "radio.show_start"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-8",
+      "file": "C-8.png",
+      "chapter": 0,
+      "step": 8,
+      "en": "General Radio: a pool lamp held under lease",
+      "kr": "General Radio: 리스로 유지되는 풀 램프",
+      "route": "#/devices/02:AA:BB:CC:DD:EE/pool?hl=radio.pool,radio.pool_release&still=1",
+      "hl": [
+        "radio.pool",
+        "radio.pool_release"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "C-9",
+      "file": "C-9.png",
+      "chapter": 0,
+      "step": 9,
+      "en": "This computer: USB intake, locks and builds",
+      "kr": "이 컴퓨터: USB 인테이크, 잠금과 빌드",
+      "route": "#/devices/computer?hl=computer.intake,usb.auto_cubes&still=1",
+      "hl": [
+        "computer.intake",
+        "usb.auto_cubes"
+      ],
+      "open": [],
+      "settled": true
+    }
+  ],
+  "console_version": "0.1.0"
+}

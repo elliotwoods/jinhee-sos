@@ -16,6 +16,8 @@ PANELS = {
                           check='Green registration means an application ACK was recorded; it does not prove the cube is reachable now.'),
     'cube.firmware': dict(title='Firmware', what='The version this cube reports over USB against the local build.',
                           check='A matching version is not a binary hash verification. Missing response means unverified, not current.'),
+    'register': dict(title='Register cubes', what='Plug in a cube over USB: it is identified, given the lowest free number above 32 if it has none (write a new number on its label), flashes for its NFC tag at the pairing station, and after the cube acknowledges, one Sync uploads the mapping and publishes the zone database.',
+                     check='Registered means the cube acknowledged over the radio. Zones learn the tag only once they hold the published database: automatic zone updates bring it to zones in range; Update all is the manual path.'),
     'station': dict(title='Pairing station', what='The NFC station: discovery, registration, LED tests, and the zone relay.',
                     check='NFC ready and radio ready are separate. A registration needs the cube\'s application ACK.'),
     'zone.monitor': dict(title='Cube monitor', what='The cube on this plate and what the plate told it; the ring is the last commanded colour.',
@@ -57,7 +59,7 @@ PANELS = {
     'bench': dict(title='Bench tools', what='Diagnostics that need a specific board on USB; the board\'s identity is what makes them safe.',
                   check='Light and cue tests affect physical output. Switch overrides off afterwards.'),
     'settings': dict(title='Settings', what='Appearance and behaviour of this console; nothing here changes hardware.',
-                     check='Theme is per browser; behaviour settings apply to this run.'),
+                     check='Theme is per browser; behaviour and automatic-update settings are saved on this computer.'),
 }
 
 STATUS = {
@@ -140,6 +142,10 @@ ACTIONS = {
     'pairing.register': dict(label='Register (scan a tag)', what='Flashes this cube red/blue and waits for a fresh NFC scan at the station, then sends it its number and tag.',
                              hazard='A scanned tag that belongs to another device is transferred to this cube.', needs='Station connected and its NFC reader ready.',
                              disabled='The station is not connected, its reader is not ready, or another operation is running.'),
+    'register.restart': dict(label='Start again', what='Runs the registration workflow again for the cube plugged in over USB: number, NFC scan, sync.',
+                             hazard='The cube flashes red/blue and waits for a fresh scan; a scanned tag that belongs to another device is transferred to it.', needs=_STATION),
+    'register.retry': dict(label='Retry', what='Retries the failed step: re-sends the saved registration if the station paused on this cube, otherwise flashes it for a new scan, or syncs again.',
+                           hazard='The cube stores the mapping in NVS; a pending tag is confirmed only by its ACK.', needs=_STATION),
     'pairing.transmit': dict(label='Send saved mapping', what='Sends this cube its saved number and tag without a new scan.',
                              hazard='The cube stores the mapping in NVS; a pending tag is confirmed only by its ACK.', needs=_STATION),
     'pairing.transmit_originals': dict(label='Transmit original 32', what='Sends each of the original 32 mappings to its cube.',
@@ -164,6 +170,9 @@ ACTIONS = {
     'mainshow.led_test': dict(label='LED test', what='Lights or clears the controller\'s own LED.', hazard='Visible on the controller only.'),
     'show.query': dict(label='Query cubes', what='Broadcast SHOW_QUERY: every v1.5.0+ cube in range reports which show it holds within 2 s.', hazard='Radio traffic only; nothing changes on the cubes.', needs=_RADIO),
     'show.update': dict(label='Update', what='Sends the published show to this one cube.', hazard='The cube stores the new show; a cube never goes back a version.', needs=_RADIO),
+    'show.update_selected': dict(label='Update selected', what='Sends the published show until the ticked cubes confirm it.',
+                                 hazard='A broadcast: every cube in range on an older show stores it too (all cubes get the same show).',
+                                 needs=_RADIO + ' A published show.'),
     'show.update_all': dict(label='Update all', what='Broadcasts the published show until every cube heard recently confirms it.',
                             hazard='Every cube in range stores the new show. Cubes playing a show commit it when their show ends.', needs=_RADIO + ' A published show.'),
     'show.auto_update': dict(label='Auto update', what='Walk-around mode: any cube in range on an older show is updated automatically.',
@@ -172,6 +181,9 @@ ACTIONS = {
                              hazard='Changes how long the controller runs a show.'),
     'show.revert': dict(label='Revert', what='Replaces the editor\'s working copy with the published show or the compiled-in default.',
                         hazard='Discards this computer\'s unsaved edits. Hold to confirm.'),
+    'show.live': dict(label='Mirror on real cubes', what='While on, broadcasts the colour each previewed cube number shows at the playhead (SHOW_LIVE, about 16 times a second) so the bench cubes follow the editor.',
+                      hazard='Recolours every cube in range whose number is previewed; each colour lapses 0.6 s after the last one. Cubes playing a show ignore it.',
+                      needs='A General Radio running general-radio-1.2.0 and cubes with firmware v1.7.0-USB.1.'),
     'show.publish': dict(label='Publish', what='Publishes the working copy on the web as the next show version.', hazard='Cubes are not touched until you update them.'),
     # --- general radio
     'radio.set_zone': dict(label='Set zone', what='Unicast SET_ZONE ×3 to the chosen cube through the General Radio.',

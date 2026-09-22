@@ -78,7 +78,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("Serial.read() == '?'",source)
         self.assertIn('MSG_RESERVED_5      = 5',source)
     def test_artifacts_valid(self):
-        m=load_manifest();self.assertEqual(m['version'],'v1.6.0-USB.1')
+        m=load_manifest();self.assertEqual(m['version'],'v1.7.0-USB.1')
         for s in m['segments']:
             self.assertFalse(s['offset'] < 0xe000 and s['offset']+s['size']>0x9000)
 

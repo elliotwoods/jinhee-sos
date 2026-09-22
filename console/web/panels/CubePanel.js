@@ -2,7 +2,7 @@ import { html } from '../lib/html.js';
 import { useState } from 'preact/hooks';
 import { useSections, useCopy, useRouteTab } from '../lib/hooks.js';
 import { ledToken } from '../lib/theme.js';
-import { section } from '../store.js';
+import { section, state } from '../store.js';
 import { Pill, KeyValue, Explainer, Banner, NumberField, Tabs, Ladder } from '../components/basics.js';
 import { ActionButton, HoldButton } from '../components/actions.js';
 import { DataTable, JobCard } from '../components/data.js';
@@ -11,6 +11,14 @@ import { DeviceHeader, rowByMac, sessionOf, jobsFor, RawConsole, JobHistory } fr
 import { run } from '../api.js';
 import { notify } from '../lib/notify.js';
 import { hhmmss, crc } from '../lib/format.js';
+
+// A registration status as words (uitext STATUS label, else the enum humanised): shown on cards and detail rows.
+const STATUS_WORDS = { awaiting_tag: 'awaiting tag', not_transmitted: 'saved, not sent', acknowledged: 'acknowledged', unconfirmed: 'unconfirmed', needs_number: 'needs a number', pending: 'pending', discovered: 'discovered' };
+export function statusLabel(status) {
+  if (!status) return '—';
+  const entry = (state.copy && state.copy.status && state.copy.status['registration.' + status]) || null;
+  return (entry && entry.label) || STATUS_WORDS[status] || String(status).replace(/_/g, ' ');
+}
 
 export function registrationPill(row) {
   return html`<${Pill} status=${'registration.' + (row ? row.status : 'discovered')} />`;
@@ -33,7 +41,7 @@ export function cubeLevel(row) {
   if (row.status === 'acknowledged') return { level: 'acknowledged', note: 'the cube acknowledged its mapping; verified would need a read-back' };
   if (t.delivery === 'failed' || t.delivery === 'not delivered') return { level: 'sent', failed: true, note: `${t.command || 'last command'}: no radio delivery` };
   if (t.delivery === 'delivered') return { level: 'delivered', note: `${t.command || 'last command'}: radio ACK, not yet acknowledged by the cube` };
-  if (['pending', 'unconfirmed', 'not_transmitted'].includes(row.status)) return { level: 'sent', note: `${row.status}: no acknowledgment recorded` };
+  if (['pending', 'unconfirmed', 'not_transmitted'].includes(row.status)) return { level: 'sent', note: `${statusLabel(row.status)}: no acknowledgment recorded` };
   return { level: null, note: 'nothing in flight' };
 }
 
@@ -50,7 +58,7 @@ export function CubeActions({ row, mac }) {
   // The pairing app's button rules, computed on the owner thread (state.capabilities): why each action is off.
   const cap = (row && row.capabilities) || {};
   const why = (name) => (cap[name] && !cap[name].enabled ? cap[name].reason : null);
-  const unavailable = [['Register', why('register')], ['Send saved mapping', why('transmit')], ['Flash', why('flash')], ['Rename', why('rename')], ['Role', why('role')]].filter(([, r]) => r);
+  const unavailable = [['Register', why('register')], ['Send saved mapping', row && (row.uid || row.pending_uid) ? why('transmit') : null], ['Flash', why('flash')], ['Rename', why('rename')], ['Role', why('role')]].filter(([, r]) => r);
   return html`<div class="stack">
     ${excluded && html`<div class="note">Excluded (reader / base station): registration and LED actions are not offered.</div>`}
     ${!hasNumber && !excluded && html`<div><div class="note">This device needs its physical label number before it can be registered.</div>
@@ -75,7 +83,7 @@ export function CubeDetail({ row, mac }) {
     ['Assigned number', row && row.cube_id != null ? `#${row.cube_id}` : 'none'],
     ['Original table number', row && row.original_number != null ? `#${row.original_number} · ${row.nfc_seen ? 'NFC scanned here' : 'NFC unseen here'}` : '—'],
     ['MAC', mac], ['Committed tag (uid)', row && row.uid, 'cube.tag'], ['Pending tag', row && row.pending_uid],
-    ['Registration', row ? `${row.status} · ${row.detail || ''}` : 'not in the inventory'],
+    ['Registration', row ? [statusLabel(row.status), row.detail].filter(Boolean).join(' · ') : 'not in the inventory'],
     ['Source / updated', row ? `${row.source} · ${row.updated_at}` : '—'],
     ['Radio', row && row.age_s != null ? `discovery reply ${row.age_s} s ago` : 'no discovery reply this session'],
     ['Last command', t.command ? `${t.command} · ${t.delivery || ''}` : '—'],
@@ -93,7 +101,7 @@ export function CubePanel({ device }) {
   const fw = device.fw_status || s.fw_status;
   const flags = s.flags || {};
   const label = row && row.cube_id != null ? `Cube #${row.cube_id}` : 'Cube (no number yet)';
-  const pills = html`${registrationPill(row)} ${fw && html`<${Pill} status=${'firmware.' + fw.status} label=${`${fw.version || '?'} · ${(copy.status['firmware.' + fw.status] || {}).label || fw.status}`} />`}`;
+  const pills = html`${registrationPill(row)} ${fw && html`<${Pill} status=${'firmware.' + fw.status} label=${`${fw.version || fw.reported || 'unverified'} · ${(copy.status['firmware.' + fw.status] || {}).label || fw.status}`} />`}`;
   return html`<div>
     <${DeviceHeader} device=${device} title=${label} pills=${pills} />
     <${StationBanner} />

@@ -6,7 +6,7 @@ substitute for that test, only a stand-in cube for host-side tooling.
 """
 import showfile
 
-FW = 'v1.6.0-USB.1'
+FW = 'v1.7.0-USB.1'
 
 
 class FakeShowCube:
@@ -20,6 +20,7 @@ class FakeShowCube:
         self.staging = None  # dict(version, crc, length, total, chunks{index: bytes})
         self.pending = False
         self.commits = 0
+        self.live = None     # SHOW_LIVE (firmware v1.7.0+): dict(rgb, lease_ms, count) last shown for cube_id
 
     @property
     def crc(self):
@@ -64,6 +65,14 @@ class FakeShowCube:
                             self.pending = True
                             if not self.show_running:
                                 out.append(self.commit())
+        elif kind == showfile.SHOW_LIVE and broadcast:
+            # Authoring mirror: a numbered cube not playing a show takes its entry (no reply).
+            _, _, _, lease_ms, n = showfile.LIVE_HEADER.unpack_from(data)
+            for i in range(n):
+                cube, r, g, b = showfile.LIVE_ENTRY.unpack_from(data, showfile.LIVE_HEADER.size + i * showfile.LIVE_ENTRY.size)
+                if self.cube_id and cube == self.cube_id and not self.show_running:
+                    count = self.live['count'] + 1 if self.live else 1
+                    self.live = dict(rgb=(r, g, b), lease_ms=lease_ms, count=count)
         elif kind == showfile.SHOW_QUERY:
             _, _, _, nonce, _ = showfile.QUERY.unpack(data)
             out.append(self.status(nonce))

@@ -33,6 +33,14 @@ The show length bounds the timecode and the green status. It comes from `show_co
 the default is 298 s. The console's Show editor sends it after a publish. `show_stop` ends the timecode.
 It does not stop the cubes; `SET_ZONE 0` does.
 
+Hardware check, 2026-09-23: mainshow-1.3.0 was flashed onto a spare board (#138, then restored to
+general-radio-1.1.0) and tested against cube #17 on v1.6.0, reading the cube's serial log.
+- Normal start: ready then start; the cube started and ignored the repeats.
+- Timecode: the cube logged no resync over the next 4 s.
+- Fallback: a start while the cube was idle was ignored. Made ready 2.4 s later, the cube joined from
+  the timecode at T = 3132 ms.
+- The real controller (#134) is still on mainshow-1.2.0.
+
 ## Triggers
 
 | Source | Target | Notes |

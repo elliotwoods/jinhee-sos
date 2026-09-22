@@ -47,8 +47,9 @@ def _job(job):
 def settings(hub, key, value):
     if key not in hub.settings:
         raise ValueError(f'Unknown setting {key}')
-    hub.settings[key] = value
-    hub.mark_dirty('settings')
+    hub.settings[key] = bool(value)
+    hub.save_settings()
+    hub.apply_auto_modes()
     return hub.settings
 
 
@@ -214,6 +215,49 @@ def pairing_register(hub, mac, number=None, device=None):
     return True
 
 
+# ---------------------------------------------------------------- guided registration (regflow.py)
+@command('register.enable')
+def register_enable(hub, on):
+    """Switch the guided registration on or off (plugging in a cube then starts it)."""
+    hub.settings['auto_register'] = bool(on)
+    hub.save_settings()
+    hub.mark_dirty('register')
+    return hub.regflow.snapshot()
+
+
+@command('register.restart', 'hardware')
+def register_restart(hub):
+    """Start the workflow again for the cube plugged in over USB (flashes it for a fresh NFC scan)."""
+    hub.regflow.restart()
+    return hub.regflow.snapshot()
+
+
+@command('register.retry', 'hardware')
+def register_retry(hub):
+    """Retry the failed step: re-send the saved registration, flash for a new scan, or sync again."""
+    hub.regflow.retry()
+    return hub.regflow.snapshot()
+
+
+@command('register.cancel')
+def register_cancel(hub):
+    hub.regflow.cancel()
+    return hub.regflow.snapshot()
+
+
+@command('register.renumber')
+def register_renumber(hub, number):
+    """Use the number on the cube's label instead of the suggested one (before its tag is scanned)."""
+    hub.regflow.renumber(int(number))
+    return hub.regflow.snapshot()
+
+
+@command('register.sync')
+def register_sync(hub):
+    hub.regflow.sync_now()
+    return hub.regflow.snapshot()
+
+
 @command('pairing.transmit', 'hardware')
 def pairing_transmit(hub, macs, device=None):
     """Send the saved mapping(s) without a new scan."""
@@ -351,6 +395,7 @@ def zones_update(hub, mac, device=None):
     if session.controller.mode:
         raise ValueError('Stop the pairing operation first; the station is busy')
     p = session.zones.update(mac)
+    hub.mark_dirty('registry')
     return dict(version=p.version, count=p.count)
 
 
@@ -364,6 +409,7 @@ def zones_update_all(hub, device=None):
     if not candidates:
         raise ValueError(f'No out-of-date zones in range (published v{hub.store.published()["version"]})')
     p = session.zones.publish(expected=candidates, timeout=session.zones.WALK_TIMEOUT)
+    hub.mark_dirty('registry')
     return dict(version=p.version, zones=candidates)
 
 
@@ -377,10 +423,12 @@ def zones_stop(hub, device=None):
 
 @command('zones.walkaround')
 def zones_walkaround(hub, enabled, device=None):
-    session = hub.zone_relay(device)
-    session.zones.set_walkaround(bool(enabled))
-    if enabled:
-        session.zones.set_auto_refresh(True)
+    """Automatic zone database updates over the air (the persisted `auto_zone_db_radio` setting).
+    Only the preferred relay walks (hub.apply_auto_modes); `device` is accepted for older callers."""
+    hub.settings['auto_zone_db_radio'] = bool(enabled)
+    hub.save_settings()
+    hub.apply_auto_modes()
+    hub.mark_dirty('registry')
     return bool(enabled)
 
 

@@ -55,10 +55,10 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 
 | Old app | Now |
 |---|---|
-| Pairing station | Cube panel (Register, Send saved mapping, Flash, number, role), Pairing station panel (connection, NFC health, Discover, Pair new, Retry/Skip/Stop), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
+| Pairing station | Register page (plug-in-to-register workflow, ⌘2), Cube panel (Register, Send saved mapping, Flash, number, role), Pairing station panel (connection, NFC health, Discover, Pair new, Retry/Skip/Stop), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
 | Cube flasher | Cube panel › Firmware (Flash, Check boot, history); This computer › USB intake (Auto-flash cubes, off at launch) and Firmware builds |
-| Zone flasher + cube monitor | Zone panel › Monitor (card, LED ring, history, actions, console) and › Firmware & database (identity form, Flash, Force, Update database over USB, Check report, RX gain); USB intake (Auto-flash zones) |
-| Zone Database Manager | Zone panel (Update over the air, Identify, Request log, Reboot, RX gain), Pairing station / dongle panel (Query zones, auto-refresh, Update all, Auto-update all), Inventory › Zone database |
+| Zone flasher + cube monitor | Zone panel › Monitor (card, LED ring, history, actions, console) and › Firmware & database (identity form, Flash, Force, Update database over USB, Automatic database update, Check report, RX gain); USB intake (Auto-flash zones); database-only USB updates run without Auto-flash (Settings › Automatic updates) |
+| Zone Database Manager | Zone panel (Update over the air, Identify, Request log, Reboot, RX gain), Pairing station / dongle panel (Query zones, auto-refresh, Update all, Auto-update all = Settings › Automatic updates), Inventory › Zone database |
 | Mainshow controller | Show section and the Mainshow controller panel (① ready, ② trigger, Stop → idle, clock); "Make this a Mainshow controller" on a spare board |
 | Pool calibration | PoolZone panel › Calibration (override lease, control points, guided recording, tuning), › Diagnostics, › Firmware & database (firmware, database, radio id) |
 | Pool light test | PoolRadioTest bridge panel; pool central telemetry on the PoolCentral panel |
@@ -70,20 +70,94 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 Port pickers are gone: boards are identified when plugged in. Manual choice survives on the
 Unidentified board panel (probe again, open console, make this a dongle / controller / zone).
 
-## Show editor (#/showedit, ⌘4)
+## Automatic updates (Settings › Automatic updates)
 
-The main show as cues on a timeline. The colour band and the LED preview use `web/lib/showengine.js`,
-which renders exactly what cube firmware v1.5.0 plays (the same vectors as the C++ and Python engines).
+Every database is kept current without a click, by default and across relaunches (settings are saved in
+the device database, metadata `console_settings`; `console.settings` / Settings page):
+
+- **Zone databases over the air** (`auto_zone_db_radio`): `hub.apply_auto_modes()` switches the
+  `ZoneRegistry` walk-around on for the preferred relay only (`station_session()`: a pairing station, else a
+  General Radio) and off on every other relay, so two radios never broadcast chunks over each other. Reopened
+  sessions and newly plugged dongles pick it up within a second. The relay panel's "auto-update all" box is
+  this setting.
+- **Zone databases over USB** (`auto_zone_db_usb`): `Intake.database_step()` gives any configured NctZone board
+  on USB whose database is behind the published one a database-only update (`jobs/zone.update_db_job`,
+  identity and firmware untouched), once per board and publication, independent of Auto-flash zones. The zone's
+  Firmware & database tab shows the result.
+- **Main show over the air** (`auto_show`): the show registry's walk-around (Show editor › Auto update).
+- **Web pulls** (`auto_pull`, needs the web password): a status check that reports a newer zone database pulls
+  it (each web version once per run); a newer published show is pulled every 5 min while a show relay is
+  connected (silent while none is published; a new one logs "Pulled show vN"). Failures are logged once per
+  distinct error.
+
+`--simulate` writes databases to the fake zones instead of running esptool (`simulate.fake_zone_db`); the
+documentation bench (`simdocs`) switches automatic updates off so its staged scenes stay put.
+Tests: `tests/test_auto_update.py`.
+
+## Register cubes (#/register, ⌘2)
+
+`regflow.py` + `web/panels/RegisterSection.js`. With "Register cubes as they are plugged in" on (setting
+`auto_register`, off by default), plugging in a cube runs: USB identification (pinned) → a number if it has none
+(`suggested_number()`: lowest free above 32, never 2/22/39/43; the page and a toast say NEW NUMBER so it goes on
+the label; "Label says" overrides it before the scan) → `Controller.repair` on the pairing station (the cube
+flashes; scan its tag; every registration rule stays in the controller) → one Sync once the tag is lifted
+(inventory both ways, then the zone database publish). The registration reaches zones only once the published database is on them: automatic zone updates (on by default) do that for zones in range of the relay and zones plugged in over USB, or use Update all.
+A failure never retries by itself (Retry / Start again). Plugging in another cube mid-flow interrupts the
+first, which keeps its retryable saved mapping. A simulated console refuses every non-loopback web server
+(`jobs/sync.client`), so `--simulate` can never sync with the real web inventory.
+
+## Show editor (#/showedit, ⌘5)
+
+The main show as cues on a timeline. Every cube gets the same show; **Preview cubes** renders several cube
+numbers at once, because fanned cues (cube firmware v1.6.0+) offset each cube by its number and random cues differ
+per cube. The colour band and the LED preview use `web/lib/showengine.js`, which renders exactly what the cube
+firmware plays (the same vectors as the C++ and Python engines).
+
+Layout, top to bottom:
+- **Header**: "↺ Revert to vN" ("Revert to default" while nothing is published; undoable), **Publish**, **Pull**.
+- **Transport** (timeline card, left): Stop, previous cue, Play/Pause, next cue; the timecode (m:ss.mmm) with the
+  total length and the current cue; speed 0.25× / 0.5× / 1× / 2×, Loop (off / selected cue / whole show), a
+  "go to m:ss" field; then Add cue at playhead, Delete cue, Undo, Redo, Fit and the key hints.
+- **Reference video** (timeline card, right): drag a video file in or Choose file…. It plays from an object URL
+  (never uploaded) in step with the timeline, with Offset (ms, remembered per file name), Mute, Larger, Replace…
+  and ✕. While it plays smoothly the video is the master clock; beyond 80 ms of drift it is sought to the show
+  clock (`web/lib/showvideo.js`). Kept while switching pages, not across a restart.
+- **Cube box**: the Preview cubes field (e.g. `1-8, 17`), One / 1-8 / 1-24, and **Send to real cubes #…**
+  (`show.live`, hardware; "■ Stop sending" while on, the box glows with "● Live on #…"). While on, the page
+  sends the colour of each previewed cube number every 60 ms; `showedit.live()` broadcasts SHOW_LIVE frames
+  (`showfile.live`, lease 0.6 s) through the relay, drops calls closer than 40 ms, holds during a show update or
+  a running show, and swallows the relay's replies (fire-and-forget). Needs general-radio-1.2.0 and cubes on
+  v1.7.0-USB.1; a cube playing a real show ignores it. Off when toggled or when leaving the page.
+- **Overview strip**: the whole show; drag its window's edges to zoom, drag inside to scroll, double-click to
+  fit. Ctrl/⌘ + wheel or pinch zooms around the pointer.
+- **Timeline**: ruler and colour band (always 16 cube rows: the previewed cubes first, then the following
+  numbers), then the cue lane. Click or drag the ruler/band to scrub; click a block to select it, drag it to move
+  it (length kept, clamped between its neighbours), drag its left edge to move only its start (10 ms steps),
+  double-click to add a cue. The view follows the playhead while playing.
+- **Cue** inspector (type, start, colours, parameters, **Fanning**: none / sequential step × group / scatter
+  spread, with the per-cube offsets listed) and **Preview** (one LED ring per previewed cube at the playhead;
+  Working copy: hold "Revert to published", hold "Start from the default", Export JSON, Import JSON…).
+- **Cubes**: Query cubes, "Update all to vN", "Update selected (n)" with tick boxes, Auto update on/off, Stop
+  sending, Send length to controller, and a table (#, MAC, firmware, show version + source, state, staging,
+  signal, seen).
+
+Keys (not while typing): Space play/pause, ←/→ ±100 ms (⇧ ±1 s), Home/End, Delete removes the selected cue,
+⌘Z / Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo. Every edit goes through undo and the autosave; changing a cue's type and
+back restores its earlier settings.
+
+Behind it:
 - The working copy lives in the device database (metadata `show_draft`), so `--simulate` never touches it.
   It is validated by `showfile.py` on every save.
 - **Publish** sends it to the web, which allocates the next show version (`jobs/show.py`, `show_publish.py`).
 - **Query / Update all / Auto update** drive `pairing_station/show_registry.py` through a General Radio
-  running general-radio-1.1.0 (`sessions/general_radio.py` routes `show_sent`/`show_frame` to `showedit.py`).
-- Updates hold while the show controller reports a running show.
-- A timecode-capable controller (mainshow-1.3.0, general-radio-1.1.0) is sent the published show's length
-  once per publication. Older controllers are left alone and keep working.
+  (general-radio-1.1.0+; `sessions/general_radio.py` routes `show_sent`/`show_frame` to `showedit.py`). Auto
+  update is the saved Settings › Automatic updates › main show switch. Updates hold while the show controller
+  reports a running show.
+- A timecode-capable controller (mainshow-1.3.0, general-radio-1.1.0+) is sent the published show's length
+  once per publication (or with Send length to controller). Older controllers are left alone and keep working.
 - Back end: `showedit.py` (owned by the hub, section `showedit`) and `commands_show.py` (`show.*`).
-  Tests: `tests/test_show_editor.py`, `web/tests/showengine.test.js`.
+  Tests: `tests/test_show_editor.py`, `web/tests/showengine.test.js`, `web/tests/showtimeline.test.js`.
+  Screenshots: `docscenes.py` 11-5 and 11-6.
 
 ## Tests
 

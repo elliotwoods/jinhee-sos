@@ -22,6 +22,7 @@ import { MainshowPanel, PoolCentralPanel, PoolTestBridgePanel, PreshowBridgePane
 import { InventorySection } from './panels/InventorySection.js';
 import { ShowSection } from './panels/ShowSection.js';
 import { ShowEditorSection } from './panels/ShowEditor.js';
+import { RegisterSection, RegisterNotices } from './panels/RegisterSection.js';
 import { BenchSection, SettingsSection, RadioCubePanel, RadioZonePanel } from './panels/sections.js';
 import { run } from './api.js';
 
@@ -32,6 +33,7 @@ function Main() {
   useSections(['ui', 'devices']);
   const ui = useUI();
   const r = ui.route;
+  if (r.section === 'register') return html`<${RegisterSection} />`;
   if (r.section === 'inventory') return html`<${InventorySection} />`;
   if (r.section === 'show') return html`<${ShowSection} />`;
   if (r.section === 'showedit') return html`<${ShowEditorSection} />`;
@@ -57,7 +59,7 @@ function App() {
       if (e.key === 'Escape') { if (typing) { document.activeElement.blur(); return; } run('device.stop', {}).then(() => notify('Stop sent to every device', 'warn')).catch((x) => notify(x.message, 'bad')); }
       if (typing) return;
       if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
-      if ((e.metaKey || e.ctrlKey) && '12345'.includes(e.key)) { e.preventDefault(); navigate('#/' + ['devices', 'inventory', 'show', 'showedit', 'bench'][Number(e.key) - 1]); }
+      if ((e.metaKey || e.ctrlKey) && '123456'.includes(e.key)) { e.preventDefault(); navigate('#/' + ['devices', 'register', 'inventory', 'show', 'showedit', 'bench'][Number(e.key) - 1]); }
       if (e.key === '?') navigate('#/settings');
       if (e.key === 'j' || e.key === 'k') {
         const items = [...document.querySelectorAll('.rail-item')]; const i = items.findIndex((el) => el.getAttribute('aria-current') === 'true');
@@ -73,7 +75,7 @@ function App() {
     <aside class="side"><${Attention} /><${Jobs} /></aside>
     <${Timeline} open=${dock} onToggle=${() => setDock(!dock)} />
     <${StatusBar} />
-    <${Toasts} items=${toasts} /></div>`;
+    <${Toasts} items=${toasts} /><${RegisterNotices} /></div>`;
 }
 
 let polling = false;
@@ -97,7 +99,10 @@ async function boot() {
   render(html`<${App} />`, document.getElementById('app'));
   installDocHighlights();
   await poll();
-  setInterval(poll, 200);
+  const timer = setInterval(poll, 200);
+  // A documentation still (?still=1) stops polling after a few seconds so headless Chrome's virtual-time budget
+  // reaches the end of its clock and the capture completes; the page then shows the last snapshot it pulled.
+  if (state.ui.doc.still) setTimeout(() => clearInterval(timer), 5000);
 }
 
 boot();

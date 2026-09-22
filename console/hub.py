@@ -42,9 +42,10 @@ from sessions.station import StationSession
 from sessions.zone_console import ZoneConsoleSession
 from store import ConsoleStore
 from showedit import ShowEditor
+from regflow import RegistrationFlow
 
 SECTIONS = ('meta', 'ports', 'devices', 'inventory', 'station', 'registry', 'sessions', 'jobs', 'sync', 'advisor',
-            'locks', 'builds', 'show', 'settings', 'showedit')
+            'locks', 'builds', 'show', 'settings', 'showedit', 'register')
 DATA = paths.CONSOLE / 'data'
 
 
@@ -119,9 +120,15 @@ class Hub:
         self.builds = {}
         self.locks_held = {}
         self.own_locks = ()            # lock suffixes this process holds (set by app.py from InstanceLocks.held)
-        self.settings = dict(auto_sessions=True, preview_flash=True, audio=True)
+        # Persisted in metadata `console_settings`. The auto_* keys keep every database current everywhere:
+        # zone databases over the air (one relay walks) and over USB, the main show over the air, web pulls.
+        self.settings = dict(auto_sessions=True, preview_flash=True, audio=True, auto_zone_db_radio=True,
+                             auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_register=False)
+        self.auto_errors = {}      # auto-mode name -> last error text (logged once per change)
+        self.auto_pulled = set()   # web zone database versions already pulled automatically
         self.pinned_mac = None
         self.usb_firmware = {}
+        self.regflow = RegistrationFlow(self)   # the guided registration workflow (regflow.py)
         self.inventory_cache = dict(rows_by_mac={}, roles={}, zones_by_mac={}, controllers=set())
         self.idle_flag = threading.Event()
         self.idle_flag.set()
@@ -143,6 +150,11 @@ class Hub:
         self.refresh_inventory_cache()
         self.sync['password_known'] = bool(web_client.load_password())
         self.dismissed = set(json.loads(self.db.metadata('console_dismissed') or '[]'))
+        try:
+            saved = json.loads(self.db.metadata('console_settings') or '{}')
+        except ValueError:
+            saved = {}
+        self.settings.update({k: bool(v) for k, v in saved.items() if k in self.settings})
         if self.api_port:
             self.api = AppAPI(Facade(self), self.database.parent, self.api_port)
             self.api.namespace.update(hub=self, sessions=self.sessions, jobs=self.jobs, devices=self.devices,
@@ -246,6 +258,10 @@ class Hub:
         self.open_sessions()
         self.jobs.pump()
         try:
+            self.regflow.tick()
+        except Exception as exc:
+            self.log(f'Registration workflow failed: {exc}', 'bad', source='register')
+        try:
             self.intake.tick()
         except Exception as exc:
             self.log(f'Auto intake failed: {exc}', 'bad', source='intake')
@@ -277,12 +293,70 @@ class Hub:
             self.refresh_builds()
         if self.every('sync_status', 60.0, now) and self.workers and not self.simulate:
             self.check_sync_status()
+        if self.every('auto_modes', 1.0, now):
+            self.apply_auto_modes()
+        if self.every('show_pull', 300.0, now) and self.workers and not self.simulate:
+            self.auto_show_pull()
         if self.every('dismissed', 30.0, now):
             self.db.set_metadata('console_dismissed', json.dumps(sorted(self.dismissed)))
-        self.dirty.update(('sessions', 'station', 'devices', 'show'))
+        self.dirty.update(('sessions', 'station', 'devices', 'show', 'register'))
         if self.showedit and self.every('showedit', 0.25, now):
             self.showedit.tick(now)
             self.dirty.add('showedit')
+
+    def save_settings(self):
+        self.db.set_metadata('console_settings', json.dumps(self.settings, sort_keys=True))
+        self.mark_dirty('settings')
+
+    def apply_auto_modes(self):
+        """Keep the automatic database updates switched as the settings say, whatever sessions come and go.
+
+        Zones over the air: only the preferred relay (station_session(): a pairing station, else a General
+        Radio) walks, so two radios never broadcast chunks over each other; every other relay stops walking.
+        The main show: the show registry walks through whichever General Radio carries show frames.
+        """
+        relay = self.station_session()
+        want = bool(self.settings['auto_zone_db_radio'])
+        for session in self.sessions.values():
+            zones = getattr(session, 'zones', None)
+            if not isinstance(session, StationSession) or zones is None:
+                continue
+            walk = want and session is relay
+            if zones.walkaround != walk:
+                zones.set_walkaround(walk)
+                if walk:
+                    zones.set_auto_refresh(True)
+                self.dirty.add('registry')
+        if self.showedit and self.showedit.registry.walkaround != bool(self.settings['auto_show']):
+            self.showedit.registry.set_walkaround(bool(self.settings['auto_show']))
+            self.dirty.add('showedit')
+
+    def auto_error(self, name, text):
+        """Log an automatic-update failure once per distinct text (None clears it)."""
+        if self.auto_errors.get(name) != text:
+            self.auto_errors[name] = text
+            if text:
+                self.log(f'Automatic {name}: {text}', 'warn', source='auto')
+
+    def auto_zone_pull(self, web_version=None):
+        """The web has a newer zone database: pull it (called when a status check says so).
+        Each web version is tried once per run, so a refused pull does not repeat after every status check."""
+        if not (self.settings['auto_pull'] and self.sync['password_known']) or self.sync['busy'] or \
+                web_version in self.auto_pulled or \
+                any(j.kind in ('zone.pull', 'sync') and j.state == 'running' for j in self.jobs.jobs.values()):
+            return None
+        self.auto_pulled.add(web_version)
+        from jobs.sync import zone_pull_job
+        return zone_pull_job(self, auto=True)
+
+    def auto_show_pull(self):
+        """Pull a newer published show while a show relay is connected ("no show yet" is silent)."""
+        if not (self.settings['auto_pull'] and self.settings['auto_show'] and self.sync['password_known']) or \
+                not (self.showedit and self.showedit.relay()) or \
+                any(j.kind == 'show.pull' and j.state == 'running' for j in self.jobs.jobs.values()):
+            return None
+        from jobs.show import show_pull_job
+        return show_pull_job(self, auto=True)
 
     def update_idle_flag(self):
         station = self.station_session()
@@ -408,6 +482,7 @@ class Hub:
             device.fw_status = firmware_result('\n'.join(transcript), device.mac, expected)
             if device.fw_status:
                 self.usb_firmware[device.mac] = device.fw_status
+            before = self.db.get(device.mac)
             try:
                 self.db.reserve(device.mac, source='usb')   # as the pairing app's USB identification does
             except ValueError as exc:
@@ -416,6 +491,10 @@ class Hub:
             self.pinned_mac = device.mac
             device.pinned = True
             self.dirty.add('inventory')
+            try:
+                self.regflow.cube_identified(device, before)
+            except Exception as exc:
+                self.log(f'Registration workflow failed: {exc}', 'bad', device.id, source='register')
         if device.role == 'zone' and device.details.get('mac'):
             self.zone_report(device, device.details, {})
 

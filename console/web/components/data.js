@@ -23,7 +23,7 @@ export function DataTable({ columns, rows, keyOf, selected, onSelect, toneOf, em
   const [sort, setSort] = useState({ key: null, dir: 1 });
   const sorted = useMemo(() => sortRows(rows, sort.key, sort.dir), [rows, sort.key, sort.dir]);
   const shown = sorted.slice(0, maxRows);
-  return html`<div class="table-wrap"><table class="data" data-doc=${doc}><thead><tr>${columns.map((c) => html`<th onClick=${() => setSort({ key: c.key, dir: sort.key === c.key ? -sort.dir : 1 })} scope="col">${c.label}${sort.key === c.key ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`)}</tr></thead>
+  return html`<div class="table-wrap" data-doc=${doc}><table class="data"><thead><tr>${columns.map((c) => html`<th onClick=${() => setSort({ key: c.key, dir: sort.key === c.key ? -sort.dir : 1 })} scope="col">${c.label}${sort.key === c.key ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`)}</tr></thead>
     <tbody>${shown.length ? shown.map((r) => { const k = keyOf(r); return html`<tr key=${k} data-doc=${rowDoc ? rowDoc(r) : undefined} class=${(onSelect ? 'clickable ' : '') + (selected === k ? 'selected' : '') + (toneOf ? ' tone-' + toneOf(r) : '')} onClick=${() => onSelect && onSelect(k, r)}>
       ${columns.map((c) => html`<td class=${c.mono ? 'mono' : ''}>${cell(c, r)}</td>`)}</tr>`; })
       : html`<tr><td colspan=${columns.length} class="note">${empty}</td></tr>`}</tbody>

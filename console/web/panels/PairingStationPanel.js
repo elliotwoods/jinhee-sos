@@ -18,7 +18,8 @@ import { notify } from '../lib/notify.js';
 // `device`: the board whose link the relay commands should use (a General Radio beside a pairing
 // station); without it they go to the primary link. The table shows the primary registry either way.
 export function ZoneRelay({ device }) {
-  useSections(['registry', 'inventory']);
+  useSections(['registry', 'inventory', 'settings']);
+  const autoOn = !!(section('settings') || {}).auto_zone_db_radio;
   const scope = device && device.id ? { device: device.id } : {};
   const reg = section('registry') || {};
   const inv = section('inventory') || {};
@@ -34,7 +35,7 @@ export function ZoneRelay({ device }) {
   const behind = all.filter((z) => z.in_range && z.state === 'behind');
   const columns = [
     { key: 'name', label: 'Zone', render: (z) => html`<a href="#" onClick=${(e) => { e.preventDefault(); goDevice(zoneId(z)); }}>${z.name || z.mac}</a>` },
-    { key: 'zone_label', label: 'Type' }, { key: 'point_id', label: 'Point' }, { key: 'firmware', label: 'Firmware', mono: true },
+    { key: 'zone_label', label: 'Type', render: (z) => (Number(z.zone_type) === 0 ? 'unconfigured' : z.zone_label) }, { key: 'point_id', label: 'Point', render: (z) => (Number(z.zone_type) === 0 ? '—' : z.point_id) }, { key: 'firmware', label: 'Firmware', mono: true },
     { key: 'db_version', label: 'DB', render: (z) => html`v${z.db_version} <${Pill} status=${'zonedb.' + z.state} />` },
     { key: 'rssi', label: 'Signal', render: (z) => signalBars(z.rssi, '—') }, { key: 'age_s', label: 'Seen', render: (z) => z.age_s == null ? 'never' : ago(z.age_s) + ' ago' },
     { key: 'rx_gain', label: 'RX gain', render: (z) => z.rx_gain_pending ? `→ ${z.rx_gain_pending} dB …` : z.rx_gain ? `${z.rx_gain} dB${z.rx_gain_applied ? '' : ' (not applied)'}` : '—' },
@@ -50,7 +51,7 @@ export function ZoneRelay({ device }) {
       <${ActionButton} name="zones.query" args=${scope} label="Query zones" disabled=${!reg.connected} />
       <label class="check" data-doc="relay.auto"><input type="checkbox" checked=${!!reg.auto_refresh} onChange=${(e) => run('zones.auto_refresh', { ...scope, enabled: e.target.checked }).catch((x) => notify(x.message, 'bad'))} /> auto-refresh (3 s)</label>
       <${ActionButton} name="zones.update_all" args=${scope} label=${`Update all out-of-date zones (${behind.length})`} disabled=${!reg.connected || !behind.length} hazard="One broadcast run for every in-range zone that is behind." />
-      <label class="check" title="walkaround" data-doc="zones.walkaround"><input type="checkbox" checked=${!!reg.walkaround} onChange=${(e) => run('zones.walkaround', { ...scope, enabled: e.target.checked }).catch((x) => notify(x.message, 'bad'))} /> auto-update all (walk the space)</label>
+      <label class="check" title="walkaround" data-doc="zones.walkaround"><input type="checkbox" checked=${autoOn} onChange=${(e) => run('zones.walkaround', { ...scope, enabled: e.target.checked }).catch((x) => notify(x.message, 'bad'))} /> auto-update all (walk the space)${autoOn && !reg.walkaround ? ' · another relay is walking' : ''}</label>
       ${p && html`<${ActionButton} name="zones.stop" args=${scope} label="Stop publishing" className="btn danger small" />`}
       <label class="check" data-doc="relay.show_out"><input type="checkbox" checked=${showOut} onChange=${(e) => setShowOut(e.target.checked)} /> Show out of range (${outOfRange})</label></div>
     <${DataTable} columns=${columns} rows=${zones} keyOf=${(z) => z.mac} doc="relay.table" rowDoc=${(z) => `relay.zone:${z.mac}`} empty=${all.length ? 'Every zone heard is out of range (tick Show out of range)' : 'No zones have answered yet'} /></div>`;

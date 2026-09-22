@@ -4,7 +4,7 @@
 // Pure and node-testable: nothing here touches the DOM at import time.
 import { state } from '../store.js';
 
-export const EMPTY = Object.freeze({ hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '' });
+export const EMPTY = Object.freeze({ hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null });
 
 function tokens(value) {
   return String(value || '').split(',').map((t) => t.trim()).filter(Boolean);
@@ -17,7 +17,7 @@ function flag(value) {
 // The parsed doc query. Accepts the raw query string with or without its leading `?`.
 export function parseDoc(queryString) {
   const q = String(queryString || '').replace(/^[?#]/, '');
-  const out = { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '' };
+  const out = { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null };
   if (!q) return out;
   const params = new URLSearchParams(q);
   out.hl = tokens(params.get('hl'));
@@ -28,6 +28,8 @@ export function parseDoc(queryString) {
   out.still = flag(params.get('still'));
   out.explainers = flag(params.get('explainers'));
   out.search = params.get('search') || '';
+  const cube = parseInt(params.get('cube') || '', 10);
+  out.cube = cube > 0 ? cube : null;   // preselects a cube number where a page asks for one (Show, General Radio)
   return out;
 }
 
@@ -69,6 +71,11 @@ export function applyHighlights(doc, root = (typeof document !== 'undefined' ? d
 export function useDocOpen(token) {
   const doc = (state.ui && state.ui.doc) || EMPTY;
   return !!(doc.open && doc.open.includes(token));
+}
+
+export function docCube() {
+  const doc = (state.ui && state.ui.doc) || EMPTY;
+  return doc.cube || null;
 }
 
 export function docStill() {

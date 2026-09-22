@@ -1,6 +1,7 @@
 // Real neocube sketch (flashing_station/firmware/neocore_usb): legacy SET_ZONE / SHOW_START
 // behaviour is unchanged, timecode joins and resyncs a ready cube, and wireless show updates
-// stage, validate, defer while a show runs, commit to NVS and survive a reboot.
+// stage, validate, defer while a show runs, commit to NVS and survive a reboot. SHOW_LIVE (v1.7.0)
+// lends a registered cube the editor's colour for a lease, never during a show.
 #include "zone_stubs.h"
 #include "../../flashing_station/firmware/neocore_usb/neocore_usb.ino"
 #include "sketch_common.h"
@@ -70,6 +71,8 @@ static void sendUpdate(const std::vector<uint8_t> &announce, const std::vector<s
 
 static void reboot() {
   showQueue = nullptr;
+  liveQueue = nullptr;
+  liveActive = false;
   showRunning = false;
   lastShowId = 0;
   stopStaging();
@@ -82,10 +85,15 @@ static void reboot() {
 
 int main() {
   setup();
-  assert(has(Serial.output, "FW: v1.6.0-USB.1") && has(Serial.output, "Cube READY"));
+  assert(has(Serial.output, "FW: v1.7.0-USB.1") && has(Serial.output, "Cube READY"));
   assert(has(Serial.output, "SHOW: v=0 crc=dd7f47d4 src=builtin"));
-  assert(has(serial("?"), "FW: v1.6.0-USB.1\nCube MAC: 02:AA:BB:CC:DD:EE\nESP-NOW CHANNEL: 2\nSHOW: v=0"));
+  assert(has(serial("?"), "FW: v1.7.0-USB.1\nCube MAC: 02:AA:BB:CC:DD:EE\nESP-NOW CHANNEL: 2\nSHOW: v=0"));
   assert(radioChannel == 2 && showSource == nctshow::SOURCE_BUILTIN && showVersion == 0);
+
+  // An unregistered cube (number 0) ignores SHOW_LIVE.
+  assert(shown() == rgb(3, 3, 3));
+  frame(LIVE_23);
+  assert(!liveActive && shown() == rgb(3, 3, 3) && showQueue->items.empty());
 
   // ---- Legacy behaviour: an old Mainshow controller never sends timecode ----
   packet(MSG_DISCOVER);
@@ -137,7 +145,7 @@ int main() {
   // ---- Status of the compiled-in show ----
   nctshow::ShowStatus st = query(0x1234);
   assert(st.version == 0 && st.crc == DEFAULT_SHOW_CRC && st.length == DEFAULT_SHOW_SIZE && st.source == nctshow::SOURCE_BUILTIN);
-  assert(!strcmp(st.fw, "v1.6.0-USB.1") && st.zone == ZONE_IDLE && !st.showRunning && !st.stagingVersion);
+  assert(!strcmp(st.fw, "v1.7.0-USB.1") && st.zone == ZONE_IDLE && !st.showRunning && !st.stagingVersion);
 
   // ---- Wireless update: v5, out of order, duplicate chunk; commit and unsolicited status ----
   size_t before = sentFrames.size();
@@ -234,5 +242,105 @@ int main() {
       assert(got.r == v[2] && got.g == v[3] && got.b == v[4]);
     }
   }
+
+  // ---- Live authoring (v1.7.0): registered as cube 23 ----
+  assert(isRegistered && myCubeID == 23 && !showRunning);
+  packet(MSG_SET_ZONE, 0, ZONE_DESERT);
+  assert(shown() == rgb(20, 12, 0));
+  frame(LIVE_OTHER);
+  assert(!liveActive && shown() == rgb(20, 12, 0) && "other numbers are not this cube");
+  frame(LIVE_23);
+  assert(liveActive && shown() == rgb(40, 0, 10) && currentZone == ZONE_DESERT);
+  st = query(0x7777);  // takes 313 ms: the lease (500 ms) is still running
+  assert(st.zone == ZONE_DESERT && st.cubeId == 23 && liveActive && "live mode never changes the zone");
+  frame(LIVE_23_B);   // renews the lease
+  assert(shown() == rgb(0, 50, 0));
+  run(450);
+  assert(liveActive && shown() == rgb(0, 50, 0));
+  run(60);
+  assert(!liveActive && shown() == rgb(20, 12, 0) && currentZone == ZONE_DESERT && "lease lapsed: zone colour back");
+
+  // The largest frame (48 entries, 247 bytes: more than a SHOW_CHUNK) fits the queue path.
+  frame(LIVE_FULL);
+  assert(liveActive && shown() == rgb(7, 8, 9));
+  // Frames arriving faster than loop() runs: the newest supersedes and showQueue stays free.
+  radioFrom(HOST, LIVE_23.data(), LIVE_23.size());
+  radioFrom(HOST, LIVE_23_B.data(), LIVE_23_B.size());
+  assert(liveQueue->items.size() == 1 && showQueue->items.empty());
+  run(3);
+  assert(shown() == rgb(0, 50, 0));
+
+  // 24-byte packets still work in live mode; DISCOVER does not touch the LEDs, SET_ZONE ends live mode.
+  size_t discoverFrom = sentFrames.size();
+  packet(MSG_DISCOVER);
+  assert(framesTo(MAIN, discoverFrom).size() == 1 && framesTo(MAIN, discoverFrom)[0].data.size() == 24 && liveActive);
+  packet(MSG_SET_ZONE, 0, ZONE_POOL);
+  assert(!liveActive && currentZone == ZONE_POOL && shown() == rgb(0, 2, 20));
+  run(600);
+  assert(shown() == rgb(0, 2, 20) && "no stale restore after SET_ZONE");
+  // An unknown zone still ends live mode, and restores rather than leaving the live colour on.
+  frame(LIVE_23);
+  packet(MSG_SET_ZONE, 0, 9);
+  assert(!liveActive && currentZone == ZONE_POOL && shown() == rgb(0, 2, 20));
+
+  // leaseMs is clamped to 1..LIVE_LEASE_MAX_MS.
+  {
+    std::vector<uint8_t> big = LIVE_23, zero = LIVE_23;
+    big[offsetof(nctshow::ShowLiveHeader, leaseMs)] = 5000 & 0xFF;
+    big[offsetof(nctshow::ShowLiveHeader, leaseMs) + 1] = 5000 >> 8;
+    frame(big);
+    run(nctshow::LIVE_LEASE_MAX_MS - 20);
+    assert(liveActive && shown() == rgb(40, 0, 10));
+    run(30);
+    assert(!liveActive && shown() == rgb(0, 2, 20));
+    zero[offsetof(nctshow::ShowLiveHeader, leaseMs)] = 0;
+    zero[offsetof(nctshow::ShowLiveHeader, leaseMs) + 1] = 0;
+    frame(zero);
+    assert(!liveActive && shown() == rgb(0, 2, 20) && "lease 0 is 1 ms");
+  }
+
+  // SHOW_START wins over live mode; the show then ignores SHOW_LIVE entirely.
+  packet(MSG_SET_ZONE, 0, ZONE_MAINSHOW);
+  frame(LIVE_23);
+  assert(liveActive && currentZone == ZONE_MAINSHOW);
+  packet(MSG_SHOW_START, 21);
+  assert(showRunning && !liveActive);
+  frame(LIVE_23_SHOW);
+  assert(!liveActive && shown() != rgb(0, 0, 99) && "a running show is never hijacked");
+  run(1000);
+  assert(showRunning && !liveActive);
+  // After the show ends the LEDs are off; a lapsed lease restores off, not a zone colour.
+  run(showPlayer.lengthMs() + 50);
+  assert(!showRunning && currentZone == ZONE_IDLE && shown() == 0);
+  frame(LIVE_23);
+  assert(liveActive && shown() == rgb(40, 0, 10));
+  run(600);
+  assert(!liveActive && shown() == 0 && currentZone == ZONE_IDLE);
+
+  // A timecode join also ends live mode.
+  packet(MSG_SET_ZONE, 0, ZONE_MAINSHOW);
+  frame(LIVE_23);
+  assert(liveActive);
+  timecodeAt(22, 100);
+  assert(showRunning && lastShowId == 22 && !liveActive);
+  packet(MSG_SET_ZONE, 0, ZONE_IDLE);
+  assert(!showRunning && shown() == rgb(3, 3, 3));
+
+  // REGISTER ends live mode (the success blink ends on the idle colour); the new number takes effect.
+  frame(LIVE_23);
+  assert(liveActive);
+  {
+    Packet reg = {};
+    reg.type = MSG_REGISTER; reg.cubeID = 24; reg.uidLength = 4;
+    reg.uid[0] = 0x04; reg.uid[1] = 0xAA; reg.uid[2] = 0xBB; reg.uid[3] = 0xCC;
+    radioFrom(MAIN, (const uint8_t *)&reg, sizeof reg);
+    run(800);
+  }
+  assert(!liveActive && myCubeID == 24 && shown() == rgb(3, 3, 3));
+  frame(LIVE_OTHER);
+  assert(liveActive && shown() == rgb(9, 9, 9));
+  run(600);
+  assert(!liveActive && shown() == rgb(3, 3, 3));
+
   std::printf("NeocoreShow OK\n");
 }

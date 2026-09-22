@@ -87,7 +87,7 @@ export function BandDiagram({ ticks, distance, index, width = 640, height = 90, 
   return html`<canvas class="band" ref=${ref} data-doc=${doc} width=${width} height=${height}></canvas>`;
 }
 
-export function MemberGrid({ slots, onToggle, disabled }) {
+export function MemberGrid({ slots, onToggle, disabled, doc }) {
   const held = new Set((slots || []).filter(Boolean));
-  return html`<div class="members">${Array.from({ length: 23 }, (_, i) => i + 1).map((m) => html`<button class=${'btn' + (held.has(m) ? ' on' : '')} data-doc="member" disabled=${disabled} onClick=${() => onToggle(m)} aria-pressed=${held.has(m) ? 'true' : 'false'}>${String(m).padStart(2, '0')}<small>${held.has(m) ? 'ON' : 'OFF'}</small></button>`)}</div>`;
+  return html`<div class="members" data-doc=${doc}>${Array.from({ length: 23 }, (_, i) => i + 1).map((m) => html`<button class=${'btn' + (held.has(m) ? ' on' : '')} data-doc="member" disabled=${disabled} onClick=${() => onToggle(m)} aria-pressed=${held.has(m) ? 'true' : 'false'}>${String(m).padStart(2, '0')}<small>${held.has(m) ? 'ON' : 'OFF'}</small></button>`)}</div>`;
 }

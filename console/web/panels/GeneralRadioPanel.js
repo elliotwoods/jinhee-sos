@@ -12,13 +12,16 @@ import { ShowControl } from './ShowSection.js';
 import { ago, hhmmss } from '../lib/format.js';
 import { run } from '../api.js';
 import { notify } from '../lib/notify.js';
+import { docCube } from '../lib/doc.js';
 
 const ZONES = [[0, 'idle'], [1, 'preshow'], [2, 'desert'], [3, 'pool'], [4, 'mainshow']];
 
 function CubeColours({ device, s }) {
   useSections(['inventory', 'station']);
   const rows = ((section('inventory') || {}).rows || []).filter((r) => r.role !== 'excluded' && (r.cube_id != null || r.age_s != null));
-  const [mac, setMac] = useState('');
+  // Preselect the cube a documentation link names (?cube=), else the only known cube.
+  const preset = (docCube() && rows.find((r) => r.cube_id === docCube())) || (rows.length === 1 ? rows[0] : null);
+  const [mac, setMac] = useState(preset ? preset.mac : '');
   const [zone, setZone] = useState(4);
   const live = device.state === 'session' && s.connected;
   const chosen = rows.find((r) => r.mac === mac);
@@ -65,7 +68,7 @@ function PoolLamp({ device, s }) {
   const beacon = s.pool_beacon;
   return html`<div class="card"><${Explainer} id="generalradio.pool" />
     <${Banner} kind="info" title="One lamp at a time" detail="The central keys its slots by sender address, so this radio holds one member. It is released 0.6 s after this page stops holding it, and by the radio itself 1.5 s after the console stops pinging." />
-    <${MemberGrid} slots=${slots} disabled=${!live} onToggle=${toggle} />
+    <${MemberGrid} slots=${slots} disabled=${!live} onToggle=${toggle} doc="radio.pool" />
     <div class="row">
       <label class="lbl">Radio id (label at the central)</label><select class="field" value=${radioId} onChange=${(e) => setRadioId(e.target.value)}>${[1, 2, 3, 4, 5, 6].map((i) => html`<option value=${i}>${i}</option>`)}</select>
       <${ActionButton} name="radio.pool_release" args=${{ device: device.id }} label="Release lamp (Esc)" className="btn danger" disabled=${!live || !held} />

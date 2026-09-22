@@ -85,8 +85,12 @@ def show_update(hub, mac):
 
 @command('show.auto_update', 'hardware')
 def show_auto_update(hub, enabled):
-    """Walk-around mode: any cube in range on an older show is updated automatically."""
-    _editor(hub).registry.set_walkaround(bool(enabled))
+    """Walk-around mode: any cube in range on an older show is updated automatically (the persisted
+    `auto_show` setting, applied by hub.apply_auto_modes)."""
+    _editor(hub)
+    hub.settings['auto_show'] = bool(enabled)
+    hub.save_settings()
+    hub.apply_auto_modes()
     hub.mark_dirty('showedit')
     return bool(enabled)
 
@@ -103,3 +107,14 @@ def show_stop(hub):
 def show_push_config(hub):
     """Tell the Mainshow controller the published show's length (bounds its timecode)."""
     return _editor(hub).push_config()
+
+
+@command('show.live', 'hardware')
+def show_live(hub, entries, lease_ms=600):
+    """Mirror the editor's preview on real cubes: broadcast SHOW_LIVE with each cube number's colour.
+
+    `entries` = [[cube_number, [r, g, b]], ...] in cube levels 0-100. Cubes on firmware v1.7.0+ show the
+    colour for `lease_ms`, then fall back; a cube playing a show ignores it. Rate limited, held during a
+    show update or a running show, fire-and-forget (no acknowledgment).
+    """
+    return _editor(hub).live(entries, lease_ms)

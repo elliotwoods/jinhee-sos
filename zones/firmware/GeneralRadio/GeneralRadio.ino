@@ -15,8 +15,9 @@
 //   pool     pool{member}: hold one pool lamp through the pool central. GrPool.h
 //   preshow  preshow{point,state}: a TouchDesigner cue through the media bridge. GrPreshow.h
 //   show     show_send relay of main-show frames built by the host (pairing_station/show_registry.py:
-//            SHOW_ANNOUNCE/CHUNK/QUERY to cube firmware v1.5.0+), show_frame for the cubes'
-//            SHOW_STATUS replies; show_config/show_stop and the show timecode. Below and GrCube.h.
+//            SHOW_ANNOUNCE/CHUNK/QUERY to cube firmware v1.5.0+; 1.2: the show editor's SHOW_LIVE,
+//            broadcast only, to v1.7.0+), show_frame for the cubes' SHOW_STATUS replies;
+//            show_config/show_stop and the show timecode. Below and GrCube.h.
 //
 // No NFC reader: hello reports nfc_ok:false and the nfc_* commands answer with an error, which
 // is how the pairing app already treats a bare dongle. Not a zone board: no PN532, no
@@ -41,7 +42,7 @@
 
 using namespace gr;
 
-constexpr const char *FIRMWARE_VERSION = "general-radio-1.1.0";  // 1.1: show relay + timecode
+constexpr const char *FIRMWARE_VERSION = "general-radio-1.2.0";  // 1.1: show relay + timecode; 1.2: SHOW_LIVE
 constexpr const char *BANNER = "NCT GENERAL RADIO";
 constexpr uint32_t HOST_GATE_MS = 5000;  // the pairing station's HEARTBEAT_TIMEOUT
 constexpr size_t LINE_CAPACITY = 1024;   // zone chunk lines are ~540 chars
@@ -137,19 +138,27 @@ void pollZoneQueue() {
 }
 
 // Main-show frames are built by the host (pairing_station/showfile.py); this only validates and
-// relays what a show registry may send. Only a v1.5.0+ cube acts on them; older cubes drop them.
+// relays what a show registry or the show editor may send. Only a v1.5.0+ cube acts on them
+// (SHOW_LIVE: v1.7.0+); older cubes drop them. A SHOW_LIVE frame (up to 247 bytes, larger than a
+// chunk) addresses cubes by number, so it is broadcast only.
+constexpr size_t SHOW_SEND_MAX = sizeof(nctshow::ShowChunk) > nctshow::liveLength(nctshow::LIVE_MAX_ENTRIES)
+                                     ? sizeof(nctshow::ShowChunk)
+                                     : nctshow::liveLength(nctshow::LIVE_MAX_ENTRIES);
+static_assert(2 * SHOW_SEND_MAX + 100 < LINE_CAPACITY, "show_send line fits the line buffer");
 void showSend(const char *id, const char *line) {
-  static char hex[2 * sizeof(nctshow::ShowChunk) + 1];
+  static char hex[2 * SHOW_SEND_MAX + 1];
   char macText[24];
-  uint8_t mac[6], frame[sizeof(nctshow::ShowChunk)];
+  uint8_t mac[6], frame[SHOW_SEND_MAX];
   if (!jsonString(line, "hex", hex, sizeof(hex))) { error(id, "Invalid show frame"); return; }
   int length = parsePlainHex(hex, frame, sizeof(frame));
   uint8_t kind = length > 0 ? nctshow::frameType(frame, length) : 0;
   bool haveMac = jsonString(line, "mac", macText, sizeof(macText)) && parseMac(macText, mac);
   if (!haveMac || (isMulticast(mac) && !isBroadcast(mac))) { error(id, "Invalid show MAC"); return; }
-  if (kind != nctshow::SHOW_ANNOUNCE && kind != nctshow::SHOW_CHUNK && kind != nctshow::SHOW_QUERY) {
+  if (kind != nctshow::SHOW_ANNOUNCE && kind != nctshow::SHOW_CHUNK && kind != nctshow::SHOW_QUERY &&
+      kind != nctshow::SHOW_LIVE) {
     error(id, "Invalid show frame"); return;
   }
+  if (kind == nctshow::SHOW_LIVE && !isBroadcast(mac)) { error(id, "SHOW_LIVE is broadcast only"); return; }
   SendResult result = sendFrame(mac, frame, size_t(length));
   char text[18], fields[80];
   formatMac(mac, text);

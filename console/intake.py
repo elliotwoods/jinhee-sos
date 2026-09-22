@@ -3,6 +3,11 @@
 Cubes: the cube flasher's Scheduler (core.Scheduler) decides which candidate port is next; each key
 is attempted once per plug-in. Zones: zone_detect.plan() on the probe's report decides flash /
 database / skip / ask, exactly as the zone flasher's auto mode. Both start off at every launch.
+
+Zone databases: independent of the armed intake and on by default (setting `auto_zone_db_usb`), every
+configured NctZone board on USB whose database is behind the published one gets a database-only update
+(identity and firmware untouched), once per board and publication, as the zone flasher's
+"Update databases automatically".
 """
 import paths  # noqa: F401
 
@@ -22,6 +27,7 @@ class Intake:
         self.zone_form = dict(profile='preshow', point=1, name='Preshow 1', params=[], rx_gain=zonedb.RX_GAIN_DEFAULT)
         self.zone_options = dict(next_point=True, allow_unidentified=False, database_only=True)
         self.results = {}   # key -> text
+        self.db_attempted = {}   # key -> (version, crc) of the publication tried on that board
 
     def arm_cubes(self, enabled):
         if enabled:
@@ -60,6 +66,9 @@ class Intake:
         busy = any(j.hardware for j in hub.jobs.running())
         self.cubes.scan(ports, busy)
         self.zones.scan(ports, busy)
+        present = {d.key for d in hub.devices.values()}
+        for key in [k for k in self.db_attempted if k not in present]:
+            del self.db_attempted[key]   # unplugged: a replug retries
         if busy:
             return
         if self.cubes.armed:
@@ -113,6 +122,39 @@ class Intake:
                     self.results[device.key] = f'NOT FLASHED · {exc}'
                     hub.log(f'Auto-flash zone {device.port}: {exc}', 'warn', device.id, source='intake')
                 return
+        if hub.settings.get('auto_zone_db_usb'):
+            self.database_step()
+
+    def database_step(self):
+        """Start one database-only USB update for a zone board that is behind the published database."""
+        hub = self.hub
+        published = hub.store.published()
+        if not published.get('version'):
+            return None
+        want = (published['version'], published['crc'])
+        for device in list(hub.devices.values()):
+            if device.role != 'zone' or device.state not in ('idle', 'session') or not device.details.get('firmware'):
+                continue
+            if self.db_attempted.get(device.key) == want or (self.zones.armed and device.key in self.zones.attempted):
+                continue
+            try:
+                detection = zone_detect.from_report(device.details)
+            except (KeyError, TypeError):
+                continue   # an incomplete report: nothing to decide on
+            if not detection.get('configured') or zone_detect.database_state(detection, published) != 'behind':
+                continue
+            self.db_attempted[device.key] = want
+            try:
+                hub.store.current()   # nothing publishable: say why once, retry after a new publication
+                job = zone_jobs.update_db_job(hub, device)
+                self.results[device.key] = f'database · v{device.details.get("db_version")} → v{want[0]}'
+                hub.log(f'Automatic zone database update over USB on {device.port}: '
+                        f'v{device.details.get("db_version")} → v{want[0]}', 'info', device.id, source='auto')
+                return job
+            except Exception as exc:
+                self.results[device.key] = f'database NOT UPDATED · {exc}'
+                hub.log(f'Automatic zone database update on {device.port}: {exc}', 'warn', device.id, source='auto')
+        return None
 
     def advance_point(self):
         profile = zone_build.PROFILES[self.zone_form['profile']]
@@ -127,4 +169,5 @@ class Intake:
 
     def snapshot(self):
         return dict(cubes_armed=self.cubes.armed, zones_armed=self.zones.armed, zone_form=self.zone_form,
-                    zone_options=self.zone_options, results=self.results)
+                    zone_options=self.zone_options, results=self.results,
+                    auto_zone_db_usb=bool(self.hub.settings.get('auto_zone_db_usb')))

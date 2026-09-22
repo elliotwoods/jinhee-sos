@@ -35,6 +35,7 @@ class Job:
         self.writing = False           # an esptool write is in progress: never interrupt
         self.on_done = None
         self.quiet = False             # status checks: no 'Started' line in the timeline
+        self.mute = False              # automatic updates: no timeline lines at all (the caller reports)
 
     def emit(self, kind, value=None):
         self.events.put((kind, value))
@@ -81,7 +82,7 @@ class JobRunner:
 
         job.thread = threading.Thread(target=run, name=f'job-{job.kind}', daemon=True)
         job.thread.start()
-        if not job.quiet:
+        if not (job.quiet or job.mute):
             self.hub.log(f'Started: {job.title}', 'info', job.device, source='job')
         return job
 
@@ -130,7 +131,7 @@ class JobRunner:
                         self.hub.log(f'{job.title}: applying the result failed: {exc}', 'bad', job.device)
                     level = 'ok' if job.state == 'done' else 'warn' if job.state == 'cancelled' else 'bad'
                     outcome = job.outcome or {}
-                    if not job.quiet or job.state != 'done':
+                    if not job.mute and (not job.quiet or job.state != 'done'):
                             self.hub.log(f'{job.title}: {job.state}' + (f' · {outcome.get("text")}' if outcome.get('text') else ''),
                                      level, job.device, source='job')
                     self.hub.job_finished(job)

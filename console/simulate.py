@@ -291,7 +291,7 @@ class FakeGeneralRadio(FakeStation):
     LOCKOUT_S, SHOW_LENGTH_S, FAIL_AFTER_S, BEACON_EVERY_S = 3.0, 298.0, 3.0, 5.0
 
     def __init__(self, port, mac, cubes=(), zones=(), central=None, bridge=None, clock=time.monotonic):
-        super().__init__(port, mac, firmware='general-radio-1.1.0', nfc_ok=False, cubes=cubes, zones=zones)
+        super().__init__(port, mac, firmware='general-radio-1.2.0', nfc_ok=False, cubes=cubes, zones=zones)
         self.show_cubes = {c: FakeShowCube(c, cube_id=0) for c in self.cubes}  # v1.5.0 cubes answering show frames
         self.show_length_ms, self.show_version, self.show_crc = 298000, 0, 0
         self.central, self.bridge, self.clock = central, bridge, clock
@@ -399,6 +399,8 @@ class FakeGeneralRadio(FakeStation):
         if cmd == 'show_send':  # general-radio-1.1.0: relay to the simulated v1.5.0 cubes
             data = bytes.fromhex(message.get('hex', ''))
             mac = message.get('mac', '')
+            if len(data) > 3 and data[3] == 0x55 and mac != 'FF:FF:FF:FF:FF:FF':  # general-radio-1.2.0: SHOW_LIVE is broadcast only
+                return [dict(event='error', id=rid, detail='show_live is broadcast only')]
             out = [dict(event='show_sent', id=rid, mac=mac, kind=data[3] if len(data) > 3 else 0, status='delivered')]
             for cube_mac, cube in self.show_cubes.items():
                 if mac in ('FF:FF:FF:FF:FF:FF', cube_mac):
@@ -558,6 +560,29 @@ class FakeProber:
         pass
 
 
+def fake_zone_db(hub, device, publication):
+    """A database-only USB update without esptool: the fake zone takes the publication, then is re-probed."""
+    from jobs.base import Job
+    job = Job('zone.db_usb', device.key, f'Update zone database over USB on {device.port}', hardware=True, device=device.id)
+    hub.hold_port(device, job)
+    board = BOARDS.get(device.port)
+
+    def work(emit, cancel):
+        emit('stage', 'Writing the zone database (simulated)')
+        time.sleep(0.05)
+        emit('progress', 100)
+        if isinstance(board, FakeZone):
+            board.db_version, board.db_count, board.db_crc = publication.version, publication.count, publication.crc
+        return dict(result='success', detail=f'database v{publication.version} (simulated)')
+
+    def done(job):
+        job.outcome = dict(level='verified', text=f'database v{publication.version} (simulated)')
+        hub.mark_dirty('inventory', 'registry')
+
+    hub.jobs.start(job, work, done)
+    return job
+
+
 def install(hub, scenario='default'):
     hub.scanner = FakeScanner()
     hub.prober = FakeProber()
@@ -571,6 +596,7 @@ def install(hub, scenario='default'):
         original_tick()
 
     hub.tick = tick
+    hub.fake_zone_db = fake_zone_db
     if scenario == 'default':
         default_scenario(hub)
     elif scenario == 'empty':

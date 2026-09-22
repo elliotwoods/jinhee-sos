@@ -1,4 +1,4 @@
-/* Neocore v1.6.0-USB.1. Derived from v1.4.1-USB.2 (2026-09-17 v1.4.1-STABLE-TEST lineage).
+/* Neocore v1.7.0-USB.1. Derived from v1.4.1-USB.2 (2026-09-17 v1.4.1-STABLE-TEST lineage).
  * XIAO ESP32-C3 / D10 / eight WS2812 LEDs. Firmware updates over USB only.
  * ESP-NOW fixed channel 2; original registration and SHOW_START behavior preserved.
  *
@@ -11,6 +11,14 @@
  * v1.6.0: fanning. A fade/blink/pulse/cycle cue may offset each cube by its registered number
  * (sequential steps or a fixed scatter), so one show ripples across the cubes. v1.5.0 refuses
  * fanned images (the byte was reserved) and keeps its current show.
+ *
+ * v1.7.0: live authoring. SHOW_LIVE (0x55), broadcast by the show editor about 20 times a
+ * second, lists registered cube numbers and a colour each. A registered cube that finds its
+ * number shows that colour for the frame's lease (1..2000 ms); when the lease lapses without a
+ * newer frame it restores exactly the colour it showed before live mode began (zone colour,
+ * idle, or off after a show end). A cube playing a show, or unregistered, ignores SHOW_LIVE.
+ * currentZone is never changed; SET_ZONE, REGISTER, SHOW_START or a timecode join ends live
+ * mode and the new command wins. Older cubes drop the frame (unknown type).
  */
 #include <WiFi.h>
 #include <esp_now.h>
@@ -23,18 +31,25 @@
 #include <NctShowProtocol.h>
 #include "DefaultShow.h"
 
-#define FW_VERSION "v1.6.0-USB.1"
+#define FW_VERSION "v1.7.0-USB.1"
 
 // A received NctShow frame, handed from the Wi-Fi task to loop(). Declared here, before
 // the prototypes the Arduino builder generates for functions that take it.
+// data holds the largest accepted frame: a full SHOW_LIVE (247 bytes) exceeds a SHOW_CHUNK (211).
+constexpr size_t SHOW_FRAME_MAX =
+  sizeof(nctshow::ShowChunk) > nctshow::liveLength(nctshow::LIVE_MAX_ENTRIES)
+    ? sizeof(nctshow::ShowChunk)
+    : nctshow::liveLength(nctshow::LIVE_MAX_ENTRIES);
+static_assert(SHOW_FRAME_MAX <= 255, "ShowFrame.len is one byte");
 struct ShowFrame {
   uint8_t src[6];
   uint8_t broadcast;
   uint8_t len;
-  uint8_t data[sizeof(nctshow::ShowChunk)];
+  uint8_t data[SHOW_FRAME_MAX];
 };
 
 void setShowCube(uint32_t cube);  // defined with the show player, used by registration
+void endLive(bool restore);       // defined with the live frames, used by every new command
 
 
 // =====================================================
@@ -246,6 +261,9 @@ uint8_t limitLed(uint16_t value) {
 // LED 전체 색상
 // =====================================================
 
+// What the LEDs show now (after limitLed); live mode restores it.
+uint8_t shownR = 0, shownG = 0, shownB = 0;
+
 void showColor(
   uint8_t r,
   uint8_t g,
@@ -255,6 +273,10 @@ void showColor(
   r = limitLed(r);
   g = limitLed(g);
   b = limitLed(b);
+
+  shownR = r;
+  shownG = g;
+  shownB = b;
 
   for (int i = 0; i < NUM_LEDS; i++) {
 
@@ -273,6 +295,8 @@ void showColor(
 // =====================================================
 
 void ledOff() {
+
+  shownR = shownG = shownB = 0;
 
   pixels.clear();
 
@@ -791,6 +815,7 @@ void startMainShowAt(
   uint32_t showId,
   uint32_t tMs
 ) {
+  endLive(false);  // the show wins; its first frame is rendered below
   lastShowId = showId;
   showRunning = true;
   showStartMillis = millis() - tMs;
@@ -927,6 +952,9 @@ void updateMainShowTimeline() {
 // =====================================================
 
 QueueHandle_t showQueue = nullptr;
+// SHOW_LIVE frames bypass showQueue: a one-deep queue the Wi-Fi task overwrites, so a newer
+// live frame supersedes an unread older one and ~20 Hz live traffic never crowds out chunks.
+QueueHandle_t liveQueue = nullptr;
 
 // Wireless show update: staged in RAM, committed to NVS when complete.
 uint8_t stagingImage[nctshow::MAX_IMAGE];
@@ -1152,6 +1180,74 @@ void onShowTimecode(
   Serial.println(tc.tMs);
 }
 
+// ★ LIVE AUTHORING (v1.7.0)
+//
+// While live, the LEDs show the editor's colour for this cube; liveRestore is what they showed
+// when live mode began. currentZone is never touched.
+bool liveActive = false;
+uint32_t liveUntil = 0;
+uint8_t liveRestore[3] = {0, 0, 0};
+
+void endLive(
+  bool restore
+) {
+  if (!liveActive) {
+    return;
+  }
+  liveActive = false;
+  if (restore) {
+    showColor(liveRestore[0], liveRestore[1], liveRestore[2]);
+  }
+  Serial.println(restore ? "LIVE END" : "LIVE END / NEW COMMAND");
+}
+
+void onShowLive(
+  const ShowFrame &f
+) {
+  // Never hijack a real show; an unregistered cube has no number to match.
+  if (showRunning || !isRegistered || myCubeID == 0 || myCubeID > 0xFFFF) {
+    return;
+  }
+  nctshow::ShowLiveHeader h;
+  memcpy(&h, f.data, sizeof(h));
+  for (uint8_t i = 0; i < h.n; i++) {
+    nctshow::LiveEntry e;
+    memcpy(&e, f.data + nctshow::liveLength(i), sizeof(e));
+    if (e.cube != myCubeID) {
+      continue;
+    }
+    uint16_t lease = h.leaseMs;
+    if (lease < 1) {
+      lease = 1;
+    }
+    if (lease > nctshow::LIVE_LEASE_MAX_MS) {
+      lease = nctshow::LIVE_LEASE_MAX_MS;
+    }
+    if (!liveActive) {
+      liveRestore[0] = shownR;
+      liveRestore[1] = shownG;
+      liveRestore[2] = shownB;
+      liveActive = true;
+      Serial.println("LIVE START");
+    }
+    liveUntil = millis() + lease;
+    showColor(e.r, e.g, e.b);
+    return;  // the first entry for this number wins
+  }
+  // Not listed in this frame (the editor may split >48 cubes across frames): the lease runs on.
+}
+
+void handleLive() {
+  ShowFrame f;
+  if (liveQueue && xQueueReceive(liveQueue, &f, 0) == pdTRUE &&
+      nctshow::frameType(f.data, f.len) == nctshow::SHOW_LIVE) {
+    onShowLive(f);
+  }
+  if (liveActive && int32_t(millis() - liveUntil) >= 0) {
+    endLive(true);
+  }
+}
+
 void handleShowFrames() {
   ShowFrame f;
   while (showQueue && xQueueReceive(showQueue, &f, 0) == pdTRUE) {
@@ -1185,6 +1281,9 @@ void handleShowFrames() {
   if (pendingCommit && !showRunning) {
     commitStagedShow();
   }
+
+  // After the show frames: a timecode join in this pass has already set showRunning.
+  handleLive();
 }
 
 
@@ -1202,11 +1301,13 @@ void onDataRecv(
     len != sizeof(Packet)
   ) {
 
-    // NctShow frames (never 24 bytes) go to loop() through showQueue.
+    // NctShow frames (never 24 bytes) go to loop() through showQueue (SHOW_LIVE: liveQueue).
+    uint8_t type = 0;
     if (
       showQueue &&
+      liveQueue &&
       len <= (int)sizeof(ShowFrame::data) &&
-      nctshow::frameType(data, len)
+      (type = nctshow::frameType(data, len))
     ) {
 
       ShowFrame f;
@@ -1214,7 +1315,11 @@ void onDataRecv(
       f.broadcast = info->des_addr && (info->des_addr[0] & 1);
       f.len = (uint8_t)len;
       memcpy(f.data, data, len);
-      xQueueSend(showQueue, &f, 0);
+      if (type == nctshow::SHOW_LIVE) {
+        xQueueOverwrite(liveQueue, &f);
+      } else {
+        xQueueSend(showQueue, &f, 0);
+      }
     }
 
     return;
@@ -1372,6 +1477,9 @@ void setup() {
   showQueue =
     xQueueCreate(8, sizeof(ShowFrame));
 
+  liveQueue =
+    xQueueCreate(1, sizeof(ShowFrame));
+
   esp_now_register_recv_cb(
     onDataRecv
   );
@@ -1491,6 +1599,8 @@ void loop() {
     MSG_REGISTER
   ) {
 
+    endLive(false);  // the success blink ends on the idle colour
+
     saveRegistration(
       pendingPacket
     );
@@ -1522,6 +1632,9 @@ void loop() {
 
     showRunning =
       false;
+
+    // Live mode ends; restore first so an unknown zone does not leave the live colour on.
+    endLive(true);
 
 
     uint8_t zone =

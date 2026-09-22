@@ -94,7 +94,7 @@ class Console:
     @staticmethod
     def _read_token(config):
         text = config.read_text(encoding='utf-8')
-        m = re.search(r'Authorization: Bearer (\S+)', text)
+        m = re.search(r'Authorization: Bearer ([^"\s]+)', text)   # api.curl quotes the header
         if not m:
             raise RuntimeError('api.curl has no bearer token')
         return m.group(1)
@@ -113,9 +113,9 @@ class Console:
             with urllib.request.urlopen(job, timeout=10) as response:
                 result = json.loads(response.read().decode())
                 status = 202 if result.get('state') in ('queued', 'running') else 200
-        if result.get('exception') or result.get('error'):
-            raise RuntimeError(f'/execute failed: {result.get("exception") or result.get("error")}\n{result.get("stderr", "")}')
-        return result.get('value')
+        if result.get('state') == 'error' or result.get('exception') or result.get('error'):
+            raise RuntimeError(f'/execute failed: {result.get("traceback") or result.get("exception") or result.get("error")}\n{result.get("stderr", "")}')
+        return result.get('result', result.get('value'))   # the loopback API answers {state, result, stdout, stderr}
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -130,12 +130,54 @@ class Console:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
-def capture(chrome, url, out, size, scale, budget_ms=4000):
+def capture(chrome, url, out, size, scale, budget_ms=4000, timeout=90, attempts=2):
+    """One headless-Chrome capture with a private profile per attempt (a profile left locked by a stopped
+    Chrome made the next launch exit without writing anything); retried once."""
+    last = None
+    for attempt in range(attempts):
+        profile = Path(tempfile.mkdtemp(prefix='nct-docshots-chrome-'))
+        try:
+            return _capture_once(chrome, url, out, size, scale, budget_ms, timeout, profile)
+        except RuntimeError as exc:
+            last = exc
+            time.sleep(1.0)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    raise last
+
+
+def _capture_once(chrome, url, out, size, scale, budget_ms, timeout, profile):
     w, h = size
+    out = Path(out)
+    if out.exists():
+        out.unlink()
     cmd = [chrome, '--headless=new', '--hide-scrollbars', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
            f'--window-size={w},{h}', f'--force-device-scale-factor={scale}', f'--virtual-time-budget={budget_ms}',
-           f'--screenshot={out}', '--user-data-dir=' + str(Path(tempfile.gettempdir()) / 'nct-docshots-chrome'), url]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+           f'--screenshot={out}', f'--user-data-dir={profile}', url]
+    # Headless Chrome writes the screenshot once the virtual-time budget is spent but, on a page that polls, does
+    # not always exit afterwards: wait for the file to appear and settle, then stop the browser ourselves.
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + timeout
+    size_seen = -1
+    try:
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            if out.exists():
+                size_now = out.stat().st_size
+                if size_now and size_now == size_seen:
+                    break
+                size_seen = size_now
+            time.sleep(0.5)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    if not out.exists() or not out.stat().st_size:
+        raise RuntimeError(f'Chrome wrote no screenshot for {url}')
     return out
 
 
@@ -167,6 +209,12 @@ def main(argv=None):
     chrome = find_chrome(args.chrome)
     args.out.mkdir(parents=True, exist_ok=True)
     manifest = dict(generated=time.strftime('%Y-%m-%dT%H:%M:%S'), git=git_rev(), size=list(size), scale=args.scale, shots=[])
+    previous = {}
+    if only and (args.out / 'manifest.json').exists():   # a partial run replaces only its own entries
+        try:
+            previous = {s['id']: s for s in json.loads((args.out / 'manifest.json').read_text(encoding='utf-8')).get('shots', [])}
+        except (ValueError, KeyError):
+            previous = {}
     version = ''
     for chapter, scenarios in docscenes.chapters().items():
         wanted = [s for s in scenarios if not only or s['id'] in only]
@@ -176,7 +224,7 @@ def main(argv=None):
         console = Console(args.port, args.python).start()
         try:
             console.execute('import docscenes; docscenes.base(hub)', wait=30)
-            version = console.execute('hub.sections["meta"]["version"] if hub.sections.get("meta") else ""') or version
+            version = console.execute('(hub.sections.get("meta") or {}).get("console_version") or (hub.sections.get("meta") or {}).get("version") or ""') or version
             for s in wanted:
                 console.execute(f'import docscenes; docscenes.run_setup(hub, {s["id"]!r})', wait=30)
                 deadline = time.monotonic() + s['settle']
@@ -187,7 +235,7 @@ def main(argv=None):
                         break
                     time.sleep(0.2)
                 route = console.execute(f'import docscenes; docscenes.route(hub, docscenes.by_id({s["id"]!r}))')
-                url = console.url.rstrip('/') + '/' + route
+                url = console.url + route   # the page reads ?token= from the query; the route is the hash
                 file = args.out / f'{s["id"]}.png'
                 capture(chrome, url, file, s.get('size') or size, args.scale)
                 print(f'  {s["id"]:5} {"settled" if ok else "NOT SETTLED"}  {file.name}  {route}')
@@ -196,6 +244,10 @@ def main(argv=None):
         finally:
             if not args.keep:
                 console.stop()
+    if previous:
+        done = {s['id'] for s in manifest['shots']}
+        manifest['shots'] = sorted(manifest['shots'] + [s for i, s in previous.items() if i not in done],
+                                   key=lambda s: [x['id'] for x in docscenes.SCENARIOS].index(s['id']))
     manifest['console_version'] = version
     (args.out / 'manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')
     print(f'{len(manifest["shots"])} captures → {args.out}')

@@ -11,9 +11,9 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 
 | Component | Maintained code | Responsibility |
 |---|---|---|
-| Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity. From v1.5.0 the main show is data: compiled-in `DefaultShow.h` (generated from `shows/mainshow.json`) or a newer published show received over ESP-NOW and kept in NVS namespace `show`; joins a running show from `SHOW_TIMECODE` |
+| Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity. From v1.5.0 the main show is data (v1.6.0 adds per-cube fanning by the registered cube number): compiled-in `DefaultShow.h` (generated from `shows/mainshow.json`) or a newer published show received over ESP-NOW and kept in NVS namespace `show`; joins a running show from `SHOW_TIMECODE` |
 | NFC pairing station | `pairing_station/firmware/pairing_station/` | PN532 scanning, selected-cube identification, registration relay, zone database distribution |
-| NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Holds every old app's instance lock while running |
+| NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Keeps every database current automatically by default (zone databases over the air through one relay and over USB, the main show over the air, web pulls; saved switches in Settings › Automatic updates), and a Register page that registers cubes as they are plugged in (USB → number → NFC scan → Sync; off by default). Holds every old app's instance lock while running |
 | Pairing GUI | `pairing_station/app.py` | Inventory, number assignment, NFC registration, USB pinning, zone controls |
 | Cube USB flasher | `flashing_station/app.py` | Identity checks, builds/uploads, NVS preservation, flash receipts |
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone,ResetZone}/` | NFC-driven show zones; PoolZone also has slider calibration; ResetZone returns a cube to idle (`SET_ZONE 0`) at the end of the show |
@@ -166,7 +166,9 @@ Do not reset live data just to make a test pass. Back up before bulk data migrat
   never to be packed without migrating both ends), zone management
   (`NctZoneProtocol.h`), the pool light link (`NctPoolProtocol.h`), the preshow
   media link (`NctPreshowProtocol.h`) and the main show link (`NctShow/src/NctShowProtocol.h`,
-  types 0x50-0x54: show image announce/chunk/query/status and `SHOW_TIMECODE`). The preshow media bridge additionally claims
+  types 0x50-0x54: show image announce/chunk/query/status and `SHOW_TIMECODE`; 0x55 `SHOW_LIVE`, the
+  show editor's ~20 Hz broadcast of per-number colours that a registered, non-playing v1.7.0+ cube shows
+  for a lease and then restores, relayed broadcast-only by general-radio-1.2.0). The preshow media bridge additionally claims
   every **2-byte** frame, which is the pre-2026 packet it still accepts.
 - Main show: `MSG_SHOW_START` is unchanged and remains the only thing a cube needs; a controller
   without timecode (mainshow-1.2.0, general-radio-1.0.0) works exactly as before, and cubes before
@@ -266,6 +268,11 @@ hand-edit hashes to bypass stale-build checks. Only verified cube artifacts are
 intentionally distributable through the repository's build-directory exceptions.
 
 ## Handoff and hygiene
+
+The operator handover lives in Notion: v1 (separate Tk apps, page `3e35e8c80bde815a9934fc0055c20160`) and
+v2 for the NCT Console (page `3e35e8c80bde81819f1bdf06368f5d60`, drafts in `console/docs/handover_v2/`,
+screenshots regenerated with `console/tools/docshots.py`, hardware evidence in `console/TEST_REPORT_2026-09-23.md`).
+Update the v2 chapter and recapture its screenshots when you change a console workflow.
 
 Document changes, tests, and any unverified physical behavior. Keep the root README
 as the operator entry point and component READMEs for subsystem detail. Older

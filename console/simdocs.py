@@ -350,10 +350,11 @@ def docs_boards(hub):
     blank = DocZone('/dev/sim.newzone', '14:63:93:C0:EC:50', zone_type=0, point=0, name='', db_version=0, db_count=0, db_crc=0)
     cube = simulate.FakeCube('/dev/sim.cube', known_mac, number=44)
     cube45 = simulate.FakeCube('/dev/sim.cube2', 'A4:CF:12:34:56:79', number=45)
-    station = DocStation('/dev/sim.station', '30:ED:A0:5B:6D:D8', cubes=[known_mac, cube45.mac, '34:85:18:00:00:12'],
+    station = DocStation('/dev/sim.station', '02:AA:BB:CC:DD:01', cubes=[known_mac, cube45.mac, '34:85:18:00:00:12'],
                          zones=[plate, pool, blank])
-    radio = simulate.FakeGeneralRadio('/dev/sim.radio', '02:AA:BB:CC:DD:EE', cubes=[known_mac], zones=[plate])
-    mainshow = FakeMainshow('/dev/sim.mainshow', '30:ED:A0:5B:6D:E0')
+    radio = simulate.FakeGeneralRadio('/dev/sim.radio', '02:AA:BB:CC:DD:EE', cubes=[known_mac], zones=[plate],
+                                      central='AA:BB:CC:DD:EE:01', bridge='AA:BB:CC:DD:EE:02', clock=hub.clock)
+    mainshow = FakeMainshow('/dev/sim.mainshow', '02:AA:BB:CC:DD:03')
     for board in (station, plate, pool, cube, cube45, radio, mainshow, blank):
         hub.scanner.add(board)
     hub._sim.update(known_uid=known_uid, known_cube=44, known_mac=known_mac, plate=plate, pool=pool, blank=blank, cube=cube,
@@ -364,6 +365,8 @@ def install(hub):
     """The `docs` scenario: simulate.install(empty) + the documentation bench + lease touches for held panels."""
     simulate.install(hub, 'empty')
     hub._sim = {}
+    # Scenes stage zones and cubes that are behind on purpose; automatic updates would settle them first.
+    hub.settings.update(auto_zone_db_radio=False, auto_zone_db_usb=False, auto_show=False, auto_pull=False)
     docs_boards(hub)
     inner = hub.tick
 
@@ -381,6 +384,19 @@ def install(hub):
 
     hub.tick = tick
     hub._sim_seed = lambda: seed_inventory(hub)
+
+    def canned_builds():
+        zones = {sketch: dict(version=version, build_hash='simulated', error=None) for sketch, version in
+                 (('PreshowZone', 'preshow-3.4.0'), ('DesertZone', 'desert-2.4.0'), ('TagPlateZone', 'tagplate-2.4.0'),
+                  ('PoolZone', 'pool-3.2.0'), ('ResetZone', 'reset-1.0.0'))}
+        hub.builds = dict(cube=dict(version='v1.4.1-USB.2', build_hash='simulated', error=None), zones=zones,
+                          dongle=dict(state='current', version='1.7', label='ESP-NOW dongle relay firmware'),
+                          mainshow=dict(state='current', version='1.2.0', label='Mainshow controller firmware'),
+                          general=dict(state='current', version='1.0.0', label='General Radio firmware'),
+                          tools=dict(arduino_cli='arduino-cli', core_ok=True), checked_at=time.time())
+        hub.dirty.add('builds')
+
+    hub.refresh_builds = canned_builds
     return hub
 
 
@@ -398,4 +414,10 @@ def seed_inventory(hub):
         db.result(s['known_mac'], True, 'Simulated acknowledgment')
     except ValueError:
         pass
+    # Published v32 = these mappings, before any board is identified (so no "unpublished" card ever fires);
+    # the pool radio already holds exactly that database, the plate the older v31.
+    publication = seed_publication(hub, 32)
+    s['publication'] = dict(version=publication.version, count=publication.count, crc=publication.crc)
+    s['pool'].db_version, s['pool'].db_count, s['pool'].db_crc = 32, publication.count, publication.crc
+    docs_sync(hub, 'ok', web_version=32)
     hub.mark_dirty('inventory')

@@ -1,7 +1,10 @@
-# General radio (`general-radio-1.1.0`)
+# General radio (`general-radio-1.2.0`)
+
+1.2.0 (2026-09-23) lets `show_send` relay the Show editor's SHOW_LIVE frames (0x55, broadcast only; cube
+firmware v1.7.0+ mirrors the editor's colour for a lease). Nothing else changed.
 
 1.1.0 (2026-09-23) adds the main-show relay for the console's Show editor, and the show timecode.
-Everything in 1.0.0 is unchanged. The zone tools still accept 1.0.0 (`dongle.RELAY_VERSIONS`).
+Everything in 1.0.0 is unchanged. The zone tools still accept 1.0.0 and 1.1.0 (`dongle.RELAY_VERSIONS`).
 
 One ESP32-C3 USB dongle for every ESP-NOW host function in the installation. It speaks a
 strict superset of the pairing-station relay protocol, so the pairing app and the Zone Database
@@ -57,7 +60,7 @@ is returned to idle after 5 s of silence (`watchdog`), as on the station.
 | `pool` | `member` 1–23 (0 = release), `radio_id` 1–6 (default 1) | `pool_state{armed,member,radio_id,central_mac,unicast,radio_mask,epoch}` |
 | `preshow` | `point` 1–4, `state` 1/0 | `preshow_state{…}`; later `preshow_ack{point,state,seq,ms,applied}` from the bridge, or `preshow_fail{point,state,seq}` once after 3 s unacknowledged |
 | `led_test` | `on` 1/0 | `led_test{on,pin}` |
-| `show_send` | `mac` (unicast or `FF:FF:FF:FF:FF:FF`), `hex` (frame built by `pairing_station/showfile.py`) | `show_sent{mac,kind,status}`. Kinds allowed: SHOW_ANNOUNCE, SHOW_CHUNK, SHOW_QUERY (never timecode or status). 1.1.0 |
+| `show_send` | `mac` (unicast or `FF:FF:FF:FF:FF:FF`), `hex` (frame built by `pairing_station/showfile.py`) | `show_sent{mac,kind,status}`. Kinds allowed: SHOW_ANNOUNCE, SHOW_CHUNK, SHOW_QUERY (never timecode or status). 1.1.0. SHOW_LIVE (kind 85, up to 247 bytes) to `FF:FF:FF:FF:FF:FF` only; unicast is refused (`SHOW_LIVE is broadcast only`). 1.2.0 |
 | `show_config` | `length_ms` 1–3600000, `version`, `crc` | `show_config{…}`: the show length that bounds the timecode (RAM only; the console sends it on connect). 1.1.0 |
 | `show_stop` | | `show_stop{was_running,show_id}`: ends the timecode (cubes keep playing until SET_ZONE 0). 1.1.0 |
 
