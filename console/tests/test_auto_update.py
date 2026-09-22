@@ -13,7 +13,7 @@ import simulate
 class AutoUpdateTests(unittest.TestCase):
     def setUp(self):
         self.hub = simulated_hub()
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
 
     def tearDown(self):
         self.hub.shutdown(force=True)
@@ -41,15 +41,21 @@ class AutoUpdateTests(unittest.TestCase):
         run_ticks(self.hub, 60)
         station = self.hub.station_session()
         radio = self.hub.sessions[self.hub.device_by_id('/dev/sim.radio').id]
-        self.assertIsNot(station, radio)
+        workstation = self.hub.sessions[self.hub.device_by_id('/dev/sim.workstation').id]
+        self.assertIs(station, self.hub.sessions[self.hub.device_by_id('/dev/sim.station').id], 'the earliest reader link is primary')
         self.assertTrue(station.zones.walkaround and station.zones.auto_refresh)
-        self.assertFalse(radio.zones.walkaround)
+        self.assertFalse(radio.zones.walkaround or workstation.zones.walkaround)
         commands.run(self.hub, 'zones.walkaround', dict(enabled=False))
-        self.assertFalse(station.zones.walkaround or radio.zones.walkaround)
+        self.assertFalse(station.zones.walkaround or radio.zones.walkaround or workstation.zones.walkaround)
         commands.run(self.hub, 'zones.walkaround', dict(enabled=True))
         self.assertTrue(station.zones.walkaround)
-        # the station goes away: the General Radio takes over walking
+        # the station goes away: the Workstation (the next reader link) takes over walking, alone
         self.hub.close_session(station, 'test')
+        self.hub.apply_auto_modes()
+        self.assertTrue(workstation.zones.walkaround)
+        self.assertFalse(radio.zones.walkaround)
+        # then the legacy General Radio, the last relay left
+        self.hub.close_session(workstation, 'test')
         self.hub.apply_auto_modes()
         self.assertTrue(radio.zones.walkaround)
 

@@ -13,9 +13,9 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 |---|---|---|
 | Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity. From v1.5.0 the main show is data (v1.6.0 adds per-cube fanning by the registered cube number): compiled-in `DefaultShow.h` (generated from `shows/mainshow.json`) or a newer published show received over ESP-NOW and kept in NVS namespace `show`; joins a running show from `SHOW_TIMECODE` |
 | NFC pairing station | `pairing_station/firmware/pairing_station/` | PN532 scanning, selected-cube identification, registration relay, zone database distribution |
-| NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Keeps every database current automatically by default (zone databases over the air through one relay and over USB, the main show over the air, web pulls; saved switches in Settings › Automatic updates), and a Register page that registers cubes as they are plugged in (USB → number → NFC scan → Sync; off by default). Holds every old app's instance lock while running |
+| NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Keeps every database current automatically by default (zone databases over the air through one relay and over USB, the main show over the air, web pulls; saved switches in Settings › Automatic updates), a Register page that registers cubes as they are plugged in (USB → number → NFC scan → Sync; off by default), and a Flash page (`flashflow.py`) that flashes cubes as they are plugged in and brings their main show up to date over USB (off at every launch). Holds every old app's instance lock while running |
 | Pairing GUI | `pairing_station/app.py` | Inventory, number assignment, NFC registration, USB pinning, zone controls |
-| Cube USB flasher | `flashing_station/app.py` | Identity checks, builds/uploads, NVS preservation, flash receipts |
+| Cube USB flasher | `flashing_station/app.py`, `backend.py`, `nvs.py` | Identity checks, builds/uploads, NVS preservation, flash receipts; optional show stage (console only) writes the published main show into NVS namespace `show` over USB via `nvs.py` (NVS format-2 reader/writer that refuses anything it cannot parse fully), verified by read-back and the `SHOW:` boot reply |
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone,ResetZone}/` | NFC-driven show zones; PoolZone also has slider calibration; ResetZone returns a cube to idle (`SET_ZONE 0`) at the end of the show |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
 | Main show library | `zones/firmware/libraries/NctShow/src/`, `pairing_station/showfile.py`, `console/web/lib/showengine.js`, `shows/mainshow.json` | Show image format and renderer (C++, Python and JS kept identical, cross-checked by vectors), show update/timecode frames (`NctShowProtocol.h`). Header-only and separate from NctZone on purpose: zone manifests hash `NctZone/src` |
@@ -62,6 +62,14 @@ modules below unchanged; its `hub.py` owner thread plays the role of the Tk thre
 controllers), `api.py`/`commands.py` are its only entry points, destructive commands need a
 confirmation token (the UI's hold; hardware buttons run on one click with a warning tooltip), and `console/simulate.py` provides fake boards for headless tests (`console/tests`). Use its Python, not an unrelated
 system interpreter. Python 3.14 with Tk is the tested Mac configuration.
+
+**Console language (EN/KR):** write console text in plain English only; one session
+(nct-console-language-selector) does all Korean translation. Front-end strings go through `t('English')` / `hint()` /
+`tk()` (`console/web/lib/i18n.js`), with Korean in `console/web/lib/ko/*.js` keyed by the English text. Operator copy
+in `console/uitext.py` has Korean in `console/uitext_ko.py` (same keys). Rewording English in `uitext.py` fails
+`console/tests/test_uitext.py` until the Korean is revisited and `console/uitext_ko.py --stamp` is run;
+`console/web/tests/i18n.test.js` checks every `t()` literal has Korean. Text generated in Python (advisor cards, job
+stages, sync status, device logs, errors) stays English, and protocol tokens and product names are never translated.
 
 **Host portability:** macOS is bench-tested; Windows is supported but nobody here can run it. Never
 write `fcntl`, `/tmp`, `os.getuid`, `os.fchmod`, `/dev/cu.*` assumptions, `.venv/bin`, Arduino paths,

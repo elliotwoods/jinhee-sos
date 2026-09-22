@@ -47,12 +47,15 @@ class DetectTests(unittest.TestCase):
                  b'NCT PRESHOW TAG PLATE': ('legacy_zone', 'preshow_exit'), b'Cube READY': ('cube', None),
                  b'nct-pairing-1.6-zones': ('station', None), b'=== POOL CENTRAL READY ===': ('other', None),
                  b'NCT PRESHOW MEDIA BRIDGE': ('other', None), b'..NCT MAINSHOW CONTROLLER..': ('other', None), b'hello world': ('unknown', None), b'\xff' * 64: ('blank', None),
-                 # The general radio speaks the relay protocol, so its image may well contain the station's needle too.
-                 b'..NCT GENERAL RADIO..nct-pairing-1.8-zones..': ('other', None)}
+                 # The general radio and the Workstation speak the relay protocol, so their images may well contain
+                 # the station's needle too.
+                 b'..NCT GENERAL RADIO..nct-pairing-1.8-zones..': ('other', None),
+                 b'..NCT WORKSTATION..nct-pairing-1.8-zones..': ('other', None)}
         for image, (kind, profile) in cases.items():
             result = zone_detect.classify_image(image if kind == 'blank' else b'\x00' * 40 + image)
             self.assertEqual((result['kind'], result['profile']), (kind, profile), image)
         self.assertEqual(zone_detect.classify_image(b'NCT GENERAL RADIO')['label'], 'General radio (GeneralRadio)')
+        self.assertEqual(zone_detect.classify_image(b'..NCT WORKSTATION..')['label'], 'Workstation (Workstation)')
 
     def test_real_firmware_dumps_when_available(self):
         workspace = ROOT.parent

@@ -1,5 +1,5 @@
 #pragma once
-// MAC and hex text helpers for the general radio's JSON line protocol. Same formats the
+// MAC and hex text helpers for the Workstation's JSON line protocol. Same formats the
 // pairing station and the Mainshow controller use: colon-separated upper-case MACs and UIDs,
 // plain upper-case hex for relayed zone frames.
 #include <ctype.h>
@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-namespace gr {
+namespace ws {
 
 inline void formatMac(const uint8_t *mac, char *out) {  // out: 18 bytes
   snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -67,4 +67,4 @@ inline int parsePlainHex(const char *s, uint8_t *out, int capacity) {
   return length / 2;
 }
 
-}  // namespace gr
+}  // namespace ws

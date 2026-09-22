@@ -6,6 +6,7 @@ import { goDevice, navigate } from '../router.js';
 import { section } from '../store.js';
 import { signalBars } from '../lib/format.js';
 import { withMacs } from './basics.js';
+import { t } from '../lib/i18n.js';
 
 function Item({ entry, selected }) {
   const advisor = section('advisor') || { suggestions: [] };
@@ -18,10 +19,10 @@ function Item({ entry, selected }) {
     dot = d.state === 'session' ? 'ok' : d.state === 'job' ? 'info' : d.state === 'foreign' ? 'warn' : d.state === 'probing' ? 'info' : 'muted';
     if (d.role === 'zone' && d.details && d.details.db_version != null) sub += ` · v${d.details.db_version}`;
   } else if (entry.zone) {
-    sub = `radio ${signalBars(entry.zone.rssi)} · v${entry.zone.db_version}`;
+    sub = `${t('radio')} ${signalBars(entry.zone.rssi)} · v${entry.zone.db_version}`;
     dot = entry.zone.state === 'current' ? 'ok' : entry.zone.state === 'behind' ? 'warn' : entry.zone.state === 'ahead' ? 'bad' : 'info';
   } else if (entry.row) {
-    sub = entry.row.pinned ? '📌 USB pinned' : 'radio';
+    sub = entry.row.pinned ? t('📌 USB pinned') : t('radio');
     dot = entry.row.recent ? 'ok' : 'muted';
   }
   const go = () => (entry.id === 'computer' ? navigate('#/devices/computer') : goDevice(entry.id));
@@ -35,8 +36,8 @@ export function Rail() {
   const ui = useUI();
   const groups = railEntries(section('devices') || [], section('inventory'), section('registry'), section('station'), ui.search);
   const selected = ui.route.section === 'devices' ? (ui.route.device || null) : null;
-  return html`<nav class="rail" aria-label="devices" data-doc="rail">${groups.map((g) => html`<div key=${g.key}>
+  return html`<nav class="rail" aria-label=${t('devices')} data-doc="rail">${groups.map((g) => html`<div key=${g.key}>
     <div class="rail-group"><span>${g.title}</span><span>${g.entries.length}</span></div>
     ${g.entries.map((e) => html`<${Item} key=${e.id} entry=${e} selected=${selected === e.id} />`)}</div>`)}
-    ${!groups.length && html`<div class="note rail-empty">No devices match.</div>`}</nav>`;
+    ${!groups.length && html`<div class="note rail-empty">${t('No devices match.')}</div>`}</nav>`;
 }

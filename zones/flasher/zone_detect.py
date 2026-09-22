@@ -14,8 +14,10 @@ import zone_build
 
 # First match wins. (needle, kind, label, profile)
 SIGNATURES = [
-    # Before the station: the general radio speaks the relay protocol and could carry that text.
-    (b'NCT GENERAL RADIO', 'other', 'General radio (GeneralRadio)', None),
+    # Before the station: the Workstation (and the legacy General Radio it replaces) speak the relay
+    # protocol and could carry that text.
+    (b'NCT WORKSTATION', 'other', 'Workstation (Workstation)', None),
+    (b'NCT GENERAL RADIO', 'other', 'General radio (GeneralRadio)', None),  # legacy radio, pre-Workstation
     (b'nct-pairing', 'station', 'Pairing / registry station', None),
     (b'registration console READY', 'station', 'Registration console', None),
     (b'Cube READY', 'cube', 'Neocube firmware', None),

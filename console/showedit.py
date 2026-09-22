@@ -5,13 +5,13 @@
   compiled-in default).
 - Publishing sends the draft to the web, which allocates the next universal version (jobs/show.py).
 - The ShowRegistry distributes the published show to cubes through a relay that speaks `show_send`
-  (General Radio general-radio-1.1.0 and later); it holds while the Mainshow controller reports a show.
+  (a Workstation, or a General Radio general-radio-1.1.0 and later); it holds while the Mainshow controller reports a show.
 - After a publish (and whenever a controller that knows `show_config` connects) the controller is told
   the show's length/version/CRC, which bounds its timecode. An older controller is left alone: it works
   exactly as before, without timecode.
 - Mirroring (`live`): while the editor's "Mirror on real cubes" is on, the page sends the colour each
   previewed cube number shows at the playhead; each call becomes broadcast SHOW_LIVE frames through the
-  relay (general-radio-1.2.0). Cubes on firmware v1.7.0+ whose number is listed show that colour for the
+  relay (a Workstation, or general-radio-1.2.0). Cubes on firmware v1.7.0+ whose number is listed show that colour for the
   lease, then fall back; a cube playing a show ignores it. Fire-and-forget: the relay's `show_sent` /
   `error` replies for those frames are swallowed here, never counted by the registry.
 """
@@ -27,7 +27,7 @@ DRAFT_KEY = 'show_draft'
 BROADCAST = 'FF:FF:FF:FF:FF:FF'
 LIVE_MIN_INTERVAL_S = 0.04   # calls closer than this are dropped (the page sends every ~60 ms)
 LIVE_ACTIVE_S = 1.0          # "mirroring" in the snapshot while calls arrived this recently
-LIVE_NEEDS = 'needs a General Radio running general-radio-1.2.0 and cubes with firmware v1.7.0-USB.1'
+LIVE_NEEDS = 'needs a Workstation (or General Radio general-radio-1.2.0) and cubes with firmware v1.7.0-USB.1'
 
 
 class ShowEditor:
@@ -94,7 +94,8 @@ class ShowEditor:
 
     # ---------------------------------------------------------------- relay and controller
     def relay(self):
-        """The session that can carry show frames (a General Radio that announced `show` support)."""
+        """The session that can carry show frames: a Workstation link whose hello announced `show` support
+        (capabilities['show_relay']), asked through its `show_relay()`."""
         for session in self.hub.sessions.values():
             if getattr(session, 'show_relay', None) and session.show_relay():
                 return session
@@ -103,7 +104,7 @@ class ShowEditor:
     def _send(self, message):
         relay = self.relay()
         if not relay:
-            raise ValueError('Connect a General Radio (general-radio-1.1.0 or later) to update cube shows')
+            raise ValueError('Connect a Workstation (or General Radio general-radio-1.1.0 or later) to update cube shows')
         relay.transport.send(message)
 
     def _log(self, text):
@@ -123,10 +124,10 @@ class ShowEditor:
         return int(info.get('show_length_ms') or self.default_length)
 
     def push_config(self, session=None):
-        """Tell the Mainshow controller (or General Radio) the published show's length. Old firmware: skipped."""
+        """Tell the Mainshow controller (or Workstation) the published show's length. Old firmware: skipped."""
         session = session or self.hub.show_session()
         if not session:
-            raise ValueError('No Mainshow controller or General Radio connected')
+            raise ValueError('No Mainshow controller or Workstation connected')
         info = getattr(getattr(session, 'session', None), 'info', None) or getattr(session, 'status', {}) or {}
         if not info.get('timecode'):
             raise ValueError(f'{info.get("firmware") or "This firmware"} has no show timecode; it still starts '
@@ -175,7 +176,7 @@ class ShowEditor:
         if self.live_error:
             error, self.live_error = self.live_error, None
             self.hub.mark_dirty('showedit')
-            raise ValueError(f'The General Radio refused the live colours ({error}): mirroring {LIVE_NEEDS}')
+            raise ValueError(f'The relay refused the live colours ({error}): mirroring {LIVE_NEEDS}')
         try:
             clean = [(int(cube), [int(v) for v in rgb]) for cube, rgb in entries or ()]
         except (TypeError, ValueError) as exc:
@@ -220,7 +221,7 @@ class ShowEditor:
             self.registry.requests.pop(request, None)
         if kind == 'error' and not self.live_error:
             self.live_error = str(event.get('detail') or 'refused')
-            self.hub.log(f'The General Radio refused a live colour frame ({self.live_error}); mirroring {LIVE_NEEDS}',
+            self.hub.log(f'The relay refused a live colour frame ({self.live_error}); mirroring {LIVE_NEEDS}',
                          'warn', source='show')
             self.hub.mark_dirty('showedit')
         return True

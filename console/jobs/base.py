@@ -84,7 +84,13 @@ class JobRunner:
         job.thread.start()
         if not (job.quiet or job.mute):
             self.hub.log(f'Started: {job.title}', 'info', job.device, source='job')
+        self._sound('job_started', job)
         return job
+
+    def _sound(self, hook, job):
+        sounds = getattr(self.hub, 'sounds', None)   # sounds.py: the cube flasher's audio cues
+        if sounds:
+            getattr(sounds, hook)(job)
 
     def pump(self):
         """Apply queued job events on the owner thread."""
@@ -108,6 +114,7 @@ class JobRunner:
                     job.stage = str(value)
                     job.log.append(f'— {value}')
                     job.writing = False
+                    self._sound('job_stage', job)
                 elif kind == 'identity':
                     job.identity = value
                 elif kind == 'result':
@@ -134,6 +141,7 @@ class JobRunner:
                     if not job.mute and (not job.quiet or job.state != 'done'):
                             self.hub.log(f'{job.title}: {job.state}' + (f' · {outcome.get("text")}' if outcome.get('text') else ''),
                                      level, job.device, source='job')
+                    self._sound('job_done', job)
                     self.hub.job_finished(job)
                     break
         self.hub.mark_dirty('jobs')

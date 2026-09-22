@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 export function sortRows(rows, key, dir = 1) {
   if (!key) return rows;
   return [...rows].sort((a, b) => {
@@ -17,6 +19,11 @@ export function filterRows(rows, query, keys) {
 // The pairing app's seven inventory filters (dashboard.matches).
 export const FILTERS = ['All devices', 'Seen recently', 'Has original number and connected', 'Registered (ACK)',
   'Unregistered', 'Needs attention', 'All incl. excluded'];
+// The chip text for a filter in the current language (the FILTERS values stay the English keys the logic compares).
+export function filterLabel(choice) {
+  return ({ 'All devices': t('All devices'), 'Seen recently': t('Seen recently'), 'Has original number and connected': t('Has original number and connected'),
+    'Registered (ACK)': t('Registered (ACK)'), Unregistered: t('Unregistered'), 'Needs attention': t('Needs attention'), 'All incl. excluded': t('All incl. excluded') })[choice] || choice;
+}
 export function inventoryFilter(row, choice, query) {
   if (choice !== 'All incl. excluded' && row.role === 'excluded') return false;
   if (choice === 'Seen recently' && !row.recent) return false;

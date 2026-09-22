@@ -120,6 +120,7 @@ def base(hub):
 def reset(hub):
     """Between scenarios of one chapter: stop what runs, release holds."""
     reset_register(hub)
+    reset_flash(hub)
     st = hub.station_session()
     if st and st.controller.mode:
         st.controller.stop()
@@ -182,6 +183,22 @@ def _station(hub):
 
 # ---------------------------------------------------------------- 03 registration: the Register page
 NEW_CUBE = dict(port='/dev/sim.cube-new', mac='A4:CF:12:34:56:9B', uid='04:A2:2B:1C:53:80:9B')
+
+
+FLASH_CUBE = dict(port='/dev/sim.cube-flash', mac='A4:CF:12:34:56:9C')
+
+
+def reset_flash(hub):
+    """Flash scenes end with their chapter: switch the page off, unplug its cube, forget the session."""
+    flow = hub.flashflow
+    if flow.enabled:
+        cmd(hub, 'flash.enable', on=False)
+    flow.clear()
+    flow.history = []
+    if any(d.port == FLASH_CUBE['port'] for d in hub.devices.values()):
+        hub.scanner.remove(FLASH_CUBE['port'])
+        wait(hub, lambda: not any(d.port == FLASH_CUBE['port'] for d in hub.devices.values()), timeout=4)
+    hub.mark_dirty('flash')
 
 
 def reset_register(hub):
@@ -326,6 +343,36 @@ def s03_5_ok(hub):
 
 
 # ---------------------------------------------------------------- 04 cube firmware
+def flash_on(hub):
+    """Switch the Flash page on with the bench's own boards counted as already flashed (as on a real bench)."""
+    seed_show(hub)
+    cmd(hub, 'flash.enable', on=True)
+    hub.intake.cubes.attempted.update(d.key for d in hub.devices.values())
+
+
+@scenario('04-F1', 4, 1, 'Flash cubes: switch on "Flash cubes as they are plugged in"', 'Flash cubes: "Flash cubes as they are plugged in" 켜기',
+          '#/flash', hl=['flash.enable'])
+def s04_f1(hub):
+    flash_on(hub)
+
+
+@settled('04-F1')
+def s04_f1_ok(hub):
+    return hub.flashflow.enabled and hub.flashflow.step == 'idle'
+
+
+@scenario('04-F2', 4, 2, 'A cube plugged in: firmware written and verified, show written and confirmed', '큐브 연결: 펌웨어 쓰기·검증, 쇼 쓰기·확인 완료',
+          '#/flash', hl=['flash.flow'], dock=True)
+def s04_f2(hub):
+    flash_on(hub)
+    hub.scanner.add(simulate.FakeCube(FLASH_CUBE['port'], FLASH_CUBE['mac'], firmware='v1.4.1-USB.2'))
+
+
+@settled('04-F2')
+def s04_f2_ok(hub):
+    return hub.flashflow.step == 'done' and hub.flashflow.mac == FLASH_CUBE['mac']
+
+
 def _cube_stale(hub):
     d = device(hub, 'cube')
     sim(hub)['cube'].firmware = 'v1.3.9-USB'

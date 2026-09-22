@@ -15,8 +15,9 @@ import time
 from core import PROTECTED
 from usb_identify import MAC as MAC_RE
 
-LABELS = {'cube': 'Neocore cube', 'zone': 'Zone plate', 'station': 'Pairing station / ESP-NOW dongle',
-          'mainshow': 'Mainshow controller', 'generalradio': 'General Radio (all-in-one dongle)', 'poolcentral': 'Pool central controller',
+LABELS = {'cube': 'Neocore cube', 'zone': 'Zone plate',
+          'workstation': 'Workstation (pairing station / ESP-NOW dongle / General Radio)',
+          'mainshow': 'Mainshow controller', 'poolcentral': 'Pool central controller',
           'preshowbridge': 'Preshow media bridge', 'pooltest': 'Pool light test bridge',
           'rangetest': 'ESP-NOW range test board', 'unknown': 'Unidentified ESP32 board', 'other': 'USB serial device'}
 
@@ -127,21 +128,21 @@ class Device:
                     probed_at=self.probed_at)
 
 
-def presumed_role(mac, rows_by_mac, roles, zones_by_mac, controllers, general_radios=()):
+def presumed_role(mac, rows_by_mac, roles, zones_by_mac, controllers, workstations=()):
     """What the inventory says about a MAC before (or without) a probe."""
     if not mac:
         return {}
     if mac in PROTECTED:
-        return dict(role='station', label='Installed pairing station (protected)')
-    if mac in general_radios:
-        return dict(role='generalradio', label='Recorded as a General Radio')
+        return dict(role='workstation', label='Installed pairing station (protected)')
+    if mac in workstations:
+        return dict(role='workstation', label='Recorded as a Workstation / General Radio')
     if mac in controllers:
         return dict(role='mainshow', label='Recorded as the Mainshow controller')
     if mac in zones_by_mac:
         zone = zones_by_mac[mac]
         return dict(role='zone', label=f'Zone "{zone.get("name") or mac}" in the registry', zone=zone)
     if roles.get(mac) == 'excluded':
-        return dict(role='station', label='Excluded from the cube inventory (station or dongle)')
+        return dict(role='workstation', label='Excluded from the cube inventory (station, dongle or workstation)')
     row = rows_by_mac.get(mac)
     if row and (row.get('cube_id') is not None or row.get('uid')):
         number = row.get('cube_id')

@@ -21,12 +21,12 @@ class HubTests(unittest.TestCase):
         return {d['port']: d for d in section(self.hub, 'devices')}
 
     def test_identifies_every_board_and_opens_the_right_session(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         devices = self.devices()
         self.assertEqual({p: (d['role'], d['session_kind']) for p, d in devices.items()},
-                         {'/dev/sim.cube': ('cube', 'cube'), '/dev/sim.station': ('station', 'station'),
+                         {'/dev/sim.cube': ('cube', 'cube'), '/dev/sim.station': ('workstation', 'workstation'),
                           '/dev/sim.pool3': ('zone', 'pool'), '/dev/sim.preshow1': ('zone', 'preshow'),
-                          '/dev/sim.radio': ('generalradio', 'generalradio')})
+                          '/dev/sim.radio': ('workstation', 'workstation'), '/dev/sim.workstation': ('workstation', 'workstation')})
         self.assertTrue(all(d['state'] == 'session' for d in devices.values()))
         station = section(self.hub, 'station')
         self.assertTrue(station['connected'] and station['reader_ok'])
@@ -36,7 +36,7 @@ class HubTests(unittest.TestCase):
         self.assertIsNotNone(self.hub.db.get('A4:CF:12:34:56:78'))
 
     def test_zone_frames_reach_the_registry_not_the_controller(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         station = self.hub.station_session()
         station.zones.query()
         run_ticks(self.hub, 5)
@@ -72,14 +72,14 @@ class HubTests(unittest.TestCase):
         self.assertEqual(session.stats['unknown'], 1)
 
     def test_hardware_commands_run_on_one_click(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         plate_id = '14:63:93:C0:EC:14'
         self.assertTrue(commands.run(self.hub, 'monitor.zone', dict(device=plate_id, cube_id=12, zone=1)))
         # a stray token (an old page) is ignored, never passed to the command
         self.assertTrue(commands.run(self.hub, 'monitor.zone', dict(device=plate_id, cube_id=12, zone=2, token='stale')))
 
     def test_destructive_commands_need_a_confirmation_token(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         name = 'mainshow.trigger_all'
         with self.assertRaises(ValueError) as refused:
             commands.run(self.hub, name, {})
@@ -93,7 +93,7 @@ class HubTests(unittest.TestCase):
             self.hub.check_confirmation(token, name, {})
 
     def test_safe_monitor_commands_and_console(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         plate_id = '14:63:93:C0:EC:14'
         self.assertTrue(commands.run(self.hub, 'monitor.flash', dict(device=plate_id, cube_id=12, seconds=2)))
         self.assertEqual(self.hub._sim['plate'].flashing[0], 12)
@@ -105,7 +105,7 @@ class HubTests(unittest.TestCase):
             commands.run(self.hub, 'device.console', dict(device=plate_id, line='rm -rf'))
 
     def test_disconnect_is_sticky_until_connect(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         cube_id = 'A4:CF:12:34:56:78'
         commands.run(self.hub, 'device.disconnect', dict(device=cube_id))
         run_ticks(self.hub, 5)
@@ -114,7 +114,7 @@ class HubTests(unittest.TestCase):
         self.assertIn(cube_id, self.hub.sessions)
 
     def test_unplug_closes_the_session(self):
-        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 5))
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6))
         self.hub.scanner.remove('/dev/sim.cube')
         self.assertTrue(tick_until(self.hub, lambda: 'A4:CF:12:34:56:78' not in self.hub.sessions, timeout=5))
         self.assertNotIn('/dev/sim.cube', self.devices())

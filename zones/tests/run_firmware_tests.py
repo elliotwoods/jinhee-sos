@@ -21,7 +21,7 @@ SHOW_LIBRARY = ROOT / 'firmware/libraries/NctShow/src'
 SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone', 'ResetZone']
 # Sketches that are not zone boards (no zcfg/zdb partitions, not a zone-flasher target)
 # but are still compiled for the host against the same stubs.
-EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController', 'GeneralRadio']
+EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController', 'Workstation']
 # Packet definitions a sketch may never re-declare: the pool packet used to be copied into
 # five sketches with nothing cross-checking them, and the preshow media packet was copied
 # into the plate and the bridge with the same result.

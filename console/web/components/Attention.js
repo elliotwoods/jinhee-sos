@@ -11,6 +11,7 @@ import { ActionButton, HoldButton } from './actions.js';
 import { goDevice } from '../router.js';
 import { withMacs } from './basics.js';
 import { useDocOpen } from '../lib/doc.js';
+import { t } from '../lib/i18n.js';
 
 function useJob(jobId) {
   useSections(['jobs']);
@@ -28,7 +29,7 @@ function ActionRow({ suggestion, action }) {
   const invoke = async () => {
     const args = { action_id: actionId };
     let payload = args;
-    if (action.kind === 'destructive') { const t = await api.confirm('advisor.act', args); if (!t || !t.token) throw new Error((t && t.error) || 'Could not confirm the action'); payload = { ...args, token: t.token }; }
+    if (action.kind === 'destructive') { const c = await api.confirm('advisor.act', args); if (!c || !c.token) throw new Error((c && c.error) || t('Could not confirm the action')); payload = { ...args, token: c.token }; }
     const r = await api.call('advisor.act', payload);
     if (!r.ok) throw new Error(r.error);
     return r.result;
@@ -37,14 +38,14 @@ function ActionRow({ suggestion, action }) {
     if (result && result.ok === false) { setStale(result.explanation); return; }
     const inner = result && result.result;
     if (inner && inner.job) setJob(inner.job);
-    else notify(`${action.label}: done`, 'ok');
+    else notify(t('{label}: done', { label: action.label }), 'ok');
   };
   const common = { label: action.label, what, hazard, needs, invoke, onDone: done, doc: `attention.action:${action.command}`, command: action.command };
   const button = action.kind === 'destructive' ? html`<${HoldButton} ...${common} className="btn danger small" />`
     : action.kind === 'hardware' ? html`<${ActionButton} ...${common} className="btn small" />`
     : html`<${SafeButton} ...${common} />`;
   return html`<span class="stack tight">${button}
-    ${stale && html`<span class="note warn-text">Not run: ${stale}</span>`}
+    ${stale && html`<span class="note warn-text">${t('Not run: {reason}', { reason: stale })}</span>`}
     ${live && html`<${JobCard} job=${live} compact />`}</span>`;
 }
 
@@ -61,15 +62,15 @@ export function SuggestionCard({ s, flash }) {
   return html`<article class=${'sugg ' + s.severity + (flash ? ' flash' : '')} aria-label=${s.title} data-doc=${`attention.card:${s.rule}`}>
     <div class="head"><div class="head-text"><span class=${'sev ' + s.severity + '-text'}>${s.severity.toUpperCase()}</span><span class="title">${s.title}</span>
         ${s.device && html`<div class="scope"><a href="#" onClick=${(e) => { e.preventDefault(); goDevice(s.device); }}>${withMacs(s.device)}</a></div>`}</div>
-      <span class="menu"><button class="btn small quiet" data-doc=${`attention.menu:${s.rule}`} onClick=${() => setMenu(!menu)} aria-haspopup="true" aria-expanded=${menu ? 'true' : 'false'} title="dismiss">Dismiss ▾</button>
-        ${menu && html`<div class="pop"><button data-doc="attention.dismiss" onClick=${() => dismiss('once')}>Dismiss this occurrence</button><button onClick=${() => dismiss('scope')}>Dismiss for this device</button><button onClick=${() => dismiss('rule')}>Don't show this rule again</button></div>`}</span></div>
+      <span class="menu"><button class="btn small quiet" data-doc=${`attention.menu:${s.rule}`} onClick=${() => setMenu(!menu)} aria-haspopup="true" aria-expanded=${menu ? 'true' : 'false'} title=${t('dismiss')}>${t('Dismiss')} ▾</button>
+        ${menu && html`<div class="pop"><button data-doc="attention.dismiss" onClick=${() => dismiss('once')}>${t('Dismiss this occurrence')}</button><button onClick=${() => dismiss('scope')}>${t('Dismiss for this device')}</button><button onClick=${() => dismiss('rule')}>${t("Don't show this rule again")}</button></div>`}</span></div>
     ${s.group && html`<p class="note">${withMacs((s.members || []).join(' · '))}</p>`}
-    ${s.know && html`<p><span class="lbl">What we know: </span>${withMacs(s.know)}</p>`}
-    ${s.why && html`<p><span class="lbl">Why it matters: </span>${s.why}</p>`}
-    ${s.check && html`<p><span class="lbl">What to check: </span>${s.check}</p>`}
+    ${s.know && html`<p><span class="lbl">${t('What we know:') + ' '}</span>${withMacs(s.know)}</p>`}
+    ${s.why && html`<p><span class="lbl">${t('Why it matters:') + ' '}</span>${s.why}</p>`}
+    ${s.check && html`<p><span class="lbl">${t('What to check:') + ' '}</span>${s.check}</p>`}
     <div class="actions">${(s.actions || []).map((a) => html`<${ActionRow} key=${a.id} suggestion=${s.group ? s.group[0] : s} action=${a} />`)}
-      <button class="btn small quiet" onClick=${() => setDetails(!details)}>${details ? 'Hide details' : 'Details'}</button></div>
-    ${details && html`<div class="evidence">rule ${s.rule} · id ${s.id}\n${(s.evidence || []).map((e) => `${hhmmss(e.at)} ${e.source}: ${e.text}`).join('\n')}</div>`}</article>`;
+      <button class="btn small quiet" onClick=${() => setDetails(!details)}>${details ? t('Hide details') : t('Details')}</button></div>
+    ${details && html`<div class="evidence">${t('rule {rule} · id {id}', { rule: s.rule, id: s.id })}\n${(s.evidence || []).map((e) => `${hhmmss(e.at)} ${e.source}: ${e.text}`).join('\n')}</div>`}</article>`;
 }
 
 export function Attention() {
@@ -82,10 +83,10 @@ export function Attention() {
   const visible = expanded ? list : list.slice(0, 6);
   useEffect(() => { list.forEach((s) => seen.current.add(s.id)); }, [list.length]);
   const c = advisor.counts || {};
-  return html`<section aria-label="attention" data-doc="attention"><h4><span>Attention · ${list.length}</span><span class="badges">${c.bad ? html`<span class="badge bad">${c.bad}</span>` : ''}${c.warn ? html`<span class="badge warn">${c.warn}</span>` : ''}</span></h4>
-    ${!list.length && html`<div class="empty">Nothing needs attention.</div>`}
+  return html`<section aria-label=${t('attention')} data-doc="attention"><h4><span>${t('Attention · {n}', { n: list.length })}</span><span class="badges">${c.bad ? html`<span class="badge bad">${c.bad}</span>` : ''}${c.warn ? html`<span class="badge warn">${c.warn}</span>` : ''}</span></h4>
+    ${!list.length && html`<div class="empty">${t('Nothing needs attention.')}</div>`}
     ${visible.map((s) => html`<${SuggestionCard} key=${s.id} s=${s} flash=${!seen.current.has(s.id)} />`)}
-    ${list.length > 6 && html`<button class="btn small quiet" onClick=${() => setExpanded(!expanded)}>${expanded ? 'Show fewer' : `${list.length - 6} more`}</button>`}</section>`;
+    ${list.length > 6 && html`<button class="btn small quiet" onClick=${() => setExpanded(!expanded)}>${expanded ? t('Show fewer') : t('{n} more', { n: list.length - 6 })}</button>`}</section>`;
 }
 
 export function Jobs() {
@@ -93,10 +94,10 @@ export function Jobs() {
   const jobs = (section('jobs') || []).filter((j) => !['sync.status', 'tools.check'].includes(j.kind) || j.state === 'failed');
   const running = jobs.filter((j) => j.state === 'running');
   const recent = jobs.filter((j) => j.state !== 'running').slice(0, 4);
-  return html`<section aria-label="jobs" data-doc="jobs"><h4><span>Jobs</span><span>${running.length ? `${running.length} running` : ''}</span></h4>
+  return html`<section aria-label=${t('jobs')} data-doc="jobs"><h4><span>${t('Jobs')}</span><span>${running.length ? t('{n} running', { n: running.length }) : ''}</span></h4>
     ${running.map((j) => html`<${JobCard} key=${j.id} job=${j} compact />`)}
     ${recent.map((j) => html`<${JobCard} key=${j.id} job=${j} compact />`)}
-    ${!jobs.length && html`<div class="empty">No jobs yet.</div>`}</section>`;
+    ${!jobs.length && html`<div class="empty">${t('No jobs yet.')}</div>`}</section>`;
 }
 
 // Attention count for the narrow-window drawer toggle.

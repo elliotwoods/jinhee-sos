@@ -20,12 +20,13 @@
 //     default; `show_stop` ends the timecode.
 #include <string.h>
 #include <stdio.h>
-#include "GrRadio.h"
-#include "GrJson.h"
-#include "GrHex.h"
+#include "WsRadio.h"
+#include "WsJson.h"
+#include "WsHex.h"
+#include "WsNfc.h"
 #include <NctShowProtocol.h>
 
-namespace gr {
+namespace ws {
 namespace cube {
 
 enum Mode { IDLE, IDENTIFY, REGISTERING, ACK_PAUSE };
@@ -93,6 +94,7 @@ inline void releaseTarget() {
   if (active) zoneToTarget(0);
   active = false;
   mode = IDLE;
+  nfc::endIdentify();
 }
 
 inline void cancelJobs() { for (ZoneJob &job : jobs) job.valid = false; }
@@ -139,6 +141,7 @@ inline void identify(const char *id, const uint8_t *mac, const char *line) {
   mode = IDENTIFY;
   started = lastBlink = millis();
   blue = false;
+  nfc::beginIdentify(id);  // the station's event order: tag_state, radio, identifying
   zoneToTarget(1);
   reply("identifying", id);
 }
@@ -162,6 +165,7 @@ inline void registerCube(const char *id, const uint8_t *mac, const char *line) {
   snprintf(operationId, sizeof(operationId), "%s", id);
   registration = packet;
   mode = REGISTERING;
+  nfc::endIdentify();  // the scan is over; the station disarms here too
   attempts = 0;
   CubeRx stale;  // a reply to an earlier operation must not count as this cube's acknowledgement
   while (cubeQueue && xQueueReceive(cubeQueue, &stale, 0) == pdTRUE) {}
@@ -344,4 +348,4 @@ inline int helloFields(char *out, size_t capacity, uint32_t now) {
 }
 
 }  // namespace cube
-}  // namespace gr
+}  // namespace ws

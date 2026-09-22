@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Zone Database Manager: find zones over ESP-NOW, see their database versions, update them.
 
-The ESP-NOW dongle is any ESP32-C3 running the pairing-station firmware (its zone relay needs no
-NFC reader); "Flash dongle…" installs that firmware. Updates use the announce/chunk frames, and
+The ESP-NOW dongle is any ESP32-C3 whose hello reports the zone relay: a Workstation, a legacy
+General Radio, or the pairing-station firmware (the relay needs no NFC reader). Boards are told apart
+by what hello reports, never by the firmware name; "Flash dongle…" installs the Workstation firmware.
+Updates use the announce/chunk frames, and
 zones accept only a higher database version. Set RX gain… stores a zone's PN532 gain (ZONE_SET_CONFIG).
 Versions are universal, allocated by the web inventory when a new database is published (zone_publish.py).
 
@@ -42,7 +44,7 @@ STATE_TEXT = {'current': '✓ current', 'behind': '↑ out of date', 'updating':
               'unpublished': '— nothing published'}
 STATE_COLOR = {'current': GREEN, 'behind': AMBER, 'updating': BLUE, 'ahead': RED, 'unpublished': MUTED}
 QUIET_EVENTS = {'pong', 'tag_state', 'radio', 'nfc_i2c', 'nfc_init', 'nfc_error', 'nfc_poll', 'device', 'discover_sent',
-                # a general radio's other roles (zones/firmware/GeneralRadio)
+                # a Workstation's (or legacy General Radio's) other roles (zones/firmware/Workstation)
                 'pool_beacon', 'preshow_beacon', 'preshow_ack', 'zone_repeat', 'pool_state', 'preshow_state'}
 
 
@@ -484,7 +486,7 @@ class App:
         was = self.connected
         self.connected = bool(ok)
         firmware = event.get('firmware', '?')
-        if firmware.startswith('mainshow-'):
+        if dongle.is_controller(firmware):
             self.connected = False
             self.radio_status.configure(text=f'{event.get("mac")} is the Mainshow controller ({firmware}), not a dongle: '
                                         'Disconnect and choose the other port', foreground=RED)
@@ -495,10 +497,12 @@ class App:
                        'firmware has no zone relay; use Flash dongle…')
             self.radio_status.configure(text=f'{event.get("mac")} · {firmware}: {problem}', foreground=RED)
             return
-        old = firmware not in dongle.RELAY_VERSIONS
+        old = not dongle.rx_gain_capable(event)
+        # A Workstation or General Radio is named as such: it is a dongle with more roles than the relay.
+        multi_role = dongle.family(event) in ('workstation', 'general')
         self.radio_status.configure(text=f'Connected · {event.get("mac")} · {firmware} · channel 2' +
-                                    (' · general radio' if dongle.is_general(firmware) else '') +
-                                    (f' · older relay (no RX gain control): Flash dongle… updates it to {dongle.FIRMWARE}'
+                                    (f' · {dongle.label(event).lower()}' if multi_role else '') +
+                                    (f' · older relay (no RX gain control): Flash dongle… updates it to {dongle.RELAY_FIRMWARE}'
                                      if old else ''),
                                     foreground=AMBER if old else GREEN)
         if not was:
@@ -508,10 +512,10 @@ class App:
             self.zones.query()
         if self.expect_dongle_firmware:
             self.expect_dongle_firmware = False
-            if firmware in dongle.RELAY_VERSIONS:
+            if dongle.rx_gain_capable(event):
                 self.set_status(f'Dongle flashed and verified: {event.get("mac")} reports {firmware}', GREEN)
             else:
-                self.set_status(f'Dongle answers but reports {firmware}, expected {dongle.FIRMWARE}', AMBER)
+                self.set_status(f'Dongle answers but reports {firmware}, expected {dongle.RELAY_FIRMWARE}', AMBER)
 
     def heartbeat(self, now):
         if not self.transport.port:
@@ -524,7 +528,7 @@ class App:
             self.last_hello = now
             if now - self.opened_at > 2 * self.HELLO_RETRY + 1 and not self.no_reply_warned:
                 self.no_reply_warned = True
-                self.radio_status.configure(foreground=RED, text='No reply from the pairing-station relay firmware on this '
+                self.radio_status.configure(foreground=RED, text='No reply from the Workstation or relay firmware on this '
                                             'port. If this is a new board, disconnect and use Flash dongle….')
         if self.connected and now - self.last_rx > self.SILENCE:
             self.connected = False
@@ -544,9 +548,9 @@ class App:
         if self.transport.port:
             self.disconnect('Disconnected to flash the dongle')
         if not messagebox.askokcancel('Flash ESP-NOW dongle', (
-                f'Write the pairing-station relay firmware ({dongle.FIRMWARE}) to\n{port["port"]}?\n\n'
+                f'Write the Workstation firmware ({dongle.RELAY_FIRMWARE}) to\n{port["port"]}?\n\n'
                 'Use a spare ESP32-C3. Known cubes and zone boards are refused automatically; NVS is preserved. '
-                f'Build: {dongle.build_state()} (rebuilt first if needed).'), parent=self.root):
+                f'Build: {dongle.build_state(dongle.WORKSTATION)} (rebuilt first if needed).'), parent=self.root):
             return
         known = dongle.known_boards(self.db, self.zones.store.zones())
         folder = DATA / 'dongle' / time.strftime('%Y%m%d-%H%M%S')
@@ -556,7 +560,8 @@ class App:
 
         def work():
             try:
-                mac = dongle.flash(port, known, folder, lambda kind, value: self.events.put(('flash', kind, value)))
+                mac = dongle.flash(port, known, folder, lambda kind, value: self.events.put(('flash', kind, value)),
+                                   firmware=dongle.WORKSTATION)
                 self.events.put(('flash_done', port, mac, None))
             except Exception as exc:
                 self.events.put(('flash_done', port, None, exc))
@@ -571,7 +576,7 @@ class App:
             return
         self.db.set_role(mac, 'excluded')  # the cube and zone flashers will now leave it alone
         self.log(f'Dongle {mac} flashed; recorded as an excluded station role')
-        self.set_status(f'Dongle {mac} written; connecting to verify the relay firmware…', AMBER)
+        self.set_status(f'Dongle {mac} written; connecting to verify the Workstation firmware…', AMBER)
         self.expect_dongle_firmware = True
         self.root.after(2500, lambda: self.action(lambda: (self.scan_ports(prefer=port['port']), self.connect())))
 
@@ -665,9 +670,9 @@ class App:
     def set_rx_gain(self):
         self.require_dongle()
         firmware = (self.station or {}).get('firmware', '')
-        if firmware not in dongle.RELAY_VERSIONS:
+        if not dongle.rx_gain_capable(self.station):
             raise ValueError(f'The dongle runs {firmware or "unknown firmware"}; setting the RX gain needs '
-                             f'{dongle.FIRMWARE}. Use Flash dongle… first.')
+                             f'{dongle.RELAY_FIRMWARE}. Use Flash dongle… first.')
         zone = self.selected_zone()
         current = zone.get('rx_gain') or zonedb.RX_GAIN_DEFAULT
         gain = GainDialog(self.root, zone['name'] or zone['mac'], current, reported=zone.get('rx_gain') is not None).result

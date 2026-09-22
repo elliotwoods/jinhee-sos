@@ -1,13 +1,15 @@
-// Grouping, sorting and search for the device rail. Pure.
+// Grouping, sorting and search for the device rail. Pure apart from the interface language of its labels.
+import { t, tk } from './i18n.js';
+
 export const GROUPS = [
-  ['computer', 'This computer'], ['stations', 'Stations'], ['zones', 'Zones'], ['cubes', 'Cubes (live)'],
-  ['bench', 'Bench'], ['unknown', 'Unidentified USB'],
+  ['computer', tk('This computer')], ['stations', tk('Stations')], ['zones', tk('Zones')], ['cubes', tk('Cubes (live)')],
+  ['bench', tk('Bench')], ['unknown', tk('Unidentified USB')],
 ];
 const ZONE_ORDER = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4 };
 
 export function groupOf(device) {
   const role = device.role || (device.presumed && device.presumed.role);
-  if (role === 'station' || role === 'mainshow' || role === 'generalradio') return 'stations';
+  if (role === 'workstation' || role === 'mainshow') return 'stations';
   if (role === 'zone') return 'zones';
   if (role === 'cube') return 'cubes';
   if (['poolcentral', 'preshowbridge', 'pooltest', 'rangetest'].includes(role)) return 'bench';
@@ -19,16 +21,26 @@ export function matches(text, query) {
   return String(text || '').toLowerCase().includes(query.toLowerCase());
 }
 
+// The family of a role-'workstation' board from its hello, mirroring Python dongle.label: the Workstation
+// firmware, a legacy General Radio, the Mainshow controller, else a legacy pairing station or a bare dongle.
+export function workstationLabel(details) {
+  const d = details || {};
+  const fw = String(d.firmware || '');
+  if (fw.startsWith('workstation-')) return 'Workstation';
+  if (fw.startsWith('general-radio-')) return 'General Radio';
+  if (fw.startsWith('mainshow-')) return 'Mainshow controller';
+  return d.nfc_ok ? t('Pairing station') : t('ESP-NOW dongle');
+}
+
 export function deviceLabel(device) {
   const d = device.details || {};
-  if (device.role === 'zone') return d.name || 'Unconfigured zone';
+  if (device.role === 'zone') return d.name || t('Unconfigured zone');
   if (device.role === 'cube') {
     const row = device.presumed && device.presumed.row;
-    return row && row.cube_id != null ? `Cube #${row.cube_id}` : 'Cube (no number)';
+    return row && row.cube_id != null ? t('Cube #{n}', { n: row.cube_id }) : t('Cube (no number)');
   }
-  if (device.role === 'generalradio') return 'General Radio';
-  if (device.role === 'station') return d.nfc_ok === false || (d.firmware && !d.nfc_ok) ? 'ESP-NOW dongle' : 'Pairing station';
-  return device.role_label || 'USB device';
+  if (device.role === 'workstation') return workstationLabel(d);
+  return device.role_label || t('USB device');
 }
 
 export function railEntries(devices, inventory, registry, station, query) {
@@ -52,13 +64,13 @@ export function railEntries(devices, inventory, registry, station, query) {
   for (const row of rows) {
     if (onUsb.has(row.mac) || row.role === 'excluded') continue;
     if (!(row.recent || row.pinned)) continue;
-    const label = row.cube_id != null ? `Cube #${row.cube_id}` : `Cube ${row.mac}`;
+    const label = row.cube_id != null ? t('Cube #{n}', { n: row.cube_id }) : t('Cube {mac}', { mac: row.mac });
     if (!matches([label, row.mac, row.uid].join(' '), query)) continue;
     entries.push({ id: `cube:${row.mac}`, group: 'cubes', label, row, sort: [1, row.cube_id ?? 1e9, row.mac] });
   }
   entries.sort((a, b) => compare(a.sort, b.sort));
-  const groups = GROUPS.map(([key, title]) => ({ key, title, entries: entries.filter((e) => e.group === key) }));
-  groups[0].entries.unshift({ id: 'computer', group: 'computer', label: 'USB intake & builds', sort: [0] });
+  const groups = GROUPS.map(([key, title]) => ({ key, title: t(title), entries: entries.filter((e) => e.group === key) }));
+  groups[0].entries.unshift({ id: 'computer', group: 'computer', label: t('USB intake & builds'), sort: [0] });
   return groups.filter((g) => g.entries.length);
 }
 

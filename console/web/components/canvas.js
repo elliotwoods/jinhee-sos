@@ -2,13 +2,14 @@ import { html } from '../lib/html.js';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cssVar, colour as resolve, onThemeChange } from '../lib/theme.js';
 import { docStill } from '../lib/doc.js';
+import { t, lang } from '../lib/i18n.js';
 
 // Redraw on the given deps and whenever the theme changes. Colours come from the CSS tokens.
 function useCanvas(draw, deps) {
   const ref = useRef(null);
   const [theme, setTheme] = useState(0);
   useEffect(() => onThemeChange(() => setTheme((n) => n + 1)), []);
-  useEffect(() => { const c = ref.current; if (!c) return; const ctx = c.getContext('2d'); draw(ctx, c.width, c.height); }, [...deps, theme]);
+  useEffect(() => { const c = ref.current; if (!c) return; const ctx = c.getContext('2d'); draw(ctx, c.width, c.height); }, [...deps, theme, lang()]);
   return ref;
 }
 
@@ -33,9 +34,9 @@ export function LedRing({ colour = '--led-off', label = '', sub = '', size = 200
     ctx.textAlign = 'center'; ctx.font = `600 ${w * 0.16}px ${SANS}`; ctx.fillText(label, cx, cy + w * 0.06);
     ctx.fillStyle = cssVar('--text-muted');
     ctx.font = `600 ${w * 0.055}px ${SANS}`; ctx.fillText(sub.toUpperCase(), cx, cy + w * 0.16);
-    if (size >= 140) { ctx.fillStyle = cssVar('--text-faint'); ctx.font = `${w * 0.045}px ${SANS}`; ctx.fillText('LED ring = last commanded colour', cx, h - 6); }
+    if (size >= 140) { ctx.fillStyle = cssVar('--text-faint'); ctx.font = `${w * 0.045}px ${SANS}`; ctx.fillText(t('LED ring = last commanded colour'), cx, h - 6); }
   }, [colour, label, sub, pixels && pixels.join(','), blink, blink ? Math.floor(Date.now() / 500) : 0]);
-  return html`<canvas class="ring" ref=${ref} data-doc=${doc} width=${size} height=${size + 10} role="img" aria-label=${`LED ring ${label} ${sub}`}></canvas>`;
+  return html`<canvas class="ring" ref=${ref} data-doc=${doc} width=${size} height=${size + 10} role="img" aria-label=${t('LED ring {label} {sub}', { label, sub })}></canvas>`;
 }
 
 // Time series: `series` = [{points: [{t, v}], colour, label}]; colour may be a token ('--chart-1').
@@ -46,7 +47,7 @@ export function Chart({ series, width = 420, height = 140, min, max, unit = '', 
     const muted = cssVar('--text-faint');
     ctx.font = `10px ${SANS}`;
     const all = series.flatMap((s) => s.points);
-    if (!all.length) { ctx.fillStyle = muted; ctx.fillText('No data yet', 8, 16); return; }
+    if (!all.length) { ctx.fillStyle = muted; ctx.fillText(t('No data yet'), 8, 16); return; }
     const t1 = Math.max(...all.map((p) => p.t)); const t0 = span ? t1 - span : Math.min(...all.map((p) => p.t));
     const lo = min ?? Math.min(...all.map((p) => p.v)), hi = max ?? Math.max(...all.map((p) => p.v));
     const X = (t) => 36 + (w - 44) * (t1 === t0 ? 1 : (t - t0) / (t1 - t0));
@@ -89,5 +90,5 @@ export function BandDiagram({ ticks, distance, index, width = 640, height = 90, 
 
 export function MemberGrid({ slots, onToggle, disabled, doc }) {
   const held = new Set((slots || []).filter(Boolean));
-  return html`<div class="members" data-doc=${doc}>${Array.from({ length: 23 }, (_, i) => i + 1).map((m) => html`<button class=${'btn' + (held.has(m) ? ' on' : '')} data-doc="member" disabled=${disabled} onClick=${() => onToggle(m)} aria-pressed=${held.has(m) ? 'true' : 'false'}>${String(m).padStart(2, '0')}<small>${held.has(m) ? 'ON' : 'OFF'}</small></button>`)}</div>`;
+  return html`<div class="members" data-doc=${doc}>${Array.from({ length: 23 }, (_, i) => i + 1).map((m) => html`<button class=${'btn' + (held.has(m) ? ' on' : '')} data-doc="member" disabled=${disabled} onClick=${() => onToggle(m)} aria-pressed=${held.has(m) ? 'true' : 'false'}>${String(m).padStart(2, '0')}<small>${held.has(m) ? t('ON') : t('OFF')}</small></button>`)}</div>`;
 }

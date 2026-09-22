@@ -7,20 +7,23 @@ Section shapes (a version counter accompanies each; the UI re-renders what chang
   inventory  {rows:[device rows + role/original_number/nfc_seen/pinned], roles, reserved, suggested_number,
               auto_number, zones:[registry rows], published, local_differs, published_error, flash_runs,
               events:[recent audit events], counts:{...}}
-  station    {present, device, port, connected, reader_ok, mode, phase, active, message, feedback, hello,
-              telemetry, discovered:{mac: age_s}, tag_present, progress, total, dongle, zone_support}
-  registry   ZoneRegistry.snapshot() + {logs, device, connected}   or {present: False}
-  sessions   {device_id: session.snapshot()}
+  station    {present} + WorkstationSession.snapshot() of the primary pairing link (device, port, connected,
+              reader_ok, mode, phase, active, message, feedback, hello, telemetry, discovered:{mac: age_s},
+              tag_present, progress, total, dongle, zone_support, label, family, capabilities, roles, ...)
+  registry   ZoneRegistry.snapshot() + {logs, device, connected}   or {present: False}   (the relay link)
+  sessions   {device_id: session.snapshot()}   kinds: workstation (pairing station / dongle / General Radio /
+              Workstation), cube, zone, pool, preshow, mainshow, poolcentral, preshowbridge, pooltest, rangetest
   jobs       [Job.to_dict()] newest first
   sync       {status, text, tone, detail, busy, checked_at, last_result, last_error, summary, password_known}
   advisor    {suggestions:[...], by_scope:{scope:[ids]}, counts:{bad,warn,info}}   (advisor.section)
   locks      {'.lock': held, ...}   the old apps' instance locks held by other processes
-  builds     {cube:{version,error}, zones:{sketch:{version,error}}, dongle:{state,version}, mainshow:{state,version},
+  builds     {cube:{version,error}, zones:{sketch:{version,error}}, workstation:{state,version}, mainshow:{state,version},
               tools:{esptool_ok, esptool_text, arduino_cli, core_ok}, checked_at}
-  show       MainshowSession.snapshot() or {present: False}
+  show       the show session's snapshot (via: 'mainshow' | 'workstation') or {present: False}
   showedit   ShowEditor.snapshot(): draft show, published show, cube show versions, update progress
   settings   hub.settings
   register   RegistrationFlow.snapshot(): the guided registration workflow (regflow.py)
+  flash      FlashFlow.snapshot(): the guided USB flashing workflow, firmware and show (flashflow.py)
 """
 import paths  # noqa: F401
 import time
@@ -69,6 +72,8 @@ def build(hub, dirty):
         out['settings'] = dict(hub.settings)
     if 'register' in dirty and getattr(hub, 'regflow', None):
         out['register'] = hub.regflow.snapshot()
+    if 'flash' in dirty and getattr(hub, 'flashflow', None):
+        out['flash'] = hub.flashflow.snapshot()
     return out
 
 
@@ -182,7 +187,7 @@ def station(hub):
 
 
 def registry(hub):
-    session = hub.station_session()
+    session = hub.relay_session() or hub.station_session()
     if not session:
         return dict(present=False, published=hub.store.published() if hub.store else None)
     return dict(present=True, **session.registry_snapshot())
@@ -209,7 +214,7 @@ def show(hub):
 
 def builds(previous=None):
     """Manifest and tool state. File hashing only; the esptool version probe is a job (tools.check)."""
-    out = dict(cube={}, zones={}, dongle={}, mainshow={}, tools=(previous or {}).get('tools', {}), checked_at=time.time())
+    out = dict(cube={}, zones={}, workstation={}, mainshow={}, tools=(previous or {}).get('tools', {}), checked_at=time.time())
     try:
         manifest = core.load_manifest()
         out['cube'] = dict(version=manifest['version'], build_hash=manifest['build_hash'], error=None)
@@ -221,8 +226,7 @@ def builds(previous=None):
             out['zones'][sketch] = dict(version=manifest['version'], build_hash=manifest['build_hash'], error=None)
         except Exception as exc:
             out['zones'][sketch] = dict(version=None, build_hash=None, error=str(exc))
-    from jobs.dongle import FIRMWARES
-    for name, firmware in (('dongle', dongle.PAIRING), ('mainshow', dongle.MAINSHOW), ('general', FIRMWARES['general'])):
+    for name, firmware in (('workstation', dongle.WORKSTATION), ('mainshow', dongle.MAINSHOW)):
         try:
             out[name] = dict(state=dongle.build_state(firmware), version=firmware.version, label=firmware.label)
         except Exception as exc:

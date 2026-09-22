@@ -44,6 +44,9 @@ The console: device rail (left), the selected device's panel (centre), Attention
 {{shot:C-3}}
 A suggestion card's menu: dismiss for this session, or for good; every card keeps its evidence / 제안 카드 메뉴: 이 세션 동안 또는 영구 무시. 모든 카드는 근거를 유지
 
+**Language | 언어.** The **EN | KR** switch at the far right of the top bar (also Settings › Appearance) shows the console in Korean. The choice is remembered on that computer. Suggestion cards, job stages, logs and error messages stay in English, and in Korean mode buttons also show their English name ("EN: …"), so the button names quoted in this handover match the screen in either language.
+상단 바 오른쪽 끝의 **EN | KR** 스위치(또는 Settings › Appearance)로 콘솔을 한국어로 표시합니다. 선택은 해당 컴퓨터에 저장됩니다. 제안 카드, 작업 단계, 로그, 오류 메시지는 영어로 유지되며, 한국어 모드에서도 버튼에 영어 이름("EN: …")이 함께 표시되므로 이 문서에 인용된 버튼 이름을 두 언어 모두에서 화면과 대조할 수 있습니다.
+
 ## Current handover summary | 현재 인수인계 요약
 
 Preshow, Desert, Pool lighting and Mainshow triggering are reported working following the intervention. Open items include Pool slider label treatment, reported Desert reader alignment, battery endurance, one failed test cube, media interface records, release-package checks and the console's own hardware verification. Chapter 15 keeps these distinct from completed repairs.<br>개선 후 프리쇼·사막·풀존 조명·메인쇼 트리거가 동작한다고 보고되었습니다. 남은 항목은 풀존 이름 표시 처리, 사막 리더 정렬, 배터리 지속 시간, 테스트 실패 큐브 1개, 미디어 연결 기록, 릴리스 점검, 그리고 콘솔 자체의 실물 검증입니다. 15장에서 완료된 개선과 구분합니다.

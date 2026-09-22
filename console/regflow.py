@@ -203,6 +203,9 @@ class RegistrationFlow:
                 return device
         return None
 
+    def device_key(self):
+        return next((d.key for d in self.hub.devices.values() if d.mac == self.mac and d.role == 'cube'), None)
+
     def device_present(self):
         return any(d.mac == self.mac and d.role == 'cube' for d in self.hub.devices.values())
 
@@ -245,6 +248,9 @@ class RegistrationFlow:
         if not self.armed:
             if self.unplugged:
                 return self.set_wait('Plug the cube back in (it is powered over USB)')
+            flashflow = getattr(self.hub, 'flashflow', None)
+            if flashflow and flashflow.holds(self.mac, self.hub.devices.get(self.device_key())):
+                return self.set_wait('Waiting for the Flash page to finish this cube')
             if not controller:
                 return self.set_wait('Connect the pairing station')
             if not controller.connected:

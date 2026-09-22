@@ -20,7 +20,8 @@ ZONE_ERRORS = {0: '', 1: 'zone config invalid', 2: 'database empty', 3: 'NFC rea
                5: 'update: out of memory', 6: 'update: CRC mismatch', 7: 'update: invalid data',
                8: 'update: flash commit failed', 9: 'update: timed out', 10: 'zone parameters missing/invalid',
                11: 'sensor not found'}
-DONGLE_FIRMWARE = 'nct-pairing-1.8-zones'
+DONGLE_FIRMWARE = 'nct-pairing-1.8-zones'      # the last relay-dongle build; the installed station runs it
+WORKSTATION_FIRMWARE = 'workstation-1.0.0'    # what "Write the Workstation firmware" puts on a spare board
 RX_GAIN_FLOOR = 'desert-2.4.0 / tagplate-2.4.0 / pool-3.2.0 / preshow-3.3.0'
 LOCK_APPS = {'.lock': 'the Pairing station app', '.flasher.lock': 'the Cube USB flasher',
              '.zonedb.lock': 'the Zone Database Manager', '.mainshow.lock': 'the Mainshow controller app'}
@@ -217,7 +218,7 @@ def rule_builds(ctx):
                        'Rebuild it (needs Arduino tools).',
                        [action('build', f'Build {sketch}', 'build.zone', dict(sketch=sketch), long=True)],
                        [evidence('manifest', info['error'])], key=sketch)
-    for name, label in (('dongle', 'ESP-NOW dongle relay'), ('mainshow', 'Mainshow controller')):
+    for name, label in (('workstation', 'Workstation'), ('mainshow', 'Mainshow controller')):
         info = ctx.builds.get(name) or {}
         if info.get('state') in ('missing', 'stale'):
             yield make('build.stale', 'global', 'info', f'{label} firmware build is {info["state"]}',
@@ -255,7 +256,7 @@ def rule_ports(ctx):
 # ---------------------------------------------------------------------- tier 1: links
 def rule_station(ctx):
     st = ctx.station
-    station_devices = [d for d in ctx.devices if d.get('role') == 'station']
+    station_devices = [d for d in ctx.devices if d.get('role') == 'workstation']
     if station_devices and not st.get('present'):
         d = station_devices[0]
         reason = d.get('error') or 'no session is open'
@@ -283,27 +284,33 @@ def rule_station(ctx):
         yield make('station.wrong_channel', 'station', 'bad', f'Station is on channel {hello.get("channel")}; cubes and zones use 2',
                    f'hello reported channel {hello.get("channel")} from firmware {hello.get("firmware")}.',
                    'On another channel it cannot reach any cube or zone.',
-                   'This is compiled into the firmware: reflash the board with the maintained relay build.',
-                   [action('flash', 'Write the relay firmware', 'dongle.flash', dict(device=device, firmware='dongle'), 'hardware')]
+                   'This is compiled into the firmware: reflash the board with the maintained Workstation build.',
+                   [action('flash', 'Write the Workstation firmware', 'dongle.flash', dict(device=device, firmware='workstation'), 'hardware')]
                    if hello.get('mac') != '3C:0F:02:AD:83:24' else [],
                    [evidence('hello', f'channel={hello.get("channel")}')], device=device)
+    firmware = str(hello.get('firmware') or '')
     if not st.get('zone_support'):
         yield make('station.no_zone_support', 'station', 'warn', 'Station firmware has no zone support',
-                   f'hello from {hello.get("firmware")} reports no zone relay (needs {DONGLE_FIRMWARE}).',
+                   f'hello from {hello.get("firmware")} reports no zone relay (needs a zone relay: {WORKSTATION_FIRMWARE} or {DONGLE_FIRMWARE}).',
                    'Zone database updates, queries and RX gain changes over the air are unavailable.',
-                   'Reflash the pairing station (or use a separate dongle) with the relay firmware.',
-                   [action('flash', 'Write the relay firmware', 'dongle.flash', dict(device=device, firmware='dongle'), 'hardware')]
+                   'Reflash the pairing station (or use a separate Workstation) with the Workstation firmware.',
+                   [action('flash', 'Write the Workstation firmware', 'dongle.flash', dict(device=device, firmware='workstation'), 'hardware')]
                    if hello.get('mac') != '3C:0F:02:AD:83:24' else
                    [action('docs', 'Open the zones guide', 'docs.open', dict(path='zones/README.md'))],
                    [evidence('hello', f'firmware={hello.get("firmware")} zones={hello.get("zones")}')], device=device)
-    elif hello.get('firmware') and hello['firmware'] != DONGLE_FIRMWARE and str(hello['firmware']).startswith('nct-pairing'):  # a General Radio reports its own version
-        yield make('dongle.old', 'station', 'warn', f'Relay firmware {hello["firmware"]} is older than {DONGLE_FIRMWARE}',
-                   f'hello reports {hello["firmware"]}. 1.7 adds signal strength, 1.8 RX gain control.',
-                   'Set RX gain over the air needs 1.8; the signal column needs 1.7.',
-                   'Reflash the dongle with the current relay firmware.',
-                   [action('flash', 'Write the relay firmware', 'dongle.flash', dict(device=device, firmware='dongle'), 'hardware')]
+    elif (firmware.startswith('nct-pairing') and firmware != DONGLE_FIRMWARE) or \
+            (firmware.startswith('workstation-') and firmware != WORKSTATION_FIRMWARE):
+        # A legacy General Radio is left alone: it is superseded, not out of date within its family.
+        current = WORKSTATION_FIRMWARE if firmware.startswith('workstation-') else DONGLE_FIRMWARE
+        yield make('dongle.old', 'station', 'warn', f'Relay firmware {firmware} is older than {current}',
+                   f'hello reports {firmware}. ' + ('1.7 adds signal strength, 1.8 RX gain control.' if current == DONGLE_FIRMWARE
+                                                    else 'The Workstation build on this computer is newer.'),
+                   'Set RX gain over the air needs 1.8; the signal column needs 1.7.' if current == DONGLE_FIRMWARE
+                   else 'Newer Workstation builds carry protocol fixes the console expects.',
+                   'Reflash the board with the current Workstation firmware.',
+                   [action('flash', 'Write the Workstation firmware', 'dongle.flash', dict(device=device, firmware='workstation'), 'hardware')]
                    if hello.get('mac') != '3C:0F:02:AD:83:24' else [],
-                   [evidence('hello', hello['firmware'])], device=device)
+                   [evidence('hello', firmware)], device=device)
     feedback = st.get('feedback') or {}
     nfc_ok = hello.get('nfc_ok', True) and st.get('reader_ok', True)
     if not st.get('dongle') and (not nfc_ok or feedback.get('title') == 'NFC READER NOT RESPONDING'):
@@ -329,14 +336,15 @@ def rule_station(ctx):
 
 
 def rule_radio(ctx):
-    """A General Radio whose driver died, or holding a lamp/cue that nothing in range can be hearing."""
+    """A Workstation whose driver died, or holding a lamp/cue that nothing in range can be hearing.
+    A legacy pairing station is the same kind but never reports `fatal` or holds anything, so nothing fires."""
     for device_id, s in ctx.sessions.items():
-        if s.get('kind') != 'generalradio':
+        if s.get('kind') != 'workstation':
             continue
         d = next((d for d in ctx.devices if d.get('id') == device_id), None) or {}
         scope = f'port:{d.get("port") or device_id}'
         if s.get('fatal'):
-            yield make('radio.fatal', scope, 'bad', 'General Radio: its radio driver stopped answering',
+            yield make('radio.fatal', scope, 'bad', f'{s.get("label") or "Workstation"}: its radio driver stopped answering',
                        f'The board reported "{s["fatal"]}": three sends in a row got no result from the Wi-Fi driver, so it '
                        'refuses every radio operation until it is power-cycled. Its own leases release anything it held.',
                        'Cube colours, show start, zone relay, pool lamp and preshow cue through this board are all unavailable.',

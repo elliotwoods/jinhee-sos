@@ -5,7 +5,7 @@
 // `led_test`, a bench check that every pixel and channel is alive.
 #include <Adafruit_NeoPixel.h>
 
-namespace gr {
+namespace ws {
 namespace leds {
 
 constexpr int LED_PIN = 10;
@@ -78,4 +78,4 @@ inline void begin() {
 }
 
 }  // namespace leds
-}  // namespace gr
+}  // namespace ws

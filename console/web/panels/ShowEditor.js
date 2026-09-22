@@ -8,9 +8,11 @@ import { html } from '../lib/html.js';
 import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { useSections } from '../lib/hooks.js';
 import { section } from '../store.js';
+import { rowByMac } from './common.js';
 import { run } from '../api.js';
 import { notify } from '../lib/notify.js';
 import { cssVar, onThemeChange } from '../lib/theme.js';
+import { t, hint, onLangChange } from '../lib/i18n.js';
 import { PageHead, Pill, Banner, KeyValue, ProgressBar, Mac } from '../components/basics.js';
 import { ActionButton, HoldButton } from '../components/actions.js';
 import { LedRing } from '../components/canvas.js';
@@ -19,25 +21,29 @@ import { TYPES, FANNABLE, Player, levelHex, hexLevels, retype, problem, fmtTime,
 import {
   layout, hitTest, msAt, xOf, snap, cueEnd, rulerStep, tickLabel, setStart, moveBlock, insertCue, removeCue, cueSwatch,
   playRange, advance, keySeek, prevCueStart, nextCueStart, followScroll, fwAtLeast, RATES, OVERVIEW, MAX_CANVAS_PX,
-  zoomLimits, clampZoom, viewWindow, overviewHit, edgeZoom, zoomAround, cubeRanges, bandCubes,
+  zoomLimits, clampZoom, viewWindow, overviewHit, edgeZoom, zoomAround, cubeRanges, bandCubes, addCubeNumbers,
 } from '../lib/showtimeline.js';
 import { videoTarget, videoPhase, clockStep, maySeek, stillNeedsSeek, isVideoFile, offsetKey, DRIFT_MS } from '../lib/showvideo.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
-const TYPE_HELP = {
-  off: 'LEDs off.',
-  solid: 'One steady colour.',
-  fade: 'From the first colour to the second over the fade time, then holds the second.',
-  blink: 'First colour for the on time of every period, the second colour for the rest.',
-  pulse: 'Up from the first colour to the second, then back down; holds the first after.',
-  cycle: 'Crossfades through the colours in a loop, one step time per colour.',
-  random: 'A random walk of brightness (level × the colour / 100); every cube moves differently.',
-};
-const PARAM_LABEL = {
-  duration_ms: ['Fade time', 'ms'], period_ms: ['Period', 'ms'], on_ms: ['On time', 'ms'], attack_ms: ['Up time', 'ms'],
-  release_ms: ['Down time', 'ms'], step_ms: ['Step time', 'ms'], level_min: ['Level min', '0-100'], level_max: ['Level max', '0-100'],
-  dur_min_ms: ['Shortest step', 'ms'], dur_max_ms: ['Longest step', 'ms'], start_level: ['Start level', '0-100'],
-};
+// Labels are built at render time so they follow the interface language (lib/i18n.js).
+const typeHelp = () => ({
+  off: t('LEDs off.'),
+  solid: t('One steady colour.'),
+  fade: t('From the first colour to the second over the fade time, then holds the second.'),
+  blink: t('First colour for the on time of every period, the second colour for the rest.'),
+  pulse: t('Up from the first colour to the second, then back down; holds the first after.'),
+  cycle: t('Crossfades through the colours in a loop, one step time per colour.'),
+  random: t('A random walk of brightness (level × the colour / 100); every cube moves differently.'),
+});
+// The cue type as the operator reads it; the stored value (the key) is never translated.
+const typeNames = () => ({ off: t('off'), solid: t('solid'), fade: t('fade'), blink: t('blink'), pulse: t('pulse'), cycle: t('cycle'), random: t('random') });
+const typeName = (k) => typeNames()[k] || k;
+const paramLabel = () => ({
+  duration_ms: [t('Fade time'), 'ms'], period_ms: [t('Period'), 'ms'], on_ms: [t('On time'), 'ms'], attack_ms: [t('Up time'), 'ms'],
+  release_ms: [t('Down time'), 'ms'], step_ms: [t('Step time'), 'ms'], level_min: [t('Level min'), '0-100'], level_max: [t('Level max'), '0-100'],
+  dur_min_ms: [t('Shortest step'), 'ms'], dur_max_ms: [t('Longest step'), 'ms'], start_level: [t('Start level'), '0-100'],
+});
 const STATE_TONE = { current: 'ok', updating: 'info', pending: 'info', behind: 'warn', ahead: 'warn', unpublished: 'muted' };
 
 // ---------------------------------------------------------------- timeline strip
@@ -66,8 +72,9 @@ function Icon({ name }) {
     ${i.fill && html`<path d=${i.fill} fill="currentColor" />`}
     ${i.stroke && html`<path d=${i.stroke} fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />`}</svg>`;
 }
-function IconButton({ icon, tip, onClick, disabled, className = 'btn small icon' }) {
-  return html`<button class=${className} onClick=${onClick} disabled=${disabled} title=${tip} aria-label=${tip}><${Icon} name=${icon} /></button>`;
+// `tip` is the tooltip (hint(): in Korean it also names the English label), `label` the aria-label (t()).
+function IconButton({ icon, tip, label, onClick, disabled, className = 'btn small icon' }) {
+  return html`<button class=${className} onClick=${onClick} disabled=${disabled} title=${tip} aria-label=${label || tip}><${Icon} name=${icon} /></button>`;
 }
 
 // The static picture (ruler, band, blocks), kept in an offscreen canvas: the band renders every pixel
@@ -116,9 +123,9 @@ function drawBase(ctx, w, lay, doc, zoom, cubes) {
     if (i > 0 && bw > 12) { ctx.fillStyle = cssVar('--text-faint'); ctx.fillRect(x0 + 3, laneTop + 17, 1, 14); }
     if (bw > 18) {
       ctx.save(); ctx.beginPath(); ctx.rect(x0 + 2, laneTop, bw - 4, lane); ctx.clip();
-      ctx.fillStyle = cssVar('--text'); ctx.font = `600 11px ${SANS}`; ctx.fillText(`${i + 1} ${cue.label || cue.type}`, x0 + 7, laneTop + 21);
+      ctx.fillStyle = cssVar('--text'); ctx.font = `600 11px ${SANS}`; ctx.fillText(`${i + 1} ${cue.label || typeName(cue.type)}`, x0 + 7, laneTop + 21);
       ctx.fillStyle = cssVar('--text-muted'); ctx.font = `10px ${SANS}`;
-      ctx.fillText(`${cue.type}${cue.fan ? ' · fan' : ''} · ${fmtTime(cue.start_ms)}`, x0 + 7, laneTop + 35);
+      ctx.fillText(`${typeName(cue.type)}${cue.fan ? ' · ' + t('fan') : ''} · ${fmtTime(cue.start_ms)}`, x0 + 7, laneTop + 35);
       ctx.restore();
     }
   });
@@ -152,15 +159,17 @@ function drawOverlay(ctx, lay, doc, zoom, t, sel, loop, range, hoverEdge) {
 
 const cursorFor = (hit) => (hit.area === 'ruler' || hit.area === 'band' ? 'col-resize' : hit.area === 'edge' ? 'ew-resize' : hit.index > 0 ? 'grab' : 'pointer');
 
-function Strip({ doc, zoom, t, sel, cubes, loop, range, onSeek, onScrub, onSelect, onPreview, onCommit, onAddAt, onZoom }) {
+function Strip({ doc, zoom, t: tMs, sel, cubes, loop, range, onSeek, onScrub, onSelect, onPreview, onCommit, onAddAt, onZoom }) {
   const lay = layout(cubes.length);
   const ref = useRef(null), wrap = useRef(null), drag = useRef(null);
   const [theme, setTheme] = useState(0);
+  const [lang, setLang] = useState(0);   // the canvas draws cue type names: redraw in the new language
   const [hoverEdge, setHoverEdge] = useState(-1);
   const [view, setView] = useState({ left: 0, width: 0 });
   const want = useRef(null);       // a scroll position waiting for the canvas at a new zoom
   const panning = useRef(false);   // the overview is being dragged: the playhead must not pull the view
   useEffect(() => onThemeChange(() => setTheme((n) => n + 1)), []);
+  useEffect(() => onLangChange(() => setLang((n) => n + 1)), []);
   // The zoom, always between "the whole show fits" and the cap (lib/showtimeline.js zoomLimits).
   const z = clampZoom(zoom, doc.length_ms, view.width);
   const width = Math.max(200, Math.ceil(xOf(doc.length_ms, z)) + 1);
@@ -171,13 +180,13 @@ function Strip({ doc, zoom, t, sel, cubes, loop, range, onSeek, onScrub, onSelec
     const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawBase(ctx, width, lay, doc, z, cubes);
     return c;
-  }, [doc, z, cubes.join(','), theme, width, dpr]);
+  }, [doc, z, cubes.join(','), theme, lang, width, dpr]);
   useEffect(() => {
     const c = ref.current; if (!c) return;
     const ctx = c.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(base, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawOverlay(ctx, lay, doc, z, t, sel, loop, range, hoverEdge);
+    drawOverlay(ctx, lay, doc, z, tMs, sel, loop, range, hoverEdge);
   });
   // A zoom from the overview or the wheel lands its scroll position once the canvas has its new width;
   // otherwise keep the playhead in view (playing, keys, jumps), except while the pointer is dragging.
@@ -185,9 +194,9 @@ function Strip({ doc, zoom, t, sel, cubes, loop, range, onSeek, onScrub, onSelec
     const w = wrap.current; if (!w) return;
     if (want.current != null) { w.scrollLeft = want.current; want.current = null; return; }
     if (drag.current || panning.current) return;
-    const next = followScroll(xOf(t, z), w.scrollLeft, w.clientWidth);
+    const next = followScroll(xOf(tMs, z), w.scrollLeft, w.clientWidth);
     if (next != null) w.scrollLeft = next;
-  }, [Math.round(xOf(t, z)), z]);
+  }, [Math.round(xOf(tMs, z)), z]);
   useEffect(() => {
     const w = wrap.current; if (!w) return undefined;
     const measure = () => setView({ left: w.scrollLeft, width: w.clientWidth });
@@ -260,18 +269,18 @@ function Strip({ doc, zoom, t, sel, cubes, loop, range, onSeek, onScrub, onSelec
   const leave = () => { if (!drag.current && hoverEdge !== -1) setHoverEdge(-1); };
   const dbl = (e) => { const { x, y } = at(e); if (y >= lay.laneTop) onAddAt(snap(msAt(doc, z, x))); };
   return html`<div class="stack show-timeline">
-    ${view.width > 0 && html`<${Overview} doc=${doc} zoom=${z} t=${t} sel=${sel} view=${view} theme=${theme}
+    ${view.width > 0 && html`<${Overview} doc=${doc} zoom=${z} t=${tMs} sel=${sel} view=${view} theme=${theme}
       onScroll=${(left) => { if (wrap.current) wrap.current.scrollLeft = left; }} onZoomTo=${zoomTo}
       onFit=${() => zoomTo(zoomLimits(doc.length_ms, view.width).min, 0)} onPanning=${(on) => { panning.current = on; }} />`}
     <div class="show-strip" ref=${wrap}><canvas ref=${ref} width=${width * dpr} height=${lay.height * dpr} style=${`width:${width}px;height:${lay.height}px`}
-      role="img" aria-label=${`show timeline: ruler and colour band (rows: cubes ${cubeRanges(cubes)}) scrub the playhead; cue blocks below: click to select, drag to move, drag an edge to move a start, double-click to add a cue; Ctrl or Cmd + wheel zooms`}
+      role="img" aria-label=${t('show timeline: ruler and colour band (rows: cubes {cubes}) scrub the playhead; cue blocks below: click to select, drag to move, drag an edge to move a start, double-click to add a cue; Ctrl or Cmd + wheel zooms', { cubes: cubeRanges(cubes) })}
       onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${cancel} onPointerLeave=${leave} onDblClick=${dbl}></canvas></div></div>`;
 }
 
 // Whole-show overview, always shown: cue blocks in their colour, the visible window and the playhead.
 // Drag the window's left or right edge to zoom (the other edge stays), drag inside it or click elsewhere
 // to move the view, double-click to fit the whole show.
-function Overview({ doc, zoom, t, sel, view, theme, onScroll, onZoomTo, onFit, onPanning }) {
+function Overview({ doc, zoom, t: tMs, sel, view, theme, onScroll, onZoomTo, onFit, onPanning }) {
   const ref = useRef(null), drag = useRef(null);
   const w = Math.max(100, Math.floor(view.width)), h = OVERVIEW, len = doc.length_ms, k = w / len;
   const [a, b] = viewWindow(view.left, view.width, zoom);
@@ -294,7 +303,7 @@ function Overview({ doc, zoom, t, sel, view, theme, onScroll, onZoomTo, onFit, o
     ctx.fillRect(vx, 0, 4, h); ctx.fillRect(vx + vw - 4, 0, 4, h);
     ctx.fillStyle = cssVar('--on-accent');
     [vx + 2, vx + vw - 2].forEach((gx) => ctx.fillRect(Math.round(gx) - 0.5, h / 2 - 4, 1, 8));
-    ctx.fillStyle = cssVar('--accent-strong'); ctx.fillRect(Math.round(t * k), 0, 2, h);
+    ctx.fillStyle = cssVar('--accent-strong'); ctx.fillRect(Math.round(tMs * k), 0, 2, h);
     ctx.lineWidth = 1;
   });
   const px = (e) => { const r = ref.current.getBoundingClientRect(); return ((e.clientX - r.left) * w) / Math.max(1, r.width); };
@@ -321,8 +330,8 @@ function Overview({ doc, zoom, t, sel, view, theme, onScroll, onZoomTo, onFit, o
   };
   const up = () => { drag.current = null; onPanning(false); if (ref.current) ref.current.style.cursor = ''; };
   return html`<canvas class="show-overview" ref=${ref} width=${w} height=${h} data-theme-rev=${theme} role="img"
-    title="Whole show: drag the window's edges to zoom, drag it (or click) to scroll, double-click to fit"
-    aria-label="whole-show overview: drag the window's left or right edge to zoom, drag inside it or click to move the view, double-click to fit the whole show"
+    title=${t("Whole show: drag the window's edges to zoom, drag it (or click) to scroll, double-click to fit")}
+    aria-label=${t("whole-show overview: drag the window's left or right edge to zoom, drag inside it or click to move the view, double-click to fit the whole show")}
     onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onDblClick=${onFit}></canvas>`;
 }
 
@@ -330,42 +339,43 @@ function Overview({ doc, zoom, t, sel, view, theme, onScroll, onZoomTo, onFit, o
 function Colour({ rgb, onChange, label }) {
   const set = (k, v) => { const next = [...rgb]; next[k] = Math.max(0, Math.min(100, parseInt(v, 10) || 0)); onChange(next); };
   return html`<div class="row show-rgb"><label class="lbl">${label}</label>
-    <input type="color" value=${levelHex(rgb)} onInput=${(e) => onChange(hexLevels(e.target.value))} aria-label=${label + ' colour'} />
+    <input type="color" value=${levelHex(rgb)} onInput=${(e) => onChange(hexLevels(e.target.value))} aria-label=${t('{label} colour', { label })} />
     ${['R', 'G', 'B'].map((c, k) => html`<input class="field num" type="number" min="0" max="100" value=${rgb[k]} aria-label=${label + ' ' + c}
-      onChange=${(e) => set(k, e.target.value)} title=${c + ' level 0-100 (the cube caps LEDs at 100)'} />`)}</div>`;
+      onChange=${(e) => set(k, e.target.value)} title=${t('{c} level 0-100 (the cube caps LEDs at 100)', { c })} />`)}</div>`;
 }
 
 function TimeField({ value, onCommit, label, disabled }) {
   const [text, setText] = useState(fmtTime(value));
   useEffect(() => setText(fmtTime(value)), [value]);
-  const commit = () => { const ms = parseTime(text); if (ms == null) { setText(fmtTime(value)); notify('Time is m:ss.mmm', 'bad'); } else onCommit(ms); };
+  const commit = () => { const ms = parseTime(text); if (ms == null) { setText(fmtTime(value)); notify(t('Time is m:ss.mmm'), 'bad'); } else onCommit(ms); };
   return html`<span class="row"><label class="lbl">${label}</label><input class="field num mono" value=${text} disabled=${disabled}
     onInput=${(e) => setText(e.target.value)} onBlur=${commit} onKeyDown=${(e) => { if (e.key === 'Enter') commit(); }} /></span>`;
 }
 
 function Inspector({ doc, index, cubes, onCue, onStart, onRetype }) {
   const cue = doc.cues[index];
-  if (!cue) return html`<div class="note">Select a cue in the lane below the colour band.</div>`;
+  if (!cue) return html`<div class="note">${t('Select a cue in the lane below the colour band.')}</div>`;
   const end = index + 1 < doc.cues.length ? doc.cues[index + 1].start_ms : doc.length_ms;
   const spec = TYPES[cue.type];
   const set = (patch) => onCue({ ...clone(cue), ...patch });
   const colourCount = spec.colours === null ? cue.colours.length : spec.colours;
-  const names = cue.type === 'fade' || cue.type === 'pulse' ? ['From', 'To'] : cue.type === 'blink' ? ['On', 'Off'] : null;
+  const names = cue.type === 'fade' || cue.type === 'pulse' ? [t('From'), t('To')] : cue.type === 'blink' ? [t('On'), t('Off')] : null;
+  const labels = paramLabel();
   return html`<div class="stack">
-    <div class="row"><label class="lbl">Cue ${index + 1}</label><input class="field" value=${cue.label} placeholder="label" onChange=${(e) => set({ label: e.target.value })} />
-      <select class="field" value=${cue.type} onChange=${(e) => onRetype(e.target.value)} aria-label="cue type">
-        ${Object.keys(TYPES).map((k) => html`<option value=${k}>${k}</option>`)}</select></div>
-    <div class="note">${TYPE_HELP[cue.type]}</div>
-    <div class="row"><${TimeField} label="Start" value=${cue.start_ms} disabled=${index === 0} onCommit=${(ms) => onStart(index, ms)} />
-      <span class="note">ends ${fmtTime(end)} · lasts ${((end - cue.start_ms) / 1000).toFixed(3)} s</span></div>
-    ${Array.from({ length: colourCount }, (_, i) => html`<${Colour} label=${names ? names[i] : `Colour ${i + 1}`} rgb=${cue.colours[i]}
+    <div class="row"><label class="lbl">${t('Cue {n}', { n: index + 1 })}</label><input class="field" value=${cue.label} placeholder=${t('label')} onChange=${(e) => set({ label: e.target.value })} />
+      <select class="field" value=${cue.type} onChange=${(e) => onRetype(e.target.value)} aria-label=${t('cue type')}>
+        ${Object.keys(TYPES).map((k) => html`<option value=${k}>${typeName(k)}</option>`)}</select></div>
+    <div class="note">${typeHelp()[cue.type]}</div>
+    <div class="row"><${TimeField} label=${t('Start')} value=${cue.start_ms} disabled=${index === 0} onCommit=${(ms) => onStart(index, ms)} />
+      <span class="note">${t('ends {end} · lasts {secs} s', { end: fmtTime(end), secs: ((end - cue.start_ms) / 1000).toFixed(3) })}</span></div>
+    ${Array.from({ length: colourCount }, (_, i) => html`<${Colour} label=${names ? names[i] : t('Colour {n}', { n: i + 1 })} rgb=${cue.colours[i]}
       onChange=${(rgb) => { const colours = clone(cue.colours); colours[i] = rgb; set({ colours }); }} />`)}
     ${spec.colours === null && html`<div class="row">
-      <button class="btn small" disabled=${cue.colours.length >= 3} onClick=${() => set({ colours: [...clone(cue.colours), [...cue.colours[cue.colours.length - 1]]] })}>+ colour</button>
-      <button class="btn small" disabled=${cue.colours.length <= 1} onClick=${() => set({ colours: clone(cue.colours).slice(0, -1) })}>− colour</button></div>`}
-    ${spec.params.map((k) => html`<div class="row"><label class="lbl">${PARAM_LABEL[k][0]}</label>
+      <button class="btn small" disabled=${cue.colours.length >= 3} onClick=${() => set({ colours: [...clone(cue.colours), [...cue.colours[cue.colours.length - 1]]] })}>${t('+ colour')}</button>
+      <button class="btn small" disabled=${cue.colours.length <= 1} onClick=${() => set({ colours: clone(cue.colours).slice(0, -1) })}>${t('− colour')}</button></div>`}
+    ${spec.params.map((k) => html`<div class="row"><label class="lbl">${labels[k][0]}</label>
       <input class="field num" type="number" value=${cue.params[k]} onChange=${(e) => set({ params: { ...cue.params, [k]: parseInt(e.target.value, 10) || 0 } })} />
-      <span class="note">${PARAM_LABEL[k][1]}</span></div>`)}
+      <span class="note">${labels[k][1]}</span></div>`)}
     ${FANNABLE.includes(cue.type) && html`<${Fan} cue=${cue} cubes=${cubes} onFan=${(fan) => { const next = clone(cue); if (fan) next.fan = fan; else delete next.fan; onCue(next); }} />`}</div>`;
 }
 
@@ -376,19 +386,19 @@ function Fan({ cue, cubes, onFan }) {
   const num = (v) => Math.max(1, parseInt(v, 10) || 1);
   const choose = (m) => onFan(m === 'none' ? null : m === 'sequential' ? { mode: m, step_ms: 100, groups: 8 } : { mode: m, spread_ms: 500 });
   const shown = cubes.slice(0, 8).map((n) => `#${n} ${fanOffset(cue, n)} ms`).join(' · ');
-  return html`<div class="stack"><h3>Fanning <span class="note">per-cube offset by cube number</span></h3>
-    <div class="row"><label class="lbl">Fan</label>
-      <select class="field" value=${mode} onChange=${(e) => choose(e.target.value)} aria-label="fan mode">
-        <option value="none">none: every cube together</option>
-        <option value="sequential">sequential: step × position in a group</option>
-        <option value="scatter">scatter: fixed random spread</option></select></div>
-    ${mode === 'sequential' && html`<div class="row"><label class="lbl">Step</label>
-        <input class="field num" type="number" min="1" max="65535" value=${fan.step_ms} onChange=${(e) => onFan({ ...fan, step_ms: num(e.target.value) })} /><span class="note">ms per cube</span>
-        <label class="lbl">Group of</label>
-        <input class="field num" type="number" min="1" max="255" value=${fan.groups} onChange=${(e) => onFan({ ...fan, groups: Math.min(255, num(e.target.value)) })} /><span class="note">cubes, then it repeats</span></div>`}
-    ${mode === 'scatter' && html`<div class="row"><label class="lbl">Spread</label>
-        <input class="field num" type="number" min="1" max="65535" value=${fan.spread_ms} onChange=${(e) => onFan({ ...fan, spread_ms: num(e.target.value) })} /><span class="note">ms: each cube gets a fixed offset in 0-spread</span></div>`}
-    ${fan && html`<div class="note">${cue.type === 'fade' || cue.type === 'pulse' ? 'Each cube starts this cue later by its offset, holding the first colour until then.' : 'Each cube runs this cue shifted by its offset.'} Offsets: ${shown}${cubes.length > 8 ? ' …' : ''}. A cube with no number has none. Needs cube firmware v1.6.0; an older cube refuses the whole show and keeps its current one.</div>`}</div>`;
+  return html`<div class="stack"><h3>${t('Fanning')} <span class="note">${t('per-cube offset by cube number')}</span></h3>
+    <div class="row"><label class="lbl">${t('Fan')}</label>
+      <select class="field" value=${mode} onChange=${(e) => choose(e.target.value)} aria-label=${t('fan mode')}>
+        <option value="none">${t('none: every cube together')}</option>
+        <option value="sequential">${t('sequential: step × position in a group')}</option>
+        <option value="scatter">${t('scatter: fixed random spread')}</option></select></div>
+    ${mode === 'sequential' && html`<div class="row"><label class="lbl">${t('Step')}</label>
+        <input class="field num" type="number" min="1" max="65535" value=${fan.step_ms} onChange=${(e) => onFan({ ...fan, step_ms: num(e.target.value) })} /><span class="note">${t('ms per cube')}</span>
+        <label class="lbl">${t('Group of')}</label>
+        <input class="field num" type="number" min="1" max="255" value=${fan.groups} onChange=${(e) => onFan({ ...fan, groups: Math.min(255, num(e.target.value)) })} /><span class="note">${t('cubes, then it repeats')}</span></div>`}
+    ${mode === 'scatter' && html`<div class="row"><label class="lbl">${t('Spread')}</label>
+        <input class="field num" type="number" min="1" max="65535" value=${fan.spread_ms} onChange=${(e) => onFan({ ...fan, spread_ms: num(e.target.value) })} /><span class="note">${t('ms: each cube gets a fixed offset in 0-spread')}</span></div>`}
+    ${fan && html`<div class="note">${cue.type === 'fade' || cue.type === 'pulse' ? t('Each cube starts this cue later by its offset, holding the first colour until then.') : t('Each cube runs this cue shifted by its offset.')} ${t('Offsets: {offsets}. A cube with no number has none. Needs cube firmware v1.6.0; an older cube refuses the whole show and keeps its current one.', { offsets: shown + (cubes.length > 8 ? ' …' : '') })}</div>`}</div>`;
 }
 
 // ---------------------------------------------------------------- cubes and distribution
@@ -399,39 +409,39 @@ function CubeShows({ se }) {
   const relay = se.relay || {};
   const cubes = se.cubes || [];
   const counts = cubes.reduce((m, c) => ({ ...m, [c.state]: (m[c.state] || 0) + 1 }), {});
-  return html`<div class="card"><h2>Cubes <span class="note">show held by each cube (v0 = compiled-in default)</span></h2>
-    ${!relay.present && html`<${Banner} kind="warn" title="No show relay connected" detail="Updating cube shows needs a General Radio running general-radio-1.1.0 or later. Publishing to the web works without one." />`}
+  return html`<div class="card"><h2>${t('Cubes')} <span class="note">${t('show held by each cube (v0 = compiled-in default)')}</span></h2>
+    ${!relay.present && html`<${Banner} kind="warn" title=${t('No show relay connected')} detail=${t('Updating cube shows needs a Workstation (or General Radio general-radio-1.1.0+). Publishing to the web works without one.')} />`}
     ${relay.error && html`<div class="warn-text">${relay.error}</div>`}
-    ${se.show_running && html`<${Banner} kind="info" title="A show is running" detail="Cube updates wait until the controller's show ends; a cube never switches shows mid-show." />`}
-    <${KeyValue} items=${[['Published', p.version ? `v${p.version} · ${crcText(p.crc)} · ${p.length} bytes · ${p.published_by || ''}` : 'nothing yet'],
-      ['Cubes', cubes.length ? Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(' · ') : 'none heard yet (Query)'],
-      ['Auto update', se.walkaround ? 'on: cubes in range on an older show are updated (saved; Settings › Automatic updates)' : 'off (saved; Settings › Automatic updates)']]} />
+    ${se.show_running && html`<${Banner} kind="info" title=${t('A show is running')} detail=${t("Cube updates wait until the controller's show ends; a cube never switches shows mid-show.")} />`}
+    <${KeyValue} items=${[[t('Published'), p.version ? `v${p.version} · ${crcText(p.crc)} · ${t('{n} bytes', { n: p.length })} · ${p.published_by || ''}` : t('nothing yet')],
+      [t('Cubes'), cubes.length ? Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(' · ') : t('none heard yet (Query)')],
+      [t('Auto update'), se.walkaround ? t('on: cubes in range on an older show are updated (saved; Settings › Automatic updates)') : t('off (saved; Settings › Automatic updates)')]]} />
     ${pub && html`<div class="stack"><div class="row"><span>${se.message}</span></div>
       <${ProgressBar} value=${pub.expected.length ? 100 * (pub.expected.length - pub.pending.length) / pub.expected.length : 0} indeterminate=${!pub.expected.length} />
-      <div class="note">${pub.expected.length - pub.pending.length}/${pub.expected.length} confirmed · cycle ${pub.cycles + 1} · ${pub.elapsed_s} s${pub.held ? ' · waiting for the show to end' : ''}</div></div>`}
+      <div class="note">${t('{done}/{total} confirmed · cycle {cycle} · {secs} s', { done: pub.expected.length - pub.pending.length, total: pub.expected.length, cycle: pub.cycles + 1, secs: pub.elapsed_s })}${pub.held ? ' · ' + t('waiting for the show to end') : ''}</div></div>`}
     ${!pub && se.message && html`<div class="note">${se.message}</div>`}
     <div class="row">
-      <${ActionButton} name="show.query" args=${{}} label="Query cubes" disabled=${!relay.present} hazard="Broadcast SHOW_QUERY: every v1.5.0+ cube in range answers within 2 s." />
-      <${ActionButton} name="show.update_all" args=${{}} label=${p.version ? `Update all to v${p.version}` : 'Update all'} className="btn primary" disabled=${!relay.present || !p.version || !!pub}
-        hazard="Broadcasts the published show until every cube heard recently confirms it. Cubes playing a show commit it when their show ends." />
-      ${se.walkaround ? html`<${ActionButton} name="show.auto_update" args=${{ enabled: false }} label="Auto update off" />`
-        : html`<${ActionButton} name="show.auto_update" args=${{ enabled: true }} label="Auto update on" disabled=${!relay.present || !p.version} hazard="Walk around: any cube in range on an older show is updated automatically." />`}
-      <${ActionButton} name="show.update_selected" args=${{ macs: picked }} label=${`Update selected (${picked.length})`} disabled=${!relay.present || !p.version || !!pub || !picked.length}
-        hazard="Sends the published show until the ticked cubes confirm it (other cubes in range on an older show take it too: every cube gets the same show)." onDone=${() => setPicked([])} />
-      ${pub && html`<${ActionButton} name="show.stop" args=${{}} label="Stop sending" className="btn danger" />`}
-      <${ActionButton} name="show.push_config" args=${{}} label="Send length to controller" disabled=${!p.version} hazard="show_config: the Mainshow controller (mainshow-1.3.0+) bounds its timecode by the published show's length." /></div>
-    <div class="table-wrap"><table class="data"><thead><tr><th><input type="checkbox" aria-label="select every cube behind" checked=${picked.length > 0 && picked.length === cubes.filter((c) => c.state === 'behind').length}
-        onChange=${(e) => setPicked(e.target.checked ? cubes.filter((c) => c.state === 'behind').map((c) => c.mac) : [])} /></th><th>#</th><th>MAC</th><th>Firmware</th><th>Show</th><th>State</th><th>Staging</th><th>Signal</th><th>Seen</th><th></th></tr></thead>
+      <${ActionButton} name="show.query" args=${{}} label=${t('Query cubes')} disabled=${!relay.present} hazard=${t('Broadcast SHOW_QUERY: every v1.5.0+ cube in range answers within 2 s.')} />
+      <${ActionButton} name="show.update_all" args=${{}} label=${p.version ? t('Update all to v{version}', { version: p.version }) : t('Update all')} className="btn primary" disabled=${!relay.present || !p.version || !!pub}
+        hazard=${t('Broadcasts the published show until every cube heard recently confirms it. Cubes playing a show commit it when their show ends.')} />
+      ${se.walkaround ? html`<${ActionButton} name="show.auto_update" args=${{ enabled: false }} label=${t('Auto update off')} />`
+        : html`<${ActionButton} name="show.auto_update" args=${{ enabled: true }} label=${t('Auto update on')} disabled=${!relay.present || !p.version} hazard=${t('Walk around: any cube in range on an older show is updated automatically.')} />`}
+      <${ActionButton} name="show.update_selected" args=${{ macs: picked }} label=${t('Update selected ({n})', { n: picked.length })} disabled=${!relay.present || !p.version || !!pub || !picked.length}
+        hazard=${t('Sends the published show until the ticked cubes confirm it (other cubes in range on an older show take it too: every cube gets the same show).')} onDone=${() => setPicked([])} />
+      ${pub && html`<${ActionButton} name="show.stop" args=${{}} label=${t('Stop sending')} className="btn danger" />`}
+      <${ActionButton} name="show.push_config" args=${{}} label=${t('Send length to controller')} disabled=${!p.version} hazard=${t("show_config: the Mainshow controller (mainshow-1.3.0+) bounds its timecode by the published show's length.")} /></div>
+    <div class="table-wrap"><table class="data"><thead><tr><th><input type="checkbox" aria-label=${t('select every cube behind')} checked=${picked.length > 0 && picked.length === cubes.filter((c) => c.state === 'behind').length}
+        onChange=${(e) => setPicked(e.target.checked ? cubes.filter((c) => c.state === 'behind').map((c) => c.mac) : [])} /></th><th>#</th><th>MAC</th><th>${t('Firmware')}</th><th>${t('Show')}</th><th>${t('State')}</th><th>${t('Staging')}</th><th>${t('Signal')}</th><th>${t('Seen')}</th><th></th></tr></thead>
       <tbody>${cubes.length ? cubes.map((c) => html`<tr key=${c.mac}>
-        <td><input type="checkbox" aria-label=${'select ' + c.mac} checked=${picked.includes(c.mac)}
+        <td><input type="checkbox" aria-label=${t('select {mac}', { mac: c.mac })} checked=${picked.includes(c.mac)}
           onChange=${(e) => setPicked(e.target.checked ? [...picked, c.mac] : picked.filter((m) => m !== c.mac))} /></td>
         <td>${c.number != null ? '#' + c.number : '—'}</td><td><${Mac} mac=${c.mac} /></td><td class="mono">${c.fw}</td>
         <td>v${c.version} <span class="note">${c.source}</span></td>
         <td><${Pill} tone=${STATE_TONE[c.state] || 'muted'} label=${c.state} tip=${c.error_text || undefined} /></td>
-        <td>${c.staging_total ? `v${c.staging_version} ${c.staging_chunks}/${c.staging_total}${c.pending_commit ? ' · waits for show end' : ''}` : '—'}</td>
+        <td>${c.staging_total ? `v${c.staging_version} ${c.staging_chunks}/${c.staging_total}${c.pending_commit ? ' · ' + t('waits for show end') : ''}` : '—'}</td>
         <td>${signalBars(c.rssi, '—')}</td><td>${c.age_s != null ? ago(c.age_s) : '—'}</td>
-        <td>${c.state === 'behind' && html`<${ActionButton} name="show.update" args=${{ mac: c.mac }} label="Update" className="btn small" disabled=${!relay.present || !!pub} />`}</td></tr>`)
-      : html`<tr><td class="note" colspan="10">No cube has answered a show query yet.</td></tr>`}</tbody></table></div></div>`;
+        <td>${c.state === 'behind' && html`<${ActionButton} name="show.update" args=${{ mac: c.mac }} label=${t('Update')} className="btn small" disabled=${!relay.present || !!pub} />`}</td></tr>`)
+      : html`<tr><td class="note" colspan="10">${t('No cube has answered a show query yet.')}</td></tr>`}</tbody></table></div></div>`;
 }
 
 // ---------------------------------------------------------------- reference video
@@ -484,14 +494,14 @@ function videoClock() {
   return v.currentTime * 1000 - media.offset;
 }
 
-function VideoPanel({ t, playing }) {
+function VideoPanel({ t: tMs, playing }) {
   const [, bump] = useState(0);
   const refresh = () => bump((n) => n + 1);
   const [over, setOver] = useState(false);
   const [duration, setDuration] = useState(media.el ? media.el.duration : NaN);
   const input = useRef(null);
   const take = (file) => {
-    if (!isVideoFile(file)) { notify('Drop a video file (mp4, mov, webm…)', 'warn'); return; }
+    if (!isVideoFile(file)) { notify(t('Drop a video file (mp4, mov, webm…)'), 'warn'); return; }
     if (media.url) URL.revokeObjectURL(media.url);
     media.url = URL.createObjectURL(file); media.name = file.name; media.offset = storedOffset(file.name);
     media.lastSeekAt = null; media.pending = null;
@@ -501,37 +511,37 @@ function VideoPanel({ t, playing }) {
   const setOffset = (v) => {
     media.offset = Math.round(Number(v) || 0);
     try { localStorage.setItem(offsetKey(media.name), String(media.offset)); } catch (e) { /* private mode */ }
-    if (!playing) stillVideo(t);
+    if (!playing) stillVideo(tMs);
     refresh();
   };
   const drop = (e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) take(f); };
-  const target = videoTarget(t, media.offset), phase = media.url ? videoPhase(target, duration) : null;
+  const target = videoTarget(tMs, media.offset), phase = media.url ? videoPhase(target, duration) : null;
   const cls = 'show-video' + (media.url ? ' loaded' : '') + (over ? ' over' : '');
   const zero = media.offset >= 0 ? fmtTime(media.offset) : '−' + fmtTime(-media.offset);
   return html`<div class=${'stack show-video-slot' + (media.large ? ' large' : '')}>
     <div class=${cls} onDragOver=${(e) => { e.preventDefault(); if (!over) setOver(true); }} onDragEnter=${(e) => e.preventDefault()}
       onDragLeave=${(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }} onDrop=${drop}>
       ${media.url && html`<video ref=${(el) => { media.el = el; }} src=${media.url} muted=${media.muted} playsInline preload="auto"
-        onLoadedMetadata=${(e) => { setDuration(e.currentTarget.duration); if (!playing) stillVideo(t); }}
+        onLoadedMetadata=${(e) => { setDuration(e.currentTarget.duration); if (!playing) stillVideo(tMs); }}
         onSeeked=${() => { if (media.pending != null && media.el) { const p = media.pending; media.pending = null; if (stillNeedsSeek(media.el.currentTime, p)) media.el.currentTime = p; } }}></video>`}
-      ${!media.url && html`<div class="veil" title="Play, pause, scrubbing, rate and loop drive the video. It plays from this computer and is never uploaded.">
+      ${!media.url && html`<div class="veil" title=${t('Play, pause, scrubbing, rate and loop drive the video. It plays from this computer and is never uploaded.')}>
         <span class="drop-glyph" aria-hidden="true">▶</span>
-        <span class="drop-title">${over ? 'Drop to load the video' : 'Reference video'}</span>
-        <span>Drag a video file here: it plays in step with the timeline, from this computer (never uploaded).</span>
-        <button class="btn small" onClick=${() => input.current && input.current.click()}>Choose file…</button></div>`}
-      ${media.url && over && html`<div class="veil"><span class="drop-title">Drop to replace ${media.name}</span></div>`}
-      ${phase === 'before' && !over && html`<div class="veil"><span class="drop-title">Video starts at show time ${fmtTime(-media.offset)}</span><span>The offset puts the video's 0:00 after the show's.</span></div>`}
-      ${phase === 'after' && !over && html`<div class="veil"><span class="drop-title">Video ended</span><span>${fmtTime(duration * 1000)} long; the show continues.</span></div>`}
+        <span class="drop-title">${over ? t('Drop to load the video') : t('Reference video')}</span>
+        <span>${t('Drag a video file here: it plays in step with the timeline, from this computer (never uploaded).')}</span>
+        <button class="btn small" onClick=${() => input.current && input.current.click()}>${t('Choose file…')}</button></div>`}
+      ${media.url && over && html`<div class="veil"><span class="drop-title">${t('Drop to replace {name}', { name: media.name })}</span></div>`}
+      ${phase === 'before' && !over && html`<div class="veil"><span class="drop-title">${t('Video starts at show time {time}', { time: fmtTime(-media.offset) })}</span><span>${t("The offset puts the video's 0:00 after the show's.")}</span></div>`}
+      ${phase === 'after' && !over && html`<div class="veil"><span class="drop-title">${t('Video ended')}</span><span>${t('{time} long; the show continues.', { time: fmtTime(duration * 1000) })}</span></div>`}
     </div>
     <input type="file" accept="video/*" ref=${input} hidden onChange=${(e) => { const f = e.target.files && e.target.files[0]; if (f) take(f); e.target.value = ''; }} />
     ${media.url ? html`<div class="row show-video-tools">
-        <label class="lbl" title=${`The show's 0:00 is at ${zero} in the video (remembered per file name)`}>Offset</label>
-        <input class="field num" type="number" step="10" value=${media.offset} aria-label="video offset in milliseconds (the show's 0:00 in the video)"
-          title=${`ms: the show's 0:00 is at ${zero} in the video`} onChange=${(e) => setOffset(e.target.value)} />
-        <button class="btn small" aria-pressed=${media.muted ? 'true' : 'false'} onClick=${() => { media.muted = !media.muted; if (media.el) media.el.muted = media.muted; refresh(); }}>${media.muted ? 'Unmute' : 'Mute'}</button>
-        <button class="btn small" onClick=${() => { media.large = !media.large; refresh(); }}>${media.large ? 'Smaller' : 'Larger'}</button>
-        <button class="btn small" onClick=${() => input.current && input.current.click()} title="Choose another video file">Replace…</button>
-        <button class="btn small quiet" onClick=${clear} title="Remove the video" aria-label="Remove the video">✕</button></div>
+        <label class="lbl" title=${t("The show's 0:00 is at {time} in the video (remembered per file name)", { time: zero })}>${t('Offset')}</label>
+        <input class="field num" type="number" step="10" value=${media.offset} aria-label=${t("video offset in milliseconds (the show's 0:00 in the video)")}
+          title=${t("ms: the show's 0:00 is at {time} in the video", { time: zero })} onChange=${(e) => setOffset(e.target.value)} />
+        <button class="btn small" aria-pressed=${media.muted ? 'true' : 'false'} onClick=${() => { media.muted = !media.muted; if (media.el) media.el.muted = media.muted; refresh(); }}>${media.muted ? t('Unmute') : t('Mute')}</button>
+        <button class="btn small" onClick=${() => { media.large = !media.large; refresh(); }}>${media.large ? t('Smaller') : t('Larger')}</button>
+        <button class="btn small" onClick=${() => input.current && input.current.click()} title=${t('Choose another video file')}>${t('Replace…')}</button>
+        <button class="btn small quiet" onClick=${clear} title=${hint('Remove the video')} aria-label=${t('Remove the video')}>✕</button></div>
       <div class="note mono show-video-name" title=${media.name}>${media.name}${Number.isFinite(duration) ? ` · ${fmtTime(duration * 1000)}` : ''}</div>`
       : null}
   </div>`;
@@ -543,39 +553,48 @@ const liveEntries = (colours) => colours.filter(({ cube }) => cube >= 1 && cube 
 
 // The previewed cube numbers (quick sets One / 1-8 / 1-24) and mirroring them on the real cubes, in one box.
 // The colour band always shows 16 rows (the selection first); the rings and the mirroring use the selection.
-const QUICK_CUBES = [['1', 'One'], ['1-8', '1-8'], ['1-24', '1-24']];
-function CubeBox({ se, cubeText, cubes, valid, band, onCubes, on, held, onStart, onStop }) {
+const quickCubes = () => [['1', t('One')], ['1-8', '1-8'], ['1-24', '1-24']];
+// Cube numbers of the cubes plugged in over USB now (identified as cubes, numbered in the inventory).
+function usbCubeNumbers() {
+  return (section('devices') || []).filter((d) => d.role === 'cube' && d.mac)
+    .map((d) => (rowByMac(d.mac) || {}).cube_id).filter((n) => Number.isInteger(n) && n >= 1);
+}
+
+function CubeBox({ se, cubeText, cubes, valid, band, onCubes, on, held, onStart, onStop, usbAdd, onUsbAdd }) {
   const relay = se.relay || {};
   const live = se.live || {};
+  // Only a legacy General Radio can be too old: fwAtLeast returns null (not false) for 'workstation-…', so no false warning.
   const oldRadio = fwAtLeast(relay.firmware, 'general-radio', [1, 2, 0]) === false;
   const shown = cubes.filter((n) => n >= 1);
   const names = cubeRanges(shown);
-  const bandNote = band.length > cubes.length ? ` · band rows ${cubeRanges(band)}` : '';
-  return html`<div class=${'show-cubes' + (on ? ' on' : '')} role="group" aria-label="previewed cubes and mirroring on the real cubes">
+  const bandNote = band.length > cubes.length ? ' · ' + t('band rows {cubes}', { cubes: cubeRanges(band) }) : '';
+  return html`<div class=${'show-cubes' + (on ? ' on' : '')} role="group" aria-label=${t('previewed cubes and mirroring on the real cubes')}>
     <div class="row">
-      <label class="lbl">Preview cubes</label>
-      <input class="field" value=${cubeText} onInput=${(e) => onCubes(e.target.value)} placeholder="e.g. 1-8, 12" aria-label="cube numbers to preview" />
-      <span class="show-seg" role="group" aria-label="quick cube sets">${QUICK_CUBES.map(([v, label]) => html`<button aria-pressed=${cubeText.trim() === v ? 'true' : 'false'}
-        onClick=${() => onCubes(v)} title=${`Preview cube${v === '1' ? '' : 's'} #${v.replace('-', '-#')}`}>${label}</button>`)}</span>
+      <label class="lbl">${t('Preview cubes')}</label>
+      <input class="field" value=${cubeText} onInput=${(e) => onCubes(e.target.value)} placeholder=${t('e.g. 1-8, 12')} aria-label=${t('cube numbers to preview')} />
+      <span class="show-seg" role="group" aria-label=${t('quick cube sets')}>${quickCubes().map(([v, label]) => html`<button aria-pressed=${cubeText.trim() === v ? 'true' : 'false'}
+        onClick=${() => onCubes(v)} title=${v === '1' ? t('Preview cube #{cubes}', { cubes: v }) : t('Preview cubes #{cubes}', { cubes: v.replace('-', '-#') })}>${label}</button>`)}</span>
+      <button class="btn small" aria-pressed=${usbAdd ? 'true' : 'false'} onClick=${() => onUsbAdd(!usbAdd)}
+        title=${t('While on, every cube you plug in over USB joins the selection and stays in it after you unplug it (needs a number in the inventory)')}>＋ ${t('Plugged-in')}${usbAdd ? ' ✓' : ''}</button>
       <span class="spacer"></span>
-      ${on ? html`<span class="show-live" aria-live="polite">● Live on ${names}</span>
-          <button class="btn danger" aria-pressed="true" onClick=${onStop} title="Stop sending; each cube falls back when its last colour lapses (0.6 s)">■ Stop sending</button>`
-        : html`<${ActionButton} name="show.live" invoke=${onStart} label=${`Send to real cubes ${names}`} className="btn primary" disabled=${!relay.present || !shown.length}
-          hazard="While on, cubes in range whose number is previewed show the editor's colour at the playhead (playing, scrubbing or paused)." />`}
+      ${on ? html`<span class="show-live" aria-live="polite">● ${t('Live on {cubes}', { cubes: names })}</span>
+          <button class="btn danger" aria-pressed="true" onClick=${onStop} title=${t('Stop sending; each cube falls back when its last colour lapses (0.6 s)')}>■ ${t('Stop sending')}</button>`
+        : html`<${ActionButton} name="show.live" invoke=${onStart} label=${t('Send to real cubes {cubes}', { cubes: names })} className="btn primary" disabled=${!relay.present || !shown.length}
+          hazard=${t("While on, cubes in range whose number is previewed show the editor's colour at the playhead (playing, scrubbing or paused).")} />`}
     </div>
-    <div class="note show-cubes-note">${valid ? `${cubes.length} cube${cubes.length === 1 ? '' : 's'} previewed${bandNote} · ` : html`<span class="warn-text">Numbers and ranges, e.g. 1-8, 12 · </span>`}${on
-      ? `mirrored every ${LIVE_EVERY_MS} ms (cube firmware v1.7.0-USB.1; a cube playing a real show ignores it)`
-      : relay.present ? 'Send makes those real cubes follow the playhead (cube firmware v1.7.0-USB.1)' : 'mirroring needs a General Radio (general-radio-1.2.0) connected'}</div>
+    <div class="note show-cubes-note">${valid ? `${cubes.length === 1 ? t('{n} cube previewed', { n: cubes.length }) : t('{n} cubes previewed', { n: cubes.length })}${bandNote} · ` : html`<span class="warn-text">${t('Numbers and ranges, e.g. 1-8, 12')} · </span>`}${on
+      ? t('mirrored every {ms} ms (cube firmware v1.7.0-USB.1; a cube playing a real show ignores it)', { ms: LIVE_EVERY_MS })
+      : relay.present ? t('Send makes those real cubes follow the playhead (cube firmware v1.7.0-USB.1)') : t('mirroring needs a Workstation (or General Radio general-radio-1.2.0+) connected')}</div>
     ${on && held && html`<div class="warn-text">${held}</div>`}
-    ${live.error && html`<div class="warn-text">The radio refused live colours (${live.error})</div>`}
-    ${oldRadio && html`<div class="warn-text">${relay.firmware} cannot relay live colours: flash general-radio-1.2.0.</div>`}</div>`;
+    ${live.error && html`<div class="warn-text">${t('The radio refused live colours ({error})', { error: live.error })}</div>`}
+    ${oldRadio && html`<div class="warn-text">${t('{firmware} cannot relay live colours: flash the Workstation firmware (or general-radio-1.2.0+).', { firmware: relay.firmware })}</div>`}</div>`;
 }
 
 // ---------------------------------------------------------------- page
 function GoTo({ onGo }) {
   const [text, setText] = useState('');
-  const go = () => { const ms = parseTime(text); if (ms == null) { notify('Time is m:ss.mmm', 'bad'); return; } onGo(ms); setText(''); };
-  return html`<input class="field num mono" value=${text} placeholder="go to m:ss" aria-label="go to time (m:ss.mmm), Enter"
+  const go = () => { const ms = parseTime(text); if (ms == null) { notify(t('Time is m:ss.mmm'), 'bad'); return; } onGo(ms); setText(''); };
+  return html`<input class="field num mono" value=${text} placeholder=${t('go to m:ss')} aria-label=${t('go to time (m:ss.mmm), Enter')}
     onInput=${(e) => setText(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter') { go(); e.currentTarget.blur(); } }} />`;
 }
 
@@ -591,7 +610,7 @@ export function ShowEditorSection() {
   const [undo, setUndo] = useState([]);
   const [redo, setRedo] = useState([]);
   const [sel, setSel] = useState(0);
-  const [t, setT] = useState(() => session.t);
+  const [tMs, setT] = useState(() => session.t);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState('off');         // 'off' | 'cue' (the selected cue) | 'show'
@@ -605,6 +624,23 @@ export function ShowEditorSection() {
   const cubes = parseCubes(cubeText) || [1];
   const band = bandCubes(cubes);   // the colour band's rows: always 16, the selection first
   const setCubes = (text) => { setCubeText(text); try { localStorage.setItem('nct.show.preview', text); } catch (e) { /* private mode */ } };
+  // "+ Plugged-in": while on, each cube plugged in over USB is added to the selection (and stays after unplugging).
+  // Only a cube newly seen since the toggle went on is added, so a number you delete from the field stays deleted
+  // until that cube is plugged in again.
+  useSections(['devices', 'inventory']);
+  const [usbAdd, setUsbAddState] = useState(false);
+  const usbSeen = useRef(new Set());
+  const setUsbAdd = (on) => { usbSeen.current = new Set(); setUsbAddState(on); };
+  const usbNow = usbCubeNumbers();
+  const usbKey = usbNow.join(',');
+  useEffect(() => {
+    if (!usbAdd) { usbSeen.current = new Set(usbNow); return; }
+    const fresh = usbNow.filter((n) => !usbSeen.current.has(n));
+    usbSeen.current = new Set(usbNow);
+    if (!fresh.length) return;
+    const next = addCubeNumbers(cubeText, parseCubes(cubeText) || [], fresh);
+    if (next !== cubeText) { setCubes(next); notify(t('Added plugged-in {cubes} to the preview', { cubes: cubeRanges(fresh) }), 'info'); }
+  }, [usbAdd, usbKey]);
   const saveTimer = useRef(0);
   const player = useRef(null);
   const tRef = useRef(session.t);     // the show clock (ms); `t` is its rendered copy
@@ -665,20 +701,20 @@ export function ShowEditorSection() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
   // Paused (or scrubbing): the video holds the frame at the playhead.
-  useEffect(() => { session.t = t; if (!playing) stillVideo(t); }, [t, playing]);
+  useEffect(() => { session.t = tMs; if (!playing) stillVideo(tMs); }, [tMs, playing]);
 
   // One persistent player per previewed cube, like each cube's own: restarted on a backwards seek, a loop
   // and any edit (a new doc), so random cues walk as they would on the cube.
   const colours = useMemo(() => {
     if (!shown) return [];
-    const ms = Math.floor(t);
+    const ms = Math.floor(tMs);
     const key = cubes.join(',');
     if (!player.current || player.current.doc !== shown || player.current.key !== key || ms < player.current.at) {
       player.current = { doc: shown, key, at: 0, players: cubes.map((n) => ({ cube: n, player: new Player(shown, n), rng: cubeRng(n) })) };
     }
     player.current.at = ms;
     return player.current.players.map((p) => ({ cube: p.cube, rgb: p.player.render(ms, p.rng) }));
-  }, [shown, Math.floor(t / 20), cubes.join(',')]);
+  }, [shown, Math.floor(tMs / 20), cubes.join(',')]);
   coloursRef.current = colours;
 
   // Mirror on real cubes: the colours above, ~16 times a second, while on (playing, scrubbing or paused).
@@ -692,7 +728,7 @@ export function ShowEditorSection() {
         const r = await run('show.live', { entries: liveEntries(coloursRef.current), lease_ms: LIVE_LEASE_MS });
         if (!stopped) setMirrorHeld((r && r.held) || null);
       } catch (e) {
-        if (!stopped) { setMirror(false); notify(`Mirroring stopped: ${e.message}`, 'bad'); }
+        if (!stopped) { setMirror(false); notify(t('Mirroring stopped: {error}', { error: e.message }), 'bad'); }
       } finally { busy = false; }
     };
     const id = setInterval(send, LIVE_EVERY_MS);
@@ -735,18 +771,18 @@ export function ShowEditorSection() {
   const addAt = (ms) => {
     const at = snap(Math.floor(ms));
     const made = insertCue(doc, at, (c) => retype(c, c.type));
-    if (!made) { notify(at <= 0 ? 'The first cue already starts at 0:00' : 'A cue already starts there; move the playhead', 'warn'); return; }
+    if (!made) { notify(at <= 0 ? t('The first cue already starts at 0:00') : t('A cue already starts there; move the playhead'), 'warn'); return; }
     commit(made.doc); setSel(made.index);
   };
   const remove = (index = selIndex) => {
     const d = removeCue(doc, index);
-    if (!d) { notify('The first cue cannot be removed (the show starts with it)', 'warn'); return; }
+    if (!d) { notify(t('The first cue cannot be removed (the show starts with it)'), 'warn'); return; }
     commit(d); setSel(Math.max(0, index - 1));
   };
   latest.current = { doc: shown, rate, loop, sel: selIndex, toggle, remove: () => remove(), back: () => back(), fwd: () => fwd() };
 
-  if (!se || !doc) return html`<div><${PageHead} title="Show editor" subtitle="Loading…" /></div>`;
-  const tt = Math.floor(t);
+  if (!se || !doc) return html`<div><${PageHead} title=${t('Show editor')} subtitle=${t('Loading…')} /></div>`;
+  const tt = Math.floor(tMs);
   const cur = cueAt(shown, tt);
   const why = problem(doc);
   const p = se.published || {};
@@ -768,8 +804,8 @@ export function ShowEditorSection() {
   const fwd = () => { if (!redo.length) return; setUndo([...undo, doc]); const next = redo[redo.length - 1]; setRedo(redo.slice(0, -1)); commit(next, false); };
   const publish = async () => {
     clearTimeout(saveTimer.current);
-    if (!(await save(doc))) { notify('Fix the show before publishing', 'bad'); return; }
-    try { await run('show.publish', {}); notify('Publishing the show…', 'info'); } catch (e) { notify(e.message, 'bad'); }
+    if (!(await save(doc))) { notify(t('Fix the show before publishing'), 'bad'); return; }
+    try { await run('show.publish', {}); notify(t('Publishing the show…'), 'info'); } catch (e) { notify(e.message, 'bad'); }
   };
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(doc, null, 2) + '\n'], { type: 'application/json' });
@@ -784,81 +820,82 @@ export function ShowEditorSection() {
     return r;
   };
   const meta = html`<span class="row">
-    <${Pill} tone=${dirty ? 'warn' : 'ok'} label=${dirty ? 'unsaved edits' : 'saved on this computer'} />
-    <${Pill} tone=${se.draft_published ? 'ok' : 'info'} label=${se.draft_published ? `same as published v${p.version}` : p.version ? `differs from published v${p.version}` : 'not published yet'} />
-    <span class="note">${doc.cues.length} cues · ${fmtTime(doc.length_ms)} · started from ${se.origin} · image ${se.summary.bytes} B ${crcText(se.summary.crc)}${se.summary.crc === se.default_crc ? ' (the compiled-in default)' : ''}</span></span>`;
+    <${Pill} tone=${dirty ? 'warn' : 'ok'} label=${dirty ? t('unsaved edits') : t('saved on this computer')} />
+    <${Pill} tone=${se.draft_published ? 'ok' : 'info'} label=${se.draft_published ? t('same as published v{version}', { version: p.version }) : p.version ? t('differs from published v{version}', { version: p.version }) : t('not published yet')} />
+    <span class="note">${t('{n} cues', { n: doc.cues.length })} · ${fmtTime(doc.length_ms)} · ${t('started from {origin}', { origin: se.origin })} · ${t('image {bytes} B', { bytes: se.summary.bytes })} ${crcText(se.summary.crc)}${se.summary.crc === se.default_crc ? ' ' + t('(the compiled-in default)') : ''}</span></span>`;
   // Revert to the last version: the published show, or the cube's compiled-in default if none is
   // published yet. It is an ordinary edit, so Undo brings the working copy back.
   const lastVersion = se.published_source || null;
   const revertLast = () => {
     const target = lastVersion || se.default_doc;
-    if (!target) { notify('No earlier version to revert to', 'warn'); return; }
-    if (JSON.stringify(target) === JSON.stringify(doc)) { notify('Already the same as the last version', 'info'); return; }
+    if (!target) { notify(t('No earlier version to revert to'), 'warn'); return; }
+    if (JSON.stringify(target) === JSON.stringify(doc)) { notify(t('Already the same as the last version'), 'info'); return; }
     commit(clone(target));
-    notify(lastVersion ? `Reverted to published v${p.version} (Undo brings your edits back)` : 'Reverted to the compiled-in default (Undo brings your edits back)', 'info');
+    notify(lastVersion ? t('Reverted to published v{version} (Undo brings your edits back)', { version: p.version }) : t('Reverted to the compiled-in default (Undo brings your edits back)'), 'info');
   };
   const actions = html`<button class="btn" data-doc="show.revert" onClick=${revertLast} disabled=${se.draft_published && !dirty}
-      title=${lastVersion ? `Replace the working copy with published v${p.version}; Undo brings it back` : 'Nothing published yet: replace the working copy with the compiled-in default; Undo brings it back'}>↺ Revert to ${lastVersion ? `v${p.version}` : 'default'}</button>
-    <button class="btn primary" data-doc="show.publish" disabled=${!!why} onClick=${publish} title="Publish this show on the web as the next version (cubes are not touched)">Publish</button>
-    <${ActionButton} name="show.pull" args=${{}} label="Pull" title="Fetch the published show from the web" />`;
+      title=${lastVersion ? t('Replace the working copy with published v{version}; Undo brings it back', { version: p.version }) : t('Nothing published yet: replace the working copy with the compiled-in default; Undo brings it back')}>↺ ${lastVersion ? t('Revert to v{version}', { version: p.version }) : t('Revert to default')}</button>
+    <button class="btn primary" data-doc="show.publish" disabled=${!!why} onClick=${publish} title=${t('Publish this show on the web as the next version (cubes are not touched)')}>${t('Publish')}</button>
+    <${ActionButton} name="show.pull" args=${{}} label=${t('Pull')} title=${t('Fetch the published show from the web')} />`;
   return html`<div>
-    <${PageHead} title="Show editor" subtitle="The main show the cubes play (cube firmware v1.5.0+). Edit, publish a version, then update the cubes over the radio." meta=${meta} actions=${actions} />
-    ${(why || saveError) && html`<${Banner} kind="bad" title="The cubes would refuse this show" detail=${why || saveError} />`}
+    <${PageHead} title=${t('Show editor')} subtitle=${t('The main show the cubes play (cube firmware v1.5.0+). Edit, publish a version, then update the cubes over the radio.')} meta=${meta} actions=${actions} />
+    ${(why || saveError) && html`<${Banner} kind="bad" title=${t('The cubes would refuse this show')} detail=${why || saveError} />`}
     <div class="card">
       <div class="show-head">
         <div class="stack show-deck">
           <div class="row show-transport">
-            <${IconButton} icon="stop" tip="Stop and return to 0:00 (Home)" onClick=${() => { setPlaying(false); seek(0); }} />
-            <${IconButton} icon="prev" tip="Previous cue start (again within 0.25 s: the one before)" onClick=${() => seek(prevCueStart(shown, tt))} />
-            <button class="btn primary show-play" onClick=${toggle} aria-pressed=${playing ? 'true' : 'false'} title=${playing ? 'Pause (Space)' : 'Play (Space)'} aria-label=${playing ? 'Pause (Space)' : 'Play (Space)'}>
+            <${IconButton} icon="stop" tip=${hint('Stop and return to 0:00 (Home)')} label=${t('Stop and return to 0:00 (Home)')} onClick=${() => { setPlaying(false); seek(0); }} />
+            <${IconButton} icon="prev" tip=${hint('Previous cue start (again within 0.25 s: the one before)')} label=${t('Previous cue start (again within 0.25 s: the one before)')} onClick=${() => seek(prevCueStart(shown, tt))} />
+            <button class="btn primary show-play" onClick=${toggle} aria-pressed=${playing ? 'true' : 'false'} title=${playing ? hint('Pause (Space)') : hint('Play (Space)')} aria-label=${playing ? t('Pause (Space)') : t('Play (Space)')}>
               <${Icon} name=${playing ? 'pause' : 'play'} /></button>
-            <${IconButton} icon="next" tip="Next cue start" onClick=${() => next != null && seek(next)} disabled=${next == null} />
+            <${IconButton} icon="next" tip=${hint('Next cue start')} label=${t('Next cue start')} onClick=${() => next != null && seek(next)} disabled=${next == null} />
             <span class="readout mono" aria-live="off">${fmtTime(tt)}</span>
             <span class="stack show-where"><span class="note mono">/ ${fmtTime(shown.length_ms)}</span>
-              <span class="note">${tt < shown.length_ms ? `cue ${cur + 1} · ${shown.cues[cur].label || shown.cues[cur].type}` : 'ended'}</span></span></div>
+              <span class="note">${tt < shown.length_ms ? `${t('cue {n}', { n: cur + 1 })} · ${shown.cues[cur].label || typeName(shown.cues[cur].type)}` : t('ended')}</span></span></div>
           <div class="row">
-            <span class="show-seg" role="group" aria-label="playback rate">${RATES.map((r) => html`<button aria-pressed=${rate === r ? 'true' : 'false'} onClick=${() => setRate(r)} title=${`Play at ${r}× speed`}>${r}×</button>`)}</span>
-            <label class="lbl">Loop</label>
-            <select class="field" value=${loop} onChange=${(e) => setLoop(e.target.value)} aria-label="loop">
-              <option value="off">off: stop at the end</option>
-              <option value="cue">the selected cue</option>
-              <option value="show">the whole show</option></select>
+            <span class="show-seg" role="group" aria-label=${t('playback rate')}>${RATES.map((r) => html`<button aria-pressed=${rate === r ? 'true' : 'false'} onClick=${() => setRate(r)} title=${t('Play at {rate}× speed', { rate: r })}>${r}×</button>`)}</span>
+            <label class="lbl">${t('Loop')}</label>
+            <select class="field" value=${loop} onChange=${(e) => setLoop(e.target.value)} aria-label=${t('loop')}>
+              <option value="off">${t('off: stop at the end')}</option>
+              <option value="cue">${t('the selected cue')}</option>
+              <option value="show">${t('the whole show')}</option></select>
             <${GoTo} onGo=${seek} /></div>
           <div class="row show-tools">
-            <${IconButton} icon="add" tip="Add a cue at the playhead, copying the cue it splits (or double-click the cue lane)" onClick=${() => addAt(tt)} />
-            <${IconButton} icon="trash" tip="Delete the selected cue (Delete)" onClick=${() => remove()} disabled=${selIndex === 0} />
+            <${IconButton} icon="add" tip=${hint('Add a cue at the playhead, copying the cue it splits (or double-click the cue lane)')} label=${t('Add a cue at the playhead, copying the cue it splits (or double-click the cue lane)')} onClick=${() => addAt(tt)} />
+            <${IconButton} icon="trash" tip=${hint('Delete the selected cue (Delete)')} label=${t('Delete the selected cue (Delete)')} onClick=${() => remove()} disabled=${selIndex === 0} />
             <span class="show-sep" aria-hidden="true"></span>
-            <${IconButton} icon="undo" tip="Undo the last edit (⌘Z / Ctrl+Z)" onClick=${back} disabled=${!undo.length} />
-            <${IconButton} icon="redo" tip="Redo (⇧⌘Z / Ctrl+Y)" onClick=${fwd} disabled=${!redo.length} />
+            <${IconButton} icon="undo" tip=${hint('Undo the last edit (⌘Z / Ctrl+Z)')} label=${t('Undo the last edit (⌘Z / Ctrl+Z)')} onClick=${back} disabled=${!undo.length} />
+            <${IconButton} icon="redo" tip=${hint('Redo (⇧⌘Z / Ctrl+Y)')} label=${t('Redo (⇧⌘Z / Ctrl+Y)')} onClick=${fwd} disabled=${!redo.length} />
             <span class="show-sep" aria-hidden="true"></span>
-            <${IconButton} icon="fit" tip="Fit the whole show in view (or double-click the overview)" onClick=${() => setZoom(0)} />
-            <span class="show-keys"><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> 0.1 s (<kbd>⇧</kbd> 1 s) · <kbd>Home</kbd><kbd>End</kbd></span></div>
+            <${IconButton} icon="fit" tip=${hint('Fit the whole show in view (or double-click the overview)')} label=${t('Fit the whole show in view (or double-click the overview)')} onClick=${() => setZoom(0)} />
+            <span class="show-keys"><kbd>Space</kbd> ${t('play')} · <kbd>←</kbd><kbd>→</kbd> 0.1 s (<kbd>⇧</kbd> 1 s) · <kbd>Home</kbd><kbd>End</kbd></span></div>
         </div>
         <${VideoPanel} t=${tt} playing=${playing} />
       </div>
       <${CubeBox} se=${se} cubeText=${cubeText} cubes=${cubes} valid=${!!parseCubes(cubeText)} band=${band} onCubes=${setCubes}
-        on=${mirror} held=${mirrorHeld} onStart=${startMirror} onStop=${() => setMirror(false)} />
+        on=${mirror} held=${mirrorHeld} onStart=${startMirror} onStop=${() => setMirror(false)}
+        usbAdd=${usbAdd} onUsbAdd=${setUsbAdd} />
       <${Strip} doc=${shown} zoom=${zoom} t=${tt} sel=${selIndex} cubes=${band} loop=${loop} range=${range}
         onSeek=${seek} onScrub=${(on) => { scrubbing.current = on; }} onSelect=${setSel}
         onPreview=${(d) => setPreview(d)} onCommit=${() => { if (preview && JSON.stringify(preview) !== JSON.stringify(doc)) commit(preview); else setPreview(null); }}
         onAddAt=${addAt} onZoom=${setZoom} />
-      <div class="note">Top: the whole-show overview; drag its window's edges to zoom (or Ctrl/⌘ + wheel over the timeline), drag the window to scroll, double-click it to fit. Then the ruler and the colour band (the show as cubes ${cubeRanges(band)} play it, one row each, top to bottom; fanning offsets each by its number and random cues differ per cube; 100, the cube's cap, is full brightness). Click or drag either to scrub. Below: one block per cue with its colours on top and the cue under the playhead underlined. Click a block to select it, drag it to move it, drag its left edge to move only its start (10 ms steps), double-click to add a cue there.</div></div>
+      <div class="note">${t("Top: the whole-show overview; drag its window's edges to zoom (or Ctrl/⌘ + wheel over the timeline), drag the window to scroll, double-click it to fit. Then the ruler and the colour band (the show as cubes {cubes} play it, one row each, top to bottom; fanning offsets each by its number and random cues differ per cube; 100, the cube's cap, is full brightness). Click or drag either to scrub. Below: one block per cue with its colours on top and the cue under the playhead underlined. Click a block to select it, drag it to move it, drag its left edge to move only its start (10 ms steps), double-click to add a cue there.", { cubes: cubeRanges(band) })}</div></div>
     <div class="grid2">
-      <div class="card"><h2>Cue</h2><${Inspector} doc=${shown} index=${selIndex} cubes=${cubes} onCue=${setCue} onStart=${moveStart} onRetype=${retypeCue} />
-        <h3>Show</h3><div class="row"><${TimeField} label="Length" value=${doc.length_ms} onCommit=${(ms) => commit({ ...clone(doc), length_ms: ms })} />
-          <span class="note">At the end the cube turns off and leaves mainshow-ready, as before.</span></div></div>
+      <div class="card"><h2>${t('Cue')}</h2><${Inspector} doc=${shown} index=${selIndex} cubes=${cubes} onCue=${setCue} onStart=${moveStart} onRetype=${retypeCue} />
+        <h3>${t('Show')}</h3><div class="row"><${TimeField} label=${t('Length')} value=${doc.length_ms} onCommit=${(ms) => commit({ ...clone(doc), length_ms: ms })} />
+          <span class="note">${t('At the end the cube turns off and leaves mainshow-ready, as before.')}</span></div></div>
       <div class="stack">
-        <div class="card"><h2>Preview <span class="note">at the playhead</span></h2>
-          <div class="note">${fmtTime(tt)} · ${tt < shown.length_ms ? (shown.cues[cur].label || shown.cues[cur].type) : 'show ended'}${mirror ? ' · mirrored on the real cubes' : ''}</div>
-          <div class="ring-grid">${colours.map(({ cube, rgb: c }) => html`<div class="ring-tile" key=${cube} title=${c ? `#${cube}: levels R${c[0]} G${c[1]} B${c[2]}` : `#${cube}: show ended`}>
-            <${LedRing} pixels=${c ? Array(8).fill(levelHex(c).slice(1)) : Array(8).fill('000000')} label=${'#' + cube} sub=${c ? `${c[0]} ${c[1]} ${c[2]}` : 'off'} size=${colours.length > 8 ? 90 : 120} /></div>`)}</div>
-          <h3>Working copy</h3>
+        <div class="card"><h2>${t('Preview')} <span class="note">${t('at the playhead')}</span></h2>
+          <div class="note">${fmtTime(tt)} · ${tt < shown.length_ms ? (shown.cues[cur].label || typeName(shown.cues[cur].type)) : t('show ended')}${mirror ? ' · ' + t('mirrored on the real cubes') : ''}</div>
+          <div class="ring-grid">${colours.map(({ cube, rgb: c }) => html`<div class="ring-tile" key=${cube} title=${c ? t('#{cube}: levels R{r} G{g} B{b}', { cube, r: c[0], g: c[1], b: c[2] }) : t('#{cube}: show ended', { cube })}>
+            <${LedRing} pixels=${c ? Array(8).fill(levelHex(c).slice(1)) : Array(8).fill('000000')} label=${'#' + cube} sub=${c ? `${c[0]} ${c[1]} ${c[2]}` : t('off')} size=${colours.length > 8 ? 90 : 120} /></div>`)}</div>
+          <h3>${t('Working copy')}</h3>
           <div class="row">
-            <${HoldButton} name="show.revert" invoke=${() => { setDirty(false); return run('show.revert', { source: 'published' }); }} label="Revert to published" disabled=${!p.version} hazard="Discards this computer's edits." />
-            <${HoldButton} name="show.revert" invoke=${() => { setDirty(false); return run('show.revert', { source: 'default' }); }} label="Start from the default" hazard="The compiled-in v1.4.1 show. Discards this computer's edits." />
-            <button class="btn small" onClick=${exportJson}>Export JSON</button>
-            <button class="btn small" onClick=${() => setImportText(importText == null ? '' : null)}>Import JSON…</button></div>
-          ${importText != null && html`<div class="stack"><textarea class="field" rows="6" value=${importText} onInput=${(e) => setImportText(e.target.value)} placeholder="Paste a show JSON (shows/mainshow.json format)"></textarea>
-            <div class="row"><${ActionButton} name="show.import" args=${{ text: importText }} label="Replace the working copy" onDone=${() => { setDirty(false); setImportText(null); }} /></div></div>`}</div></div></div>
+            <${HoldButton} name="show.revert" invoke=${() => { setDirty(false); return run('show.revert', { source: 'published' }); }} label=${t('Revert to published')} disabled=${!p.version} hazard=${t("Discards this computer's edits.")} />
+            <${HoldButton} name="show.revert" invoke=${() => { setDirty(false); return run('show.revert', { source: 'default' }); }} label=${t('Start from the default')} hazard=${t("The compiled-in v1.4.1 show. Discards this computer's edits.")} />
+            <button class="btn small" onClick=${exportJson}>${t('Export JSON')}</button>
+            <button class="btn small" onClick=${() => setImportText(importText == null ? '' : null)}>${t('Import JSON…')}</button></div>
+          ${importText != null && html`<div class="stack"><textarea class="field" rows="6" value=${importText} onInput=${(e) => setImportText(e.target.value)} placeholder=${t('Paste a show JSON (shows/mainshow.json format)')}></textarea>
+            <div class="row"><${ActionButton} name="show.import" args=${{ text: importText }} label=${t('Replace the working copy')} onDone=${() => { setDirty(false); setImportText(null); }} /></div></div>`}</div></div></div>
     <${CubeShows} se=${se} /></div>`;
 }

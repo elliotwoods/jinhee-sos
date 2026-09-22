@@ -108,26 +108,50 @@ class DongleTests(unittest.TestCase):
         self.assertEqual(Path(write[write.index('0x10000') + 1]).read_bytes(), b'M' * 10)
         self.assertEqual(dongle.refusal('02:00:00:00:00:01', known, dongle.MAINSHOW)[:22], '02:00:00:00:00:01 is a')
 
-    def test_general_radio_firmware_and_backups(self):
-        stem = 'GeneralRadio.ino'
-        self.assertEqual(dongle.artifacts(dongle.GENERAL)['app'].name, stem + '.bin')
-        self.assertEqual((dongle.GENERAL.sketch.name, dongle.GENERAL.version), ('GeneralRadio', 'general-radio-1.2.0'))
+    def test_capabilities_come_from_hello(self):
+        # Boards are told apart by what hello reports; the firmware-string forms serve the older call sites.
         self.assertTrue(dongle.is_general('general-radio-1.0.0') and not dongle.is_general('nct-pairing-1.8-zones') and not dongle.is_general(None))
+        self.assertTrue(dongle.is_workstation('workstation-1.0.0') and not dongle.is_workstation('general-radio-1.2.0'))
+        self.assertTrue(dongle.is_controller('mainshow-1.3.0') and not dongle.is_controller(dict(firmware='workstation-1.0.0')))
         self.assertTrue(dongle.show_capable('general-radio-1.0.0') and dongle.show_capable('mainshow-1.2.0') and not dongle.show_capable('nct-pairing-1.8-zones'))
-        self.assertEqual(dongle.RELAY_VERSIONS, {'nct-pairing-1.8-zones', 'general-radio-1.2.0', 'general-radio-1.1.0', 'general-radio-1.0.0'})
+        self.assertTrue(dongle.show_capable('workstation-1.0.0'))
+        self.assertTrue(dongle.show_capable(dict(firmware='x', roles=['cube'])))  # an unknown name with the cube role still answers
+        self.assertFalse(dongle.show_capable(dict(firmware='x', roles=['zone'])))
+        self.assertTrue(dongle.relay_capable(dict(zones=1)))
+        self.assertFalse(dongle.relay_capable(dict(zones=0)) or dongle.relay_capable(dict(firmware='workstation-1.0.0')))
+        self.assertTrue(dongle.rx_gain_capable('workstation-1.0.0') and dongle.rx_gain_capable(dict(firmware='general-radio-1.0.0')))
+        self.assertIs(dongle.rx_gain_capable('nct-pairing-1.7-zones'), False)
+        self.assertTrue(dongle.has_reader(dict(nfc_ok=True)) and not dongle.has_reader(dict(nfc_ok=False)) and not dongle.has_reader('x'))
+        self.assertEqual(dongle.radio_roles(dict(roles=['cube', 'nfc'])), ['cube', 'nfc'])
+        self.assertEqual(dongle.radio_roles('workstation-1.0.0'), [])
+        self.assertTrue(dongle.show_relay(dict(show=1)) and not dongle.show_relay(dict(firmware='general-radio-1.0.0')))
+        self.assertEqual([dongle.label(dict(firmware=f, nfc_ok=nfc)) for f, nfc in [
+            ('workstation-1.0.0', True), ('general-radio-1.2.0', False), ('mainshow-1.3.0', False),
+            ('nct-pairing-1.8-zones', True), ('nct-pairing-1.8-zones', False)]],
+            ['Workstation', 'General Radio', 'Mainshow controller', 'Pairing station', 'ESP-NOW dongle'])
+        self.assertTrue(dongle.current('workstation-1.0.0') and dongle.current('general-radio-1.2.0') and dongle.current(dict(firmware='mainshow-1.3.0')))
+        self.assertFalse(dongle.current('general-radio-1.0.0') or dongle.current('nct-pairing-1.7-zones') or dongle.current(None))
+        self.assertEqual(dongle.RELAY_VERSIONS, {'nct-pairing-1.8-zones', 'workstation-1.0.0', 'general-radio-1.0.0',
+                                                 'general-radio-1.1.0', 'general-radio-1.2.0'})
+        self.assertEqual((dongle.FIRMWARE, dongle.RELAY_FIRMWARE), ('nct-pairing-1.8-zones', 'workstation-1.0.0'))
+
+    def test_workstation_firmware_and_backups(self):
+        stem = 'Workstation.ino'
+        self.assertEqual(dongle.artifacts(dongle.WORKSTATION)['app'].name, stem + '.bin')
+        self.assertEqual((dongle.WORKSTATION.sketch.name, dongle.WORKSTATION.version), ('Workstation', 'workstation-1.0.0'))
         for name, data in [('bootloader', b'B'), ('partitions', b'P'), ('app', b'G' * 10)]:
             (self.build / f'{stem}{"" if name == "app" else "." + name}.bin').write_bytes(data)
         (self.build / f'{stem}.merged.bin').write_bytes((self.build / 'pairing_station.ino.merged.bin').read_bytes())
-        # A recorded Mainshow controller is refused the general radio as it is refused the relay.
-        self.assertIn('Mainshow controller', dongle.refusal(MAC, dict(KNOWN, controllers={MAC}), dongle.GENERAL))
-        self.assertIsNone(dongle.refusal(MAC, KNOWN, dongle.GENERAL))  # an excluded ex-cube may be given it
-        with patch.object(dongle.GENERAL, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
+        # A recorded Mainshow controller is refused the Workstation as it is refused the relay.
+        self.assertIn('Mainshow controller', dongle.refusal(MAC, dict(KNOWN, controllers={MAC}), dongle.WORKSTATION))
+        self.assertIsNone(dongle.refusal(MAC, KNOWN, dongle.WORKSTATION))  # an excluded ex-cube may be given it
+        with patch.object(dongle.WORKSTATION, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
                 patch.object(dongle, 'build_state', return_value='current'), patch('backend.Runner.__call__', side_effect=self.fake_tool), \
                 patch.object(dongle, 'ports', return_value=[PORT]), patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()), \
                 patch.object(dongle.time, 'strftime', side_effect=['20260923-010000', '20260923-010001']):
             for _ in range(2):
                 self.assertEqual(dongle.flash(PORT, KNOWN, Path(self.tmp.name) / 'run', lambda *e: None,
-                                              firmware=dongle.GENERAL, backup='always'), MAC)
+                                              firmware=dongle.WORKSTATION, backup='always'), MAC)
         writes = [c for c in self.calls if 'write-flash' in c]
         self.assertEqual(Path(writes[0][writes[0].index('0x10000') + 1]).read_bytes(), b'G' * 10)
         reads = [c for c in self.calls if 'read-flash' in c]

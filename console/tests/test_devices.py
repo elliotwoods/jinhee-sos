@@ -52,10 +52,12 @@ class DeviceTests(unittest.TestCase):
         rows = {'AA:00:00:00:00:01': dict(mac='AA:00:00:00:00:01', cube_id=7, uid=None)}
         roles = {'AA:00:00:00:00:02': 'excluded'}
         zones = {'AA:00:00:00:00:03': dict(name='Pool 1')}
-        self.assertEqual(presumed_role('3C:0F:02:AD:83:24', rows, roles, zones, set())['role'], 'station')
+        self.assertEqual(presumed_role('3C:0F:02:AD:83:24', rows, roles, zones, set())['role'], 'workstation')
         self.assertEqual(presumed_role('AA:00:00:00:00:04', rows, roles, zones, {'AA:00:00:00:00:04'})['role'], 'mainshow')
         self.assertEqual(presumed_role('AA:00:00:00:00:03', rows, roles, zones, set())['role'], 'zone')
-        self.assertEqual(presumed_role('AA:00:00:00:00:02', rows, roles, zones, set())['role'], 'station')
+        self.assertEqual(presumed_role('AA:00:00:00:00:02', rows, roles, zones, set())['role'], 'workstation')
+        recorded = presumed_role('AA:00:00:00:00:05', rows, roles, zones, set(), workstations={'AA:00:00:00:00:05'})
+        self.assertEqual((recorded['role'], recorded['label']), ('workstation', 'Recorded as a Workstation / General Radio'))
         self.assertEqual(presumed_role('AA:00:00:00:00:01', rows, roles, zones, set())['label'], 'Cube #7')
         self.assertEqual(presumed_role('AA:00:00:00:00:09', rows, roles, zones, set()), {})
         self.assertEqual(presumed_role(None, rows, roles, zones, set()), {})

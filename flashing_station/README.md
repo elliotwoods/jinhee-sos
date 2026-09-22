@@ -47,13 +47,24 @@ Build target: `esp32:esp32:XIAO_ESP32C3:CDCOnBoot=default,PartitionScheme=no_ota
 
 The uploader writes bootloader, partition table, boot selection data and application separately, never a full-chip erase. NVS at `0x9000`, length `0x5000`, is backed up and compared after writing, before boot. Blank flash and the compatible NVS layout are supported; unfamiliar layouts stop before upload. Other filesystem partitions are not promised preservation when moving to this no-OTA layout. Secure-boot/encryption protections are not bypassed.
 
+### Show stage (NCT Console only)
+
+`Flasher.execute(..., show=None, show_only=None)` can also bring the cube's main show up to date over USB. The Tk flasher does not pass a show and behaves exactly as before; the console's Flash page, Cube panel › Firmware › Flash and **Update show over USB** do.
+
+- With `show` (the published show: version, CRC, image) the stage reads NVS (`0x9000`, `0x5000`) after the firmware step, also when auto mode skipped the firmware because this MAC already has this build. If the NVS show is missing, older or damaged (CRC mismatch), it writes `nvs.with_show(...)` to `0x9000`, reads it back byte for byte, checks that nothing outside namespace `show` changed, resets, and the boot check additionally requires `SHOW: v=<n> crc=<8 hex> src=nvs` in the `?` reply.
+- `show_only=<firmware version the cube reported>` writes only the show; firmware is untouched.
+- Result (`flash_runs.show_result`, with `show_version`; migrated in `core.Store`): `current` (already held), `written`, `newer` (the cube holds a newer show than the published one and is left alone), `unsupported` (firmware older than v1.5.0 cannot hold a show).
+- Run-folder files: `nvs-show-before.bin`, `nvs-show.bin` (what was written), `nvs-show-after.bin`. A failure after the NVS write starts is result `attention`; its detail names `nvs-show-before.bin` for restoring.
+
+`nvs.py` is a pure-Python reader/writer for ESP-IDF NVS format-2 partitions: `parse(image)` → `(namespaces, entries)`, `build(namespaces, entries)`, `show_of(image)`, `with_show(image, version, crc, img)` (replaces only `show`'s `ver`/`img`/`crc` and keeps every other value: `cube`/`cubeID`, `uidLen`, `uid`, PHY calibration, Wi-Fi/BT driver state) and `same_except_show(a, b)`. It raises `NvsError` on anything it cannot parse completely (any page, entry or data CRC mismatch, freeing/corrupt page states, unknown types), so it never rewrites a partition it does not fully understand. `build()` output is byte-identical to Espressif's `esp-idf-nvs-partition-gen` 0.3.0 (SHA-256 vectors in `tests/test_nvs.py`), and every local NVS backup under `data/runs` (342 at writing) parses and round-trips; that test runs only where backups exist, since they are private and never committed. The official generator is not used at runtime: it drops Wi-Fi station keys (`sta.pswd`).
+
 ## Shared inventory
 
 The default database is `../pairing_station/data/devices.sqlite3`. New target MACs receive the next cube ID and `awaiting_tag` with NFC unknown. This is a database reservation only: flashing does not send that ID or an NFC tag to the cube. Complete registration through the pairing app later. Existing database mappings and device NVS registrations are preserved.
 
 Both apps may run together. Atomic ID allocation, WAL, bounded SQLite waits, CSV export locking, and shared serial-port ownership prevent competing updates. Restart the pairing app when convenient to load its new station-identity persistence and shared port-lock code; its currently running session was not interrupted. Pyserial exclusive ownership and the built-in station exclusion protect the current station in the meantime.
 
-Flash results have their own `flash_runs` table and never replace NFC registration statuses. Back up the database with its WAL/SHM files while running, or close both apps before copying the database alone.
+Flash results have their own `flash_runs` table (including `show_result`/`show_version` from the show stage) and never replace NFC registration statuses. Back up the database with its WAL/SHM files while running, or close both apps before copying the database alone.
 
 ## Development and validation
 

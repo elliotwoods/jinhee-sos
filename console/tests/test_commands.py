@@ -21,6 +21,12 @@ class CatalogueTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             commands.run(None, 'no.such', {})
 
+    def test_dongle_flash_targets_are_workstation_or_mainshow(self):
+        # The relay dongle and General Radio targets became the Workstation; the old names are refused before any device lookup.
+        for old in ('general', 'dongle'):
+            with self.assertRaisesRegex(ValueError, 'workstation or mainshow'):
+                commands.run(None, 'dongle.flash', dict(device='x', firmware=old))
+
 
 if __name__ == '__main__':
     unittest.main()

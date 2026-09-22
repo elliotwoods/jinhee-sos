@@ -13,6 +13,7 @@ import uuid
 
 import zonedb
 from show_sim import FakeShowCube
+from backend import SHOW_DETAIL, SHOW_FIRMWARE, firmware_tuple
 
 BOARDS = {}      # port -> FakeBoard
 
@@ -47,9 +48,14 @@ class FakeCube(FakeBoard):
         super().__init__(port, mac)
         self.number, self.firmware = number, firmware
         self.zone = 0
+        self.show_version, self.show_crc = 0, 0     # 0: the compiled-in show
+        self.flashed = set()                        # build hashes written to this cube (fake_cube_flash)
 
     def report(self):
-        return [f'FW: {self.firmware}', f'Cube MAC: {self.mac}', 'ESP-NOW CHANNEL: 2', 'Cube READY']
+        lines = [f'FW: {self.firmware}', f'Cube MAC: {self.mac}', 'ESP-NOW CHANNEL: 2']
+        if firmware_tuple(self.firmware) >= SHOW_FIRMWARE:
+            lines.append(f'SHOW: v={self.show_version} crc={self.show_crc:08x} src={"nvs" if self.show_version else "builtin"}')
+        return lines + ['Cube READY']
 
     def probe_lines(self):
         return self.report()
@@ -211,7 +217,7 @@ class FakeZone(FakeBoard):
 
 
 class FakeStation(FakeBoard):
-    role = 'station'
+    role = 'workstation'
     kind = 'json'
 
     def __init__(self, port, mac, firmware='nct-pairing-1.8-zones', nfc_ok=True, cubes=(), zones=()):
@@ -221,6 +227,7 @@ class FakeStation(FakeBoard):
         self.zones = list(zones)       # FakeZone models reachable over the air
         self.identify = None
         self.register = None
+        self.sent = []                 # every command the host sent, so tests can assert what a legacy board never sees
 
     def hello(self, request_id):
         return dict(event='hello', id=request_id, protocol=1, firmware=self.firmware, zones=1, mac=self.mac, channel=2,
@@ -232,6 +239,7 @@ class FakeStation(FakeBoard):
 
     def handle_json(self, message):
         cmd, rid = message.get('cmd'), message.get('id', '')
+        self.sent.append(cmd)
         if cmd == 'hello':
             return [self.hello(rid)]
         if cmd == 'ping':
@@ -278,7 +286,8 @@ class FakeStation(FakeBoard):
 
 
 class FakeGeneralRadio(FakeStation):
-    """zones/firmware/GeneralRadio: the station protocol plus set_zone/show_start/pool/preshow/led_test/status.
+    """A legacy General Radio (general-radio-1.x, superseded by zones/firmware/Workstation): the station protocol
+    plus set_zone/show_start/pool/preshow/led_test/status, without a reader.
 
     `central` / `bridge` are the MACs of a pool central and a preshow bridge in range: with them the
     board beacons (on hello/status and every 5 s), unicasts, acknowledges cues (`preshow_ack`) and
@@ -287,7 +296,7 @@ class FakeGeneralRadio(FakeStation):
     `reboot()`), `expire_leases()` (the host lease lapsed: `pool_watchdog` / `preshow_watchdog`),
     `dead` (cube MACs whose frames are never acknowledged).
     """
-    role = 'generalradio'
+    role = 'workstation'
     LOCKOUT_S, SHOW_LENGTH_S, FAIL_AFTER_S, BEACON_EVERY_S = 3.0, 298.0, 3.0, 5.0
 
     def __init__(self, port, mac, cubes=(), zones=(), central=None, bridge=None, clock=time.monotonic):
@@ -363,8 +372,15 @@ class FakeGeneralRadio(FakeStation):
             self.emit(dict(event='preshow_watchdog', id='', detail='host lease expired; cue turned off', **self.preshow))
 
     def handle_json(self, message):
+        out = self._handle_radio(message)
+        if out is None:
+            return super().handle_json(message)   # the station verbs, recorded there
+        self.sent.append(message.get('cmd'))
+        return out
+
+    def _handle_radio(self, message):
+        """The radio's own verbs; None hands the command to the station protocol."""
         cmd, rid = message.get('cmd'), message.get('id', '')
-        self.sent.append(cmd)
         if cmd == 'hello':
             return [self.hello(rid)] + self.beacons()
         if cmd == 'status':
@@ -375,7 +391,7 @@ class FakeGeneralRadio(FakeStation):
         if cmd.startswith('nfc_'):
             return [dict(event='error', id=rid, detail='No NFC reader on this radio')]
         if cmd in ('ping', 'stop'):
-            return super().handle_json(message)
+            return None
         if not self.radio_ok:
             return [dict(event='error', id=rid, detail='Radio unavailable; reboot the radio')]
         if cmd == 'set_zone':
@@ -434,6 +450,28 @@ class FakeGeneralRadio(FakeStation):
             else:
                 self.unacked_since = self.clock()
             return out
+        return None
+
+
+class FakeWorkstation(FakeGeneralRadio):
+    """zones/firmware/Workstation: the General Radio's protocol plus the station's PN532 reader, so hello
+    lists the nfc role and carries the reader fields, and the nfc_* verbs answer as the station's do."""
+    BANNER = ['NCT WORKSTATION']
+
+    def __init__(self, port, mac, cubes=(), zones=(), central=None, bridge=None, clock=time.monotonic):
+        super().__init__(port, mac, cubes=cubes, zones=zones, central=central, bridge=bridge, clock=clock)
+        self.firmware, self.nfc_ok = 'workstation-1.0.0', True
+
+    def hello(self, request_id, event='hello'):
+        return dict(super().hello(request_id, event), roles=['cube', 'zone', 'pool', 'preshow', 'nfc'])
+
+    def probe_lines(self):
+        # The boot banner precedes the hello a real board prints, so both probe paths are exercised.
+        return self.BANNER + [f'FW: {self.firmware}', f'MAC: {self.mac}', 'CHANNEL: 2', 'RADIO: OK'] + super().probe_lines()
+
+    def handle_json(self, message):
+        if str(message.get('cmd', '')).startswith('nfc_'):
+            return FakeStation.handle_json(self, message)  # the General Radio answers "No NFC reader"
         return super().handle_json(message)
 
 
@@ -583,6 +621,44 @@ def fake_zone_db(hub, device, publication):
     return job
 
 
+def fake_cube_flash(port, manifest, manual, show, emit, show_only=None):
+    """Flasher.execute without esptool: the same decisions and result record, applied to the FakeCube."""
+    board = BOARDS.get(port)
+    if not isinstance(board, FakeCube):
+        raise RuntimeError('ESP32 bootloader did not report a MAC; no firmware was written. Check the tool log and USB connection.')
+    emit('stage', 'Identify')
+    emit('identity', dict(mac=board.mac, chip='ESP32-C3', flash='4 MB', port=port))
+    record = dict(id=uuid.uuid4().hex, mac=board.mac, port=port, version=manifest['version'], build_hash=manifest['build_hash'])
+    if show_only or (not manual and manifest['build_hash'] in board.flashed):
+        result, detail = 'skipped', 'Show only; firmware not touched' if show_only else 'This MAC already completed this firmware build'
+    else:
+        for stage, percent in (('Back up registration', 10), ('Write and verify', 60), ('Check preserved registration', 80)):
+            emit('stage', stage)
+            emit('progress', percent)
+            time.sleep(0.02)
+        board.firmware = manifest['version']
+        board.flashed.add(manifest['build_hash'])
+        result, detail = 'success', 'Firmware verified · boot confirmed · registration preserved'
+    show_result = show_version = None
+    if show:
+        emit('stage', 'Check show')
+        running = show_only or board.firmware
+        if board.show_version >= show['version']:
+            show_result = 'current' if board.show_version == show['version'] else 'newer'
+        elif firmware_tuple(running) < SHOW_FIRMWARE:
+            show_result = 'unsupported'
+        else:
+            emit('stage', 'Write show')
+            time.sleep(0.02)
+            board.show_version, board.show_crc = show['version'], show['crc']
+            show_result = 'written'
+        show_version = board.show_version or None
+        detail += ' · ' + SHOW_DETAIL[show_result].format(version=show_version, published=show['version'])
+    emit('progress', 100)
+    record.update(result=result, detail=detail, show_result=show_result, show_version=show_version)
+    return dict(record, ui_result=result, ui_detail=detail)
+
+
 def install(hub, scenario='default'):
     hub.scanner = FakeScanner()
     hub.prober = FakeProber()
@@ -597,6 +673,7 @@ def install(hub, scenario='default'):
 
     hub.tick = tick
     hub.fake_zone_db = fake_zone_db
+    hub.fake_cube_flash = fake_cube_flash
     if scenario == 'default':
         default_scenario(hub)
     elif scenario == 'empty':
@@ -606,7 +683,8 @@ def install(hub, scenario='default'):
 
 
 def default_scenario(hub):
-    """A cube, a preshow plate holding an older database, a pool radio and a station that sees them."""
+    """A cube, a preshow plate holding an older database, a pool radio, a station that sees them, a General
+    Radio and a Workstation."""
     known_uid, known_cube, known_mac = '04:A2:2B:1C:53:80:01', 44, 'A4:CF:12:34:56:78'
     plate = FakeZone('/dev/sim.preshow1', '14:63:93:C0:EC:14', records={'04:11:22:33:44:55:66': (12, '34:85:18:00:00:12')},
                      taps=[(6.0, '04:11:22:33:44:55:66'), (14.0, known_uid)])
@@ -617,10 +695,11 @@ def default_scenario(hub):
     # As on the bench: the preshow bridge beacons (cues are acknowledged), no pool central is heard.
     radio = FakeGeneralRadio('/dev/sim.radio', '02:AA:BB:CC:DD:EE', cubes=[known_mac], zones=[plate], bridge='AC:27:6E:83:21:C4',
                              clock=hub.clock)
-    for board in (station, plate, pool, cube, radio):
+    workstation = FakeWorkstation('/dev/sim.workstation', '02:AA:BB:CC:DD:F0', cubes=[known_mac], zones=[plate], clock=hub.clock)
+    for board in (station, plate, pool, cube, radio, workstation):
         hub.scanner.add(board)
     hub._sim = dict(known_uid=known_uid, known_cube=known_cube, known_mac=known_mac, plate=plate, pool=pool, cube=cube,
-                    station=station, radio=radio)
+                    station=station, radio=radio, workstation=workstation)
     hub._sim_seed = lambda: seed_inventory(hub, known_mac, known_cube, known_uid)
 
 

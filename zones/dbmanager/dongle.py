@@ -1,16 +1,22 @@
-"""ESP-NOW dongle: an ESP32-C3 running the pairing-station firmware, used only for its zone relay.
+"""Workstation device: an ESP32-C3 USB dongle for every ESP-NOW host function, and the boards it succeeds.
 
-The pairing-station firmware relays zone frames (`zone_send` / `zone_frame`) without needing its
-NFC reader, so a bare ESP32-C3 with that firmware is a complete dongle. Flashing writes the
-bootloader, partition table, boot selector and application separately so NVS is preserved,
-and refuses boards the inventory knows as cubes or zones.
+Three firmware families answer the same JSON-line protocol on USB, and every host here tells them
+apart by what `hello` reports, not by the firmware name:
+  - the Workstation (`WORKSTATION`, zones/firmware/Workstation): PN532 reader, cube pairing, zone relay,
+    the Mainshow verbs, pool-lamp and preshow-cue emulation, main-show relay. `roles` lists what it does.
+  - the legacy pairing station (`PAIRING`, pairing_station/firmware, frozen): reader + pairing + zone
+    relay; the installed station runs it. No `roles`.
+  - the legacy General Radio (general-radio-1.x, superseded by the Workstation): everything but the
+    reader (`nfc_ok` false).
+Capability helpers below (`has_reader`, `relay_capable`, `show_capable`, ...) take the hello dict, or
+a firmware string for the older call sites.
 
-The same pipeline writes the Mainshow controller firmware (`MAINSHOW`, used by zones/mainshow)
-and the general radio (`GENERAL`, zones/firmware/GeneralRadio: the relay protocol plus the
-Mainshow verbs, pool-lamp and preshow-cue emulation, driven by zones/tools/general_radio.py).
-A board recorded as the controller is refused when writing anything else, so the dongle
-flasher cannot quietly turn the show trigger back into a relay. A general radio is just an
-`excluded` board, like a relay dongle: the cube and zone flashers leave it alone by role.
+Flashing writes the bootloader, partition table, boot selector and application separately so NVS
+is preserved, and refuses boards the inventory knows as cubes or zones. The same pipeline writes the
+Mainshow controller firmware (`MAINSHOW`, zones/mainshow). A board recorded as the controller is
+refused when writing anything else, so the dongle flasher cannot quietly turn the show trigger back
+into a relay. A Workstation is just an `excluded` board, like a relay dongle: the cube and zone
+flashers leave it alone by role.
 """
 from pathlib import Path
 import json
@@ -19,15 +25,18 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'flashing_station'))
+sys.path.insert(0, str(ROOT / 'zones/tools'))
 from backend import MAC_RE, Runner, ports, tool_command  # noqa: E402
 from core import PROTECTED, PortLock  # noqa: E402
 import hostos  # noqa: E402  (core puts pairing_station on the path)
+import zonedb  # noqa: E402
 
 BOARD = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'  # same recipe as scripts/build_all_firmware.py
 SEGMENTS = [(0x0, 'bootloader'), (0x8000, 'partitions'), (0xE000, 'boot_app0'), (0x10000, 'app')]
 BOOT_APP0 = slice(0xE000, 0x10000)  # taken from the merged image the build also produces
 BACKUPS = ROOT / 'pairing_station/data/dongle/backups'  # full 4 MB image before the first write to a board
 CONTROLLERS_KEY = 'mainshow_controllers'  # metadata: JSON list of boards flashed as the Mainshow controller
+WORKSTATIONS_KEY = 'general_radios'  # metadata: JSON list of Workstations / General Radios (the key predates the name)
 
 
 class Firmware:
@@ -49,24 +58,104 @@ MAINSHOW = Firmware('Mainshow controller', 'mainshow-1.3.0',  # 1.3 adds the sho
                     ROOT / 'zones/firmware/MainshowController',
                     ROOT / 'zones/build/MainshowController',
                     (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))  # Adafruit_NeoPixel, as the cube build
-GENERAL = Firmware('General radio', 'general-radio-1.2.0',  # 1.1 adds the show relay and timecode; 1.2 SHOW_LIVE
-                   ROOT / 'zones/firmware/GeneralRadio',
-                   ROOT / 'zones/build/GeneralRadio',
-                   (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries'))
-FIRMWARE = PAIRING.version
-# Firmwares that speak the current zone relay (RX gain control included): what the Zone
-# Database Manager accepts without asking for a reflash.
-# 1.0.0: zone relay only, no show relay; 1.1.0: show relay without SHOW_LIVE.
-RELAY_VERSIONS = {PAIRING.version, GENERAL.version, 'general-radio-1.0.0', 'general-radio-1.1.0'}
+WORKSTATION = Firmware('Workstation', 'workstation-1.0.0',  # the General Radio 1.2.0 protocol plus the station's PN532 reader
+                       ROOT / 'zones/firmware/Workstation',
+                       ROOT / 'zones/build/Workstation',
+                       (ROOT / 'zones/firmware/libraries', ROOT / 'live files/libraries',  # NeoPixel, PN532, BusIO
+                        ROOT / 'pairing_station/.arduino/libraries'))
+FIRMWARE = PAIRING.version  # what the installed (protected) station runs
+RELAY_FIRMWARE = WORKSTATION.version  # what "Flash dongle…" writes to a spare board
+# The General Radio (zones/firmware/GeneralRadio, superseded by the Workstation) is no longer a flash
+# target, but boards still running it are recognised. 1.0.0: zone relay only; 1.1.0: show relay and
+# timecode; 1.2.0: SHOW_LIVE.
+LEGACY_GENERAL = 'general-radio-1.2.0'
+GENERAL_VERSIONS = ('general-radio-1.0.0', 'general-radio-1.1.0', LEGACY_GENERAL)
+# Relays with RX gain control (ZONE_SET_CONFIG): what the Zone Database Manager accepts without asking
+# for a reflash. Not the same as `zones == PROTO`: nct-pairing-1.6/1.7 relay zones but cannot set the gain.
+RELAY_VERSIONS = {PAIRING.version, WORKSTATION.version, *GENERAL_VERSIONS}
+CURRENT = {'pairing': PAIRING.version, 'mainshow': MAINSHOW.version, 'workstation': WORKSTATION.version,
+           'general': LEGACY_GENERAL}
 
 
-def is_general(firmware):
-    return (firmware or '').startswith('general-radio-')
+def _firmware(hello_or_firmware):
+    if isinstance(hello_or_firmware, dict):
+        return str(hello_or_firmware.get('firmware') or '')
+    return str(hello_or_firmware or '')
 
 
-def show_capable(firmware):
-    """Answers the Mainshow verbs (set_zone / show_start): the controller, or a general radio."""
-    return (firmware or '').startswith('mainshow-') or is_general(firmware)
+def family(hello_or_firmware):
+    """'workstation', 'general', 'pairing', 'mainshow' or None, by the firmware name's prefix."""
+    firmware = _firmware(hello_or_firmware)
+    for prefix, name in (('workstation-', 'workstation'), ('general-radio-', 'general'), ('nct-pairing-', 'pairing'),
+                         ('mainshow-', 'mainshow')):
+        if firmware.startswith(prefix):
+            return name
+    return None
+
+
+def is_general(hello_or_firmware):
+    """A legacy General Radio."""
+    return family(hello_or_firmware) == 'general'
+
+
+def is_workstation(hello_or_firmware):
+    return family(hello_or_firmware) == 'workstation'
+
+
+def is_controller(hello_or_firmware):
+    """The Mainshow controller: the one board with the physical show trigger."""
+    return family(hello_or_firmware) == 'mainshow'
+
+
+def radio_roles(hello):
+    """The `roles` a Workstation / General Radio lists in hello (cube, zone, pool, preshow, nfc); [] for the rest."""
+    return list(hello.get('roles') or []) if isinstance(hello, dict) else []
+
+
+def has_reader(hello):
+    """A PN532 answered at boot (or after nfc_recover): the pairing flow can read tags here."""
+    return bool(isinstance(hello, dict) and hello.get('nfc_ok'))
+
+
+def relay_capable(hello):
+    """Relays zone-management frames (hello `zones` is the protocol version this host speaks)."""
+    if isinstance(hello, dict):
+        return hello.get('zones') == zonedb.PROTO
+    return _firmware(hello) in RELAY_VERSIONS  # the older string call: the relays known to have it
+
+
+def rx_gain_capable(hello_or_firmware):
+    """Relays ZONE_SET_CONFIG (RX gain over the air): the 1.8 relay, a General Radio or a Workstation."""
+    return _firmware(hello_or_firmware) in RELAY_VERSIONS or is_workstation(hello_or_firmware)
+
+
+def show_capable(hello_or_firmware):
+    """Answers the Mainshow verbs (set_zone / show_start): the controller, a Workstation or a General Radio."""
+    if isinstance(hello_or_firmware, dict) and 'cube' in radio_roles(hello_or_firmware):
+        return True
+    return is_controller(hello_or_firmware) or is_general(hello_or_firmware) or is_workstation(hello_or_firmware)
+
+
+def show_relay(hello):
+    """Relays main-show frames (show_send / show_frame): hello reports show:1 (General Radio 1.1.0+, Workstation)."""
+    return bool(isinstance(hello, dict) and hello.get('show'))
+
+
+def current(hello_or_firmware):
+    """The board runs its family's current version (a legacy General Radio: its last release)."""
+    return _firmware(hello_or_firmware) == CURRENT.get(family(hello_or_firmware))
+
+
+def label(hello):
+    """What to call the board on screen, from what it reports."""
+    kind = family(hello)
+    if kind == 'mainshow':
+        return 'Mainshow controller'
+    if kind == 'workstation':
+        return 'Workstation'
+    if kind == 'general':
+        return 'General Radio'
+    return 'Pairing station' if has_reader(hello) else 'ESP-NOW dongle'
 
 
 def artifacts(firmware=PAIRING):

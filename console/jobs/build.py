@@ -43,10 +43,10 @@ def zone_build_job(hub, sketch):
     return job
 
 
-def dongle_build_job(hub, which='dongle'):
+def dongle_build_job(hub, which='workstation'):
     from jobs.dongle import FIRMWARES
     if which not in FIRMWARES:
-        raise ValueError('firmware must be dongle, mainshow or general')
+        raise ValueError('firmware must be workstation or mainshow')
     firmware = FIRMWARES[which]
     job = Job('build.dongle', 'build', f'Build the {firmware.label} firmware')
 

@@ -12,7 +12,7 @@ pairing_station/.venv/bin/python console/app.py [--database PATH] [--api-port N]
 ```
 
 `--simulate` runs against fake boards (a station, a preshow plate holding an older database, a pool
-radio and a cube) on a temporary copy of the database, so every panel and the suggestion cards can
+radio, a cube, a legacy General Radio and a Workstation) on a temporary copy of the database, so every panel and the suggestion cards can
 be exercised without hardware. `--browser` serves the same page to the default browser (also used
 automatically when the native webview is unavailable, e.g. no WebView2 runtime on Windows).
 
@@ -24,8 +24,10 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 - `scanner.py` enumerates USB off-thread; `probe.py` asks each new board what it is without
   resetting it (`?`, JSON `hello`, `STATUS`; never an arming command); `devices.py` keeps the
   per-port state (present → probing → idle → session / job / foreign / protected).
-- `sessions/` hold a port per role: pairing station or dongle (`Controller` + `ZoneRegistry` on one
-  transport, zone frames routed to the registry), zone plate (cube monitor + console), pool radio
+- `sessions/` hold a port per role: workstation (`sessions/workstation.py`: one session for a pairing
+  station, an ESP-NOW dongle, a legacy General Radio or the Workstation firmware; `Controller` +
+  `ZoneRegistry` on one transport, zone frames routed to the registry, and the radio verbs gated by the
+  `roles` the board's hello reports, so a legacy station sees no new traffic), zone plate (cube monitor + console), pool radio
   (calibration, tuning, leased override), preshow plate (leased cue override), cube (passive
   monitor), Mainshow controller, pool central, pool test bridge, preshow bridge, range test.
   Leases (`HOST PING`) are driven from the tick only while the page keeps touching them.
@@ -55,8 +57,8 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 
 | Old app | Now |
 |---|---|
-| Pairing station | Register page (plug-in-to-register workflow, ⌘2), Cube panel (Register, Send saved mapping, Flash, number, role), Pairing station panel (connection, NFC health, Discover, Pair new, Retry/Skip/Stop), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
-| Cube flasher | Cube panel › Firmware (Flash, Check boot, history); This computer › USB intake (Auto-flash cubes, off at launch) and Firmware builds |
+| Pairing station | Register page (plug-in-to-register workflow, ⌘3), Cube panel (Register, Send saved mapping, Flash, number, role), Pairing station panel (connection, NFC health, Discover, Pair new, Retry/Skip/Stop), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
+| Cube flasher | Flash page (plug-in-to-flash workflow with the published show, ⌘2, off at launch), Cube panel › Firmware (Flash, Update show over USB, Check boot, history); This computer › Firmware builds |
 | Zone flasher + cube monitor | Zone panel › Monitor (card, LED ring, history, actions, console) and › Firmware & database (identity form, Flash, Force, Update database over USB, Automatic database update, Check report, RX gain); USB intake (Auto-flash zones); database-only USB updates run without Auto-flash (Settings › Automatic updates) |
 | Zone Database Manager | Zone panel (Update over the air, Identify, Request log, Reboot, RX gain), Pairing station / dongle panel (Query zones, auto-refresh, Update all, Auto-update all = Settings › Automatic updates), Inventory › Zone database |
 | Mainshow controller | Show section and the Mainshow controller panel (① ready, ② trigger, Stop → idle, clock); "Make this a Mainshow controller" on a spare board |
@@ -64,11 +66,29 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 | Pool light test | PoolRadioTest bridge panel; pool central telemetry on the PoolCentral panel |
 | Preshow test | PreshowZone panel › Cue test |
 | Range test | RangeTest panel |
-| General Radio (`zones/firmware/GeneralRadio`) | General Radio panel: cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); without a station it is the pairing link. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: general`) |
+| General Radio (`zones/firmware/GeneralRadio`, superseded by the Workstation) | Workstation panel (one panel for a pairing station, a dongle, a General Radio or a Workstation; tabs light up per what hello reports): cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); without a station it is the pairing link. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: workstation`) |
 | Web sync | Top-bar Sync button; Inventory › Web sync (check, sync, upload only, download only, publish, pull, plan) |
 
 Port pickers are gone: boards are identified when plugged in. Manual choice survives on the
 Unidentified board panel (probe again, open console, make this a dongle / controller / zone).
+
+## Language (EN | KR)
+
+An EN | KR switch sits at the far right of the top bar (also Settings › Appearance › "Language · 언어"). The choice
+is stored per machine/browser (localStorage `nct.lang`, default English) and switching re-renders in place: no
+reload, and leases and popovers are kept. Python-generated text stays English (advisor cards and their buttons, job
+stages, sync status, device logs and reports, errors), and Settings says so. Protocol and hardware tokens (SET_ZONE,
+NFC, ACK, MAC, UID, CRC, NVS, RX gain, versions) and product names are never translated. In Korean, buttons, tabs
+and nav tooltips also show the English name ("EN: Update all out-of-date zones"), so Korean documents that quote
+English button names still match the screen. `?lang=ko` (or `en`) after a route applies a language to that page
+only, without changing the stored choice, like `?theme=`.
+
+Strings: front end `t('English')` / `hint()` / `tk()` (`web/lib/i18n.js`), Korean in `web/lib/ko/*.js` keyed by
+the English text (one entry per key across files); operator copy `uitext.py` → `uitext_ko.py` (same keys; `api.get_copy`
+ships both). Tests: `web/tests/i18n.test.js` (every `t()` literal translated, no unused or duplicate entries,
+placeholders match) and `tests/test_uitext.py` (every entry translated; rewording English fails until the Korean is
+revisited and `pairing_station/.venv/bin/python console/uitext_ko.py --stamp` records it in `uitext_ko_sources.json`).
+Other sessions write plain English; one session does the Korean.
 
 ## Automatic updates (Settings › Automatic updates)
 
@@ -76,8 +96,8 @@ Every database is kept current without a click, by default and across relaunches
 the device database, metadata `console_settings`; `console.settings` / Settings page):
 
 - **Zone databases over the air** (`auto_zone_db_radio`): `hub.apply_auto_modes()` switches the
-  `ZoneRegistry` walk-around on for the preferred relay only (`station_session()`: a pairing station, else a
-  General Radio) and off on every other relay, so two radios never broadcast chunks over each other. Reopened
+  `ZoneRegistry` walk-around on for the preferred relay only (`relay_session()`: the primary pairing link when
+  it relays, else the first relay-capable Workstation) and off on every other relay, so two radios never broadcast chunks over each other. Reopened
   sessions and newly plugged dongles pick it up within a second. The relay panel's "auto-update all" box is
   this setting.
 - **Zone databases over USB** (`auto_zone_db_usb`): `Intake.database_step()` gives any configured NctZone board
@@ -94,7 +114,7 @@ the device database, metadata `console_settings`; `console.settings` / Settings 
 documentation bench (`simdocs`) switches automatic updates off so its staged scenes stay put.
 Tests: `tests/test_auto_update.py`.
 
-## Register cubes (#/register, ⌘2)
+## Register cubes (#/register, ⌘3)
 
 `regflow.py` + `web/panels/RegisterSection.js`. With "Register cubes as they are plugged in" on (setting
 `auto_register`, off by default), plugging in a cube runs: USB identification (pinned) → a number if it has none
@@ -106,7 +126,33 @@ A failure never retries by itself (Retry / Start again). Plugging in another cub
 first, which keeps its retryable saved mapping. A simulated console refuses every non-loopback web server
 (`jobs/sync.client`), so `--simulate` can never sync with the real web inventory.
 
-## Show editor (#/showedit, ⌘5)
+## Flash cubes (#/flash, ⌘2)
+
+`flashflow.py` (`FlashFlow`) + `web/panels/FlashSection.js`; steps usb → firmware → show, USB only (no radio).
+"Flash cubes as they are plugged in" is off at every launch (`flash.enable`); switching it on arms the cube side of
+`Intake` (`core.Scheduler`), so cubes already plugged in and every cube plugged in afterwards are each taken once per
+plug-in. Each gets `flash_job` with the published show from the local `ShowStore` cache and `session_start` (the Tk
+"earlier attempt needs attention" rule); the backend's show stage writes the show into NVS when it is missing, older
+or damaged (see [flashing_station/README.md](../flashing_station/README.md#show-stage-nct-console-only)). A failure
+waits for Retry (`flash.retry`, which rewrites the firmware like the Tk Manual Retry). `cube.flash_firmware` now also
+brings the show up to date, and `cube.update_show` (Cube panel › Firmware › "Update show over USB") writes only the
+show. The Automatic intake card's "Auto-flash cubes" is now a link to this page (`usb.auto_cubes` remains an alias).
+With Register and Flash both on, registration waits ("Waiting for the Flash page to finish this cube") until the
+flash is done. Register and Flash each start with a full-width ON/OFF switch bar (`ActivateSwitch`,
+`components/basics.js`; accent when on, dashed when off).
+
+`probe.py` parses the cube's `SHOW:` line into `device.details.show` (Cube panel › Firmware › "Main show"). In
+`--simulate`, `FakeCube` prints the SHOW line (firmware ≥ v1.5.0) and `simulate.fake_cube_flash` mimics
+`Flasher.execute`.
+
+Audio cues (the Tk flasher's sounds) play for USB cube flashing: the Flash page, Cube panel › Flash cube firmware
+and Check boot. A rising two-note start; a tick at each stage and every 4 s while writing; a rising four-note chord
+on success (firmware already current with the show written counts as success); a single tick when nothing was
+written; a falling three-note tone for anything else, including boot not confirmed; one note when a new USB port
+appears while the Flash page is on. Switch: Settings › Behaviour › "Audio cues for USB cube flashing" (Test sound).
+Never in a simulation. Auto-flash waits until the console has finished probing a new port.
+
+## Show editor (#/showedit, ⌘6)
 
 The main show as cues on a timeline. Every cube gets the same show; **Preview cubes** renders several cube
 numbers at once, because fanned cues (cube firmware v1.6.0+) offset each cube by its number and random cues differ

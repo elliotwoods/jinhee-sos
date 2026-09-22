@@ -61,6 +61,26 @@ class CopyTests(unittest.TestCase):
         import json
         json.dumps(console_copy.as_dict())
 
+    def test_korean_copy_is_not_stale(self):
+        # A reworded English text needs its Korean revisited; then `python console/uitext_ko.py --stamp`.
+        import uitext_ko
+        self.assertEqual(uitext_ko.stale(), [], 'English changed since the Korean was written (uitext_ko.py)')
+
+    def test_korean_copy_covers_every_entry(self):
+        # The EN/KR switch lays uitext_ko over uitext: same keys, translatable fields only, nothing missing.
+        import uitext_ko
+        text_fields = dict(panels={'title', 'what', 'check'}, status={'label', 'tip'}, actions={'label', 'what', 'hazard', 'needs', 'disabled'})
+        for group, fields in text_fields.items():
+            en, ko = getattr(console_copy, group.upper()), getattr(uitext_ko, group.upper())
+            self.assertEqual(set(ko), set(en), f'{group}: keys differ from uitext')
+            for key, entry in ko.items():
+                self.assertEqual(set(entry), set(en[key]) & fields, f'{group}.{key}: fields differ')
+                self.assertTrue(all(v.strip() for v in entry.values()), f'{group}.{key}: empty text')
+        for group in ('LADDER', 'GLOSSARY'):
+            en, ko = getattr(console_copy, group), getattr(uitext_ko, group)
+            self.assertEqual(set(ko), set(en), group)
+            self.assertTrue(all(v.strip() for v in ko.values()), group)
+
 
 if __name__ == '__main__':
     unittest.main()

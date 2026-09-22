@@ -179,7 +179,7 @@ class RefusedBoardTests(unittest.TestCase):
         self.assertIn('unregisters', s['know'])
 
     def test_f3_protected_station_has_no_force(self):
-        d = usb_device(port='/dev/cu.usbmodem2201', role='station', mac='3C:0F:02:AD:83:24', state='idle',
+        d = usb_device(port='/dev/cu.usbmodem2201', role='workstation', mac='3C:0F:02:AD:83:24', state='idle',
                        detection=self.detection(mac='3C:0F:02:AD:83:24', kind='station'))
         s = by_rule(run(sections(devices=[d])), 'flash.refused')[0]
         self.assertEqual(s['severity'], 'bad')
@@ -252,7 +252,13 @@ class StationTests(unittest.TestCase):
     def test_old_dongle(self):
         s = by_rule(run(sections(station=station_section(firmware='nct-pairing-1.6-zones'))), 'dongle.old')
         self.assertEqual(len(s), 1)
-        self.assertEqual(actions(s[0])['flash']['args'], dict(device=STATION_MAC, firmware='dongle'))
+        self.assertEqual(actions(s[0])['flash']['args'], dict(device=STATION_MAC, firmware='workstation'))
+        # An older Workstation build is out of date within its family; a legacy General Radio is superseded, never "old".
+        s = by_rule(run(sections(station=station_section(firmware='workstation-0.9.0'))), 'dongle.old')
+        self.assertEqual(len(s), 1)
+        self.assertIn('workstation-1.0.0', s[0]['title'])
+        for current in ('workstation-1.0.0', 'general-radio-1.0.0', 'general-radio-1.2.0'):
+            self.assertFalse(by_rule(run(sections(station=station_section(firmware=current))), 'dongle.old'), current)
 
 
 class ZoneDatabaseTests(unittest.TestCase):
@@ -544,7 +550,7 @@ class EngineTests(unittest.TestCase):
         sec['builds']['tools'] = dict(esptool_ok=False, arduino_cli=None, core_ok=False)
         sec['builds']['cube']['error'] = 'Firmware source changed; rebuild before flashing'
         sec['builds']['zones'] = {'PreshowZone': dict(error='No firmware build yet; choose Build firmware')}
-        sec['builds']['dongle']['state'] = 'stale'
+        sec['builds']['workstation']['state'] = 'stale'
         fixtures.append(sec)
         seen = set()
         for fixture in fixtures:

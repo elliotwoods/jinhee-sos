@@ -21,7 +21,7 @@ function sources(dir = WEB, out = []) {
 // Every literal passed to t()/hint(), in '…', "…" or `…` (without ${} inside) quotes.
 function literals() {
   const found = new Map();
-  const re = /\b(?:t|hint)\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\$]|\\.)*)`)/g;
+  const re = /\b(?:t|tk|hint)\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\$]|\\.)*)`)/g;
   for (const path of sources()) {
     for (const m of readFileSync(path, 'utf-8').matchAll(re)) {
       const raw = m[1] ?? m[2] ?? m[3];
@@ -82,4 +82,17 @@ test('Korean entries keep their placeholders and are not empty', () => {
     const names = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
     assert.equal(names(ko), names(en), `placeholders differ: ${en}`);
   }
+});
+
+test('each English key lives in exactly one ko/*.js file', async () => {
+  const seen = new Map();
+  const clashes = [];
+  for (const name of readdirSync(join(WEB, 'lib', 'ko'))) {
+    const part = (await import(`../lib/ko/${name}`)).default;
+    for (const key of Object.keys(part)) {
+      if (seen.has(key)) clashes.push(`${key}: ${seen.get(key)} and ${name}`);
+      seen.set(key, name);
+    }
+  }
+  assert.deepEqual(clashes, [], 'the later file silently wins in ko.js; keep one entry');
 });

@@ -1,29 +1,32 @@
-// NCT IMMERSIVE DEEP - GENERAL RADIO
+// NCT IMMERSIVE DEEP - WORKSTATION
 //
-// One USB dongle for every ESP-NOW host function in the installation, driven by one JSON
-// object per line at 115200 (zones/tools/general_radio.py). A strict superset of the
-// pairing-station relay protocol (pairing_station/firmware/pairing_station), so the pairing
-// app and the Zone Database Manager drive it unchanged, plus the Mainshow controller's verbs
-// (zones/mainshow), an emulated pool slider radio (as poolzone_test's bridge) and an emulated
-// preshow plate for the TouchDesigner media bridge:
+// The one USB dongle for every ESP-NOW host function in the installation, including the
+// pairing station's NFC reader, driven by one JSON object per line at 115200
+// (zones/tools/general_radio.py). A strict superset of both the pairing-station protocol
+// (pairing_station/firmware/pairing_station, frozen) and the General Radio it replaces, so the
+// pairing app, the Zone Database Manager and the console drive it unchanged, plus the Mainshow
+// controller's verbs (zones/mainshow), an emulated pool slider radio (as poolzone_test's bridge)
+// and an emulated preshow plate for the TouchDesigner media bridge:
 //
 //   cube     discover / identify / register (pairing station), set_zone to one cube or, spelled
 //            out, to all cubes (MSG_SET_ZONE 0 idle, 1 preshow, 2 desert, 3 pool, 4 mainshow-
-//            ready), show_start (MSG_SHOW_START, fresh showId x5). GrCube.h
+//            ready), show_start (MSG_SHOW_START, fresh showId x5). WsCube.h
 //   zone     zone_send relay of zone-management frames built by the host, zone_frame for the
 //            replies (status/log/settings), as the pairing station. Below.
-//   pool     pool{member}: hold one pool lamp through the pool central. GrPool.h
-//   preshow  preshow{point,state}: a TouchDesigner cue through the media bridge. GrPreshow.h
+//   pool     pool{member}: hold one pool lamp through the pool central. WsPool.h
+//   preshow  preshow{point,state}: a TouchDesigner cue through the media bridge. WsPreshow.h
 //   show     show_send relay of main-show frames built by the host (pairing_station/show_registry.py:
 //            SHOW_ANNOUNCE/CHUNK/QUERY to cube firmware v1.5.0+; 1.2: the show editor's SHOW_LIVE,
 //            broadcast only, to v1.7.0+), show_frame for the cubes' SHOW_STATUS replies;
-//            show_config/show_stop and the show timecode. Below and GrCube.h.
+//            show_config/show_stop and the show timecode. Below and WsCube.h.
+//   reader   nfc_recover / nfc_poll / nfc_status, tag / tag_state events during identify. WsNfc.h
 //
-// No NFC reader: hello reports nfc_ok:false and the nfc_* commands answer with an error, which
-// is how the pairing app already treats a bare dongle. Not a zone board: no PN532, no
-// zcfg/zdb partitions, not a zone-flasher target; the banner below is what
-// zones/flasher/zone_detect.py refuses it by. The desert light panel is driven by the desert
-// plate's own reader only; the cube-side half of a desert tap is set_zone 2.
+// The reader is a PN532 on I2C, SDA GPIO4 / SCL GPIO3, as on the station. Without one wired the
+// board still boots and answers every command (hello nfc_ok:false, nfc_* ready:false), which is
+// how the pairing app already treats a bare dongle. Not a zone board: no zcfg/zdb partitions,
+// not a zone-flasher target; the banner below is what zones/flasher/zone_detect.py refuses it
+// by. The desert light panel is driven by the desert plate's own reader only; the cube-side
+// half of a desert tap is set_zone 2.
 //
 // Every radio operation needs a hello or ping within HOST_GATE_MS, as the station requires.
 // Pool and preshow outputs are leased on the same heartbeat: a host that stops talking has its
@@ -32,18 +35,21 @@
 #include <Arduino.h>
 #include <string.h>
 #include <stdio.h>
-#include "GrHex.h"
-#include "GrJson.h"
-#include "GrRadio.h"
-#include "GrCube.h"
-#include "GrPool.h"
-#include "GrPreshow.h"
-#include "GrLeds.h"
+#include "WsHex.h"
+#include "WsJson.h"
+#include "WsRadio.h"
+#include "WsCube.h"
+#include "WsPool.h"
+#include "WsPreshow.h"
+#include "WsLeds.h"
+#include "WsNfc.h"
 
-using namespace gr;
+using namespace ws;
 
-constexpr const char *FIRMWARE_VERSION = "general-radio-1.2.0";  // 1.1: show relay + timecode; 1.2: SHOW_LIVE
-constexpr const char *BANNER = "NCT GENERAL RADIO";
+// The General Radio 1.2.0 protocol (1.1: show relay + timecode; 1.2: SHOW_LIVE) plus the pairing
+// station's PN532 reader.
+constexpr const char *FIRMWARE_VERSION = "workstation-1.0.0";
+constexpr const char *BANNER = "NCT WORKSTATION";
 constexpr uint32_t HOST_GATE_MS = 5000;  // the pairing station's HEARTBEAT_TIMEOUT
 constexpr size_t LINE_CAPACITY = 1024;   // zone chunk lines are ~540 chars
 
@@ -60,10 +66,13 @@ void touchHost(uint32_t now) {
   preshow::touch(now);
 }
 
-// Plain-text "?" report, the convention every board here answers (zone_detect reads it).
+// Plain-text "?" report, the convention every board here answers (zone_detect reads it; the
+// console's probe parses the lines, so only the NFC line is new relative to the General Radio).
 void report() {
-  Serial.printf("%s\nFW: %s\nMAC: %s\nCHANNEL: %d\nRADIO: %s\nREADY\n", BANNER, FIRMWARE_VERSION,
-                WiFi.macAddress().c_str(), int(WiFi.channel()), radioOk ? "OK" : "FAILED");
+  char nfcLine[200];
+  nfc::reportLine(nfcLine, sizeof(nfcLine));
+  Serial.printf("%s\nFW: %s\nMAC: %s\nCHANNEL: %d\nRADIO: %s\n%s\nREADY\n", BANNER, FIRMWARE_VERSION,
+                WiFi.macAddress().c_str(), int(WiFi.channel()), radioOk ? "OK" : "FAILED", nfcLine);
 }
 
 // hello (and status, the same body without side effects): the pairing station's fields first,
@@ -73,10 +82,13 @@ void helloLine(const char *event, const char *id) {
   uint32_t now = millis();
   char fields[400];
   Serial.printf("{\"event\":\"%s\",\"id\":\"%s\",\"protocol\":1,\"firmware\":\"%s\",\"zones\":%u,\"show\":1,\"mac\":\"%s\",\"channel\":%d,"
-                "\"radio_ok\":%s,\"nfc_ok\":false,\"nfc_polling\":false,\"tag_present\":false,"
-                "\"roles\":[\"cube\",\"zone\",\"pool\",\"preshow\"],\"led_pin\":%d,\"led_test\":%s,\"host_fresh\":%s,",
+                "\"radio_ok\":%s,",
                 event, id, FIRMWARE_VERSION, unsigned(nctzone::PROTO), WiFi.macAddress().c_str(), int(WiFi.channel()),
-                boolText(radioOk), leds::LED_PIN, boolText(leds::ledTest), boolText(hostFresh(now)));
+                boolText(radioOk));
+  nfc::helloFields(fields, sizeof(fields));  // the station's reader fields, in its order
+  Serial.printf("%s,", fields);
+  Serial.printf("\"roles\":[\"cube\",\"zone\",\"pool\",\"preshow\",\"nfc\"],\"led_pin\":%d,\"led_test\":%s,\"host_fresh\":%s,",
+                leds::LED_PIN, boolText(leds::ledTest), boolText(hostFresh(now)));
   cube::helloFields(fields, sizeof(fields), now);
   Serial.printf("%s,\"tx\":{\"sent\":%lu,\"delivered\":%lu,\"unconfirmed\":%lu,\"no_result\":%lu,\"rejected\":%lu},"
                 "\"rx\":{\"zone\":%lu,\"zone_dropped\":%lu,\"show\":%lu,\"show_dropped\":%lu,\"serial_overflows\":%lu},",
@@ -195,7 +207,19 @@ void command(char *line) {
   if (!strcmp(cmd, "hello")) { cube::stop(); touchHost(now); helloLine("hello", id); return; }
   if (!strcmp(cmd, "status")) { helloLine("status", id); return; }
   if (!strcmp(cmd, "stop")) { cube::stop(); reply("stopped", id); return; }
-  if (!strncmp(cmd, "nfc_", 4)) { error(id, "No NFC reader on this radio"); return; }
+  // The station's reader diagnostics, its gates and wording: idle only, before the radio gates.
+  if (!strcmp(cmd, "nfc_recover")) {
+    if (cube::mode != cube::IDLE) { error(id, "Stop before reader recovery"); return; }
+    nfc::recover(id); return;
+  }
+  if (!strcmp(cmd, "nfc_poll")) {
+    if (cube::mode != cube::IDLE) { error(id, "Stop before reader diagnostics"); return; }
+    nfc::pollCommand(id, line); return;
+  }
+  if (!strcmp(cmd, "nfc_status")) {
+    if (cube::mode != cube::IDLE) { error(id, "Stop the current operation before reader diagnostics"); return; }
+    nfc::status(id); return;
+  }
   if (!strcmp(cmd, "led_test")) {
     bool on;
     if (!jsonBool(line, "on", on)) { error(id, "led_test needs on: 1 or 0"); return; }
@@ -253,6 +277,7 @@ void setup() {
   beginRadio();
   pool::begin();
   preshow::begin();
+  nfc::begin();  // after the radio, so the boot hello below carries the real nfc_ok
   report();
   helloLine("hello", "");
 }
@@ -275,7 +300,7 @@ void loop() {
   }
   uint32_t now = millis();
   if (cube::active && !hostFresh(now)) cube::hostLost();
-  // The driver stopped calling back (see GrRadio.h): every role's sends are refused from here
+  // The driver stopped calling back (see WsRadio.h): every role's sends are refused from here
   // on, so say so once, the way the pairing station does. Only a reboot clears it.
   static bool fatalReported = false;
   if (!radioOk && !fatalReported) { fatalReported = true; reply("fatal", "", "\"detail\":\"Radio completion timeout; reboot the radio\""); }
@@ -284,6 +309,7 @@ void loop() {
   cube::poll(now);
   pool::poll(now);
   preshow::poll(now);
+  nfc::poll(now);
   leds::poll(now, hostFresh(now), cube::showRunning(now));
   delay(1);
 }

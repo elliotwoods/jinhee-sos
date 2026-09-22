@@ -47,7 +47,7 @@ def show_publish(hub):
 def show_query(hub):
     """Ask every cube in range which show it holds (broadcast SHOW_QUERY)."""
     if not _editor(hub).relay():
-        raise ValueError('Connect a General Radio (general-radio-1.1.0 or later) to query cube shows')
+        raise ValueError('Connect a Workstation (or General Radio general-radio-1.1.0 or later) to query cube shows')
     return _editor(hub).registry.query()
 
 
@@ -56,7 +56,7 @@ def show_update_all(hub):
     """Send the published show to every cube heard recently, until each confirms it."""
     editor = _editor(hub)
     if not editor.relay():
-        raise ValueError('Connect a General Radio (general-radio-1.1.0 or later) to update cube shows')
+        raise ValueError('Connect a Workstation (or General Radio general-radio-1.1.0 or later) to update cube shows')
     p = editor.registry.publish()
     return dict(version=p.version, expected=len(editor.registry.expected))
 
@@ -66,7 +66,7 @@ def show_update_selected(hub, macs):
     """Send the published show until the given cubes confirm it (a broadcast: other older cubes take it too)."""
     editor = _editor(hub)
     if not editor.relay():
-        raise ValueError('Connect a General Radio (general-radio-1.1.0 or later) to update cube shows')
+        raise ValueError('Connect a Workstation (or General Radio general-radio-1.1.0 or later) to update cube shows')
     macs = sorted({str(m).upper() for m in macs or ()})
     if not macs:
         raise ValueError('Tick the cubes to update first')
@@ -79,7 +79,7 @@ def show_update(hub, mac):
     """Send the published show to one cube (never forced: a cube never goes back a version)."""
     editor = _editor(hub)
     if not editor.relay():
-        raise ValueError('Connect a General Radio (general-radio-1.1.0 or later) to update cube shows')
+        raise ValueError('Connect a Workstation (or General Radio general-radio-1.1.0 or later) to update cube shows')
     return dict(version=editor.registry.update(mac.upper()).version)
 
 

@@ -48,6 +48,12 @@ class Store(Database):
           id TEXT PRIMARY KEY, mac TEXT, port TEXT, version TEXT, build_hash TEXT,
           started_at TEXT, finished_at TEXT, stage TEXT, result TEXT, detail TEXT,
           log_path TEXT)''')
+        # The main show kept in NVS: what the run found and did (current | written | newer | none_published
+        # | unsupported) and the version on the cube afterwards. Added with the show stage; NULL before it.
+        columns = {r[1] for r in self.conn.execute('PRAGMA table_info(flash_runs)')}
+        for name, kind in (('show_result', 'TEXT'), ('show_version', 'INTEGER')):
+            if name not in columns:
+                self.conn.execute(f'ALTER TABLE flash_runs ADD COLUMN {name} {kind}')
         self.conn.commit()
     def recover(self):
         with self.conn:
@@ -57,10 +63,11 @@ class Store(Database):
         return bool(self.conn.execute("SELECT 1 FROM flash_runs WHERE mac=? AND build_hash=? AND result='success'", (mac,build)).fetchone())
     def start(self, ident, port, manifest, log):
         with self.conn:
-            self.conn.execute('INSERT INTO flash_runs VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            self.conn.execute('INSERT INTO flash_runs (id,mac,port,version,build_hash,started_at,finished_at,stage,result,detail,log_path) '
+                              'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                 (ident,None,port,manifest['version'],manifest['build_hash'],timestamp(),None,'identify','running','',str(log)))
     def update_run(self, ident, **values):
-        assert set(values) <= {'mac','stage','result','detail','finished_at'}
+        assert set(values) <= {'mac','stage','result','detail','finished_at','show_result','show_version'}
         with self.conn:
             self.conn.execute('UPDATE flash_runs SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),ident))
     def history(self):

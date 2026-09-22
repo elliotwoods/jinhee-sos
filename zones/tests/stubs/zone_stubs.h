@@ -295,6 +295,7 @@ struct WireStub {
   bool begin(int sda, int scl, uint32_t) { return begin(sda, scl); }
   void end() { started = false; }
   void setTimeOut(int) {}
+  bool setClock(uint32_t) { return true; }
   void beginTransmission(uint8_t address) { note(); target = address; outgoing.clear(); }
   size_t write(uint8_t value) { outgoing.push_back(value); return 1; }
   size_t write(const uint8_t *data, size_t len) { outgoing.insert(outgoing.end(), data, data + len); return len; }
@@ -351,6 +352,7 @@ inline bool pn532Reachable() {
 }
 struct Adafruit_PN532 {
   Adafruit_PN532(int, int) {}
+  Adafruit_PN532(int, int, WireStub *) {}  // the Workstation's own Pn532Wire instance
   void begin() {}
   uint32_t getFirmwareVersion() { return pn532Reachable() ? 0x32010607 : 0; }
   bool SAMConfig() { return true; }

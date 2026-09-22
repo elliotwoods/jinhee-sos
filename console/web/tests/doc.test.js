@@ -4,11 +4,12 @@ import { parseDoc, docSelector, applyHighlights, useDocOpen } from '../lib/doc.j
 import { state } from '../store.js';
 
 test('parseDoc reads every field and tolerates a leading ?', () => {
-  const doc = parseDoc('?hl=rail,attention.card:tag.known_zone_behind,css:.rail-item&open=pairing.register&dock=1&theme=light&still=1&explainers=1&search=%2344');
+  const doc = parseDoc('?hl=rail,attention.card:tag.known_zone_behind,css:.rail-item&open=pairing.register&dock=1&theme=light&lang=ko&still=1&explainers=1&search=%2344');
   assert.deepEqual(doc.hl, ['rail', 'attention.card:tag.known_zone_behind', 'css:.rail-item']);
   assert.deepEqual(doc.open, ['pairing.register']);
   assert.equal(doc.dock, true);
   assert.equal(doc.theme, 'light');
+  assert.equal(doc.lang, 'ko');
   assert.equal(doc.still, true);
   assert.equal(doc.explainers, true);
   assert.equal(doc.search, '#44');
@@ -18,7 +19,7 @@ test('parseDoc reads every field and tolerates a leading ?', () => {
 });
 
 test('parseDoc defaults: empty query, unknown theme, dock=0', () => {
-  assert.deepEqual(parseDoc(''), { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null });
+  assert.deepEqual(parseDoc(''), { hl: [], open: [], dock: false, theme: null, lang: null, still: false, explainers: false, search: '', cube: null });
   assert.deepEqual(parseDoc(undefined).hl, []);
   const doc = parseDoc('theme=blue&dock=0&hl=,,relay.table,');
   assert.equal(doc.theme, null);

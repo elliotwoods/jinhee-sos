@@ -162,9 +162,13 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(self.station().active['mac'], other)
 
     def test_waits_without_a_station(self):
-        session = self.hub.station_session()
-        self.hub.close_session(session, 'test', manual=True)
-        # The General Radio is the remaining pairing link; it has no NFC reader.
+        # Close every link with a reader (the station, then the Workstation that takes over as primary);
+        # the General Radio is the remaining pairing link and has no NFC reader.
+        self.assertTrue(tick_until(self.hub, lambda: len(self.hub.sessions) == 6 and
+                                   all(s.controller.connected for s in self.hub.sessions.values() if hasattr(s, 'controller')), timeout=8))
+        while self.hub.station_session() and self.hub.station_session().has_reader:
+            self.hub.close_session(self.hub.station_session(), 'test', manual=True)
+        self.assertIs(self.hub.station_session(), self.hub.sessions[self.hub.device_by_id('/dev/sim.radio').id])
         self.enable()
         self.plug()
         tick_until(self.hub, lambda: bool(self.flow().wait), timeout=3)

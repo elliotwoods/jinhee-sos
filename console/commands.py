@@ -53,6 +53,15 @@ def settings(hub, key, value):
     return hub.settings
 
 
+@command('audio.test')
+def audio_test(hub, cue='success'):
+    """Play one of the cube flasher's audio cues now (the Tk flasher's Test sound), even when cues are off."""
+    if cue not in ('connected', 'start', 'tick', 'success', 'failure'):
+        raise ValueError(f'Unknown cue {cue}')
+    hub.sounds.play(cue, force=True)
+    return cue
+
+
 @command('usb.rescan')
 def usb_rescan(hub):
     hub.scanner.rescan()
@@ -168,10 +177,10 @@ def zone_rxgain_usb(hub, device, db):
 
 # ---------------------------------------------------------------- pairing station
 def _station(hub, device=None):
-    """The pairing link: `device` names a board (station or General Radio), else the primary link."""
+    """The pairing link: `device` names a board (any Workstation-kind link), else the primary link."""
     session = hub.station_session(device)
     if not session:
-        raise ValueError('Connect a pairing station first')
+        raise ValueError('Connect a pairing station or Workstation first')
     return session
 
 
@@ -223,6 +232,20 @@ def register_enable(hub, on):
     hub.save_settings()
     hub.mark_dirty('register')
     return hub.regflow.snapshot()
+
+
+@command('flash.enable', 'hardware')
+def flash_enable(hub, on):
+    """Flash cubes as they are plugged in: firmware, then the published show, over USB (off at every launch)."""
+    hub.flashflow.enable(bool(on))
+    return hub.flashflow.snapshot()
+
+
+@command('flash.retry', 'hardware')
+def flash_retry(hub):
+    """Flash the failed cube again, rewriting the firmware (the Tk flasher's Manual Retry)."""
+    hub.flashflow.retry()
+    return hub.flashflow.snapshot()
 
 
 @command('register.restart', 'hardware')
@@ -447,10 +470,10 @@ def zones_reboot(hub, mac, device=None):
 @command('zones.set_rx_gain', 'hardware')
 def zones_set_rx_gain(hub, mac, db, device=None):
     session = hub.zone_relay(device)
-    firmware = str(session.controller.station.get('firmware', ''))
-    if firmware not in dongle.RELAY_VERSIONS:  # the 1.8 relay or a General Radio
-        raise ValueError(f'The dongle runs {firmware or "unknown firmware"}; setting the RX gain needs '
-                         f'{" or ".join(sorted(dongle.RELAY_VERSIONS))}')
+    if not dongle.rx_gain_capable(session.controller.station):
+        firmware = str(session.controller.station.get('firmware', ''))
+        raise ValueError(f'The relay runs {firmware or "unknown firmware"}; setting the RX gain needs '
+                         f'{dongle.WORKSTATION.version} (or a relay dongle on {dongle.PAIRING.version})')
     session.zones.set_rx_gain(mac, zonedb.check_rx_gain(db))
     return True
 
@@ -507,13 +530,26 @@ def cube_flash_firmware(hub, device, manual=True):
     d = hub.device_by_id(device)
     if d.role not in ('cube', 'unknown', None):
         raise ValueError(f'That board is a {d.role_label()}; the cube flasher refuses it')
-    return _job(cube_jobs.flash_job(hub, d, manual=bool(manual)))
+    return _job(cube_jobs.flash_job(hub, d, manual=bool(manual), show=cube_jobs.published_show(hub)))
+
+
+@command('cube.update_show', 'hardware')
+def cube_update_show(hub, device):
+    """Write the published main show into the cube's NVS over USB (firmware untouched, every other value kept,
+    read back, and the cube must report it). Nothing is written when the cube already has it or a newer one."""
+    d = hub.device_by_id(device)
+    if d.role != 'cube' or not d.details.get('firmware'):
+        raise ValueError('Identify the cube over USB first (its firmware version decides whether it can hold a show)')
+    show = cube_jobs.published_show(hub)
+    if not show:
+        raise ValueError('No show published yet; publish one from the Show editor or pull it from the web')
+    return _job(cube_jobs.flash_job(hub, d, manual=True, show=show, show_only=d.details['firmware']))
 
 
 @command('usb.auto_cubes', 'hardware')
 def usb_auto_cubes(hub, enabled):
     """Turn on automatic cube flashing for boards plugged in from now on (off at every launch)."""
-    hub.intake.arm_cubes(bool(enabled))
+    hub.flashflow.enable(bool(enabled))   # the Flash page's switch (flashflow.py)
     return hub.intake.snapshot()
 
 
@@ -575,10 +611,10 @@ def zone_profiles(hub):
 
 
 @command('dongle.flash', 'hardware')
-def dongle_flash(hub, device, firmware='dongle'):
-    """Make a spare ESP32-C3 an ESP-NOW dongle (pairing-station relay) or the Mainshow controller."""
-    if firmware not in ('dongle', 'mainshow', 'general'):
-        raise ValueError('firmware must be dongle, mainshow or general')
+def dongle_flash(hub, device, firmware='workstation'):
+    """Make a spare ESP32-C3 a Workstation or the Mainshow controller."""
+    if firmware not in ('workstation', 'mainshow'):
+        raise ValueError('firmware must be workstation or mainshow (the relay dongle and General Radio targets became workstation)')
     return _job(dongle_jobs.flash_job(hub, hub.device_by_id(device), firmware))
 
 
@@ -603,7 +639,7 @@ def build_zone(hub, sketch):
 
 
 @command('build.dongle')
-def build_dongle(hub, firmware='dongle'):
+def build_dongle(hub, firmware='workstation'):
     return _job(build_jobs.dongle_build_job(hub, firmware))
 
 
@@ -622,7 +658,7 @@ def builds_refresh(hub):
 def _mainshow(hub):
     session = hub.show_session()
     if not session:
-        raise ValueError('Connect the Mainshow controller or a General Radio first')
+        raise ValueError('Connect the Mainshow controller or a Workstation first')
     return session
 
 
@@ -671,14 +707,15 @@ def mainshow_led_test(hub, on):
     return _mainshow(hub).led_test(bool(on))
 
 
-# ---------------------------------------------------------------- General Radio
+# ---------------------------------------------------------------- Workstation radio verbs
 def _radio(hub, device):
-    return hub.session_for(device, ('generalradio',))
+    """This board's Workstation link; a board without the role (a legacy station) refuses in `require_role`."""
+    return hub.session_for(device, ('workstation',))
 
 
 @command('radio.set_zone', 'hardware')
 def radio_set_zone(hub, device, mac, zone):
-    """SET_ZONE to one cube through the General Radio (0 idle, 1 preshow, 2 desert, 3 pool, 4 mainshow-ready)."""
+    """SET_ZONE to one cube through the Workstation (0 idle, 1 preshow, 2 desert, 3 pool, 4 mainshow-ready)."""
     if mac == 'broadcast':
         raise ValueError('Use radio.set_zone_all for every cube in range')
     row = hub.db.get(str(mac).upper())
@@ -756,9 +793,9 @@ def radio_preshow_release(hub, device):
     return dict(request=_radio(hub, device).preshow_release())
 
 
-# The pairing-station verbs on this board's own link, so a General Radio keeps discovering, identify-
-# flashing and sending saved mappings while a real pairing station is also plugged in (the pairing.*
-# commands go to the primary link unless given a device). No reader: a fresh tag scan is not possible.
+# The pairing-station verbs on this board's own link, so a second Workstation keeps discovering, identify-
+# flashing and sending saved mappings while the pairing station is also plugged in (the pairing.*
+# commands go to the primary link unless given a device). Without a reader a fresh tag scan is not possible.
 @command('radio.discover')
 def radio_discover(hub, device):
     _radio(hub, device).controller.discover()

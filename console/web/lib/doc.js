@@ -1,10 +1,10 @@
 // Documentation hooks: the hash may carry a query the handover screenshots use
-//   #/<section>[/<id>[/<tab>]]?hl=<tokens>&open=<tokens>&dock=1&theme=light|dark&still=1&explainers=1&search=<text>
+//   #/<section>[/<id>[/<tab>]]?hl=<tokens>&open=<tokens>&dock=1&theme=light|dark&lang=en|ko&still=1&explainers=1&search=<text>
 // `hl`/`open` tokens name data-doc attributes: `name` (exact), `name*` (prefix) or `css:<selector>` (raw).
 // Pure and node-testable: nothing here touches the DOM at import time.
 import { state } from '../store.js';
 
-export const EMPTY = Object.freeze({ hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null });
+export const EMPTY = Object.freeze({ hl: [], open: [], dock: false, theme: null, lang: null, still: false, explainers: false, search: '', cube: null });
 
 function tokens(value) {
   return String(value || '').split(',').map((t) => t.trim()).filter(Boolean);
@@ -17,7 +17,7 @@ function flag(value) {
 // The parsed doc query. Accepts the raw query string with or without its leading `?`.
 export function parseDoc(queryString) {
   const q = String(queryString || '').replace(/^[?#]/, '');
-  const out = { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null };
+  const out = { hl: [], open: [], dock: false, theme: null, lang: null, still: false, explainers: false, search: '', cube: null };
   if (!q) return out;
   const params = new URLSearchParams(q);
   out.hl = tokens(params.get('hl'));
@@ -25,11 +25,13 @@ export function parseDoc(queryString) {
   out.dock = flag(params.get('dock'));
   const theme = params.get('theme');
   out.theme = theme === 'light' || theme === 'dark' || theme === 'system' ? theme : null;
+  const lang = params.get('lang');
+  out.lang = lang === 'en' || lang === 'ko' ? lang : null;   // applied for this page only, like theme
   out.still = flag(params.get('still'));
   out.explainers = flag(params.get('explainers'));
   out.search = params.get('search') || '';
   const cube = parseInt(params.get('cube') || '', 10);
-  out.cube = cube > 0 ? cube : null;   // preselects a cube number where a page asks for one (Show, General Radio)
+  out.cube = cube > 0 ? cube : null;   // preselects a cube number where a page asks for one (Show, Workstation cubes tab)
   return out;
 }
 

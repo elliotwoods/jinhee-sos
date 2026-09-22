@@ -146,3 +146,11 @@ test('the colour band always shows 16 cube rows: the selection first, then the n
   assert.deepEqual(bandCubes([65530]), range(65530, 65535), 'never past the last cube number');
   assert.equal(bandFor(16), 96);
 });
+
+test('plugged-in cubes are appended to the preview selection once', async () => {
+  const { addCubeNumbers } = await import('../lib/showtimeline.js');
+  assert.equal(addCubeNumbers('1-8', [1, 2, 3, 4, 5, 6, 7, 8], [17, 3]), '1-8, 17');
+  assert.equal(addCubeNumbers('1-8, 17', [1, 2, 3, 4, 5, 6, 7, 8, 17], [17]), '1-8, 17');
+  assert.equal(addCubeNumbers('', [], [44, 12, 12]), '12, 44');
+  assert.equal(addCubeNumbers('5,', [5], [0, null, 6]), '5, 6');
+});

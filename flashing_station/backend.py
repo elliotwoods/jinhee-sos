@@ -15,6 +15,7 @@ import serial
 from serial.tools import list_ports
 from core import ROOT, Store, PortLock, atomic_json, timestamp, PROTECTED, digest
 import hostos
+import nvs
 
 TOOL_ENTRY = Path(__file__).resolve().with_name('esptool_entry.py')
 
@@ -31,6 +32,16 @@ def ports():
             description=p.description, candidate=p.vid in {0x303a,0x10c4,0x1a86,0x0403} and (p.serial_number or '').upper() not in PROTECTED,
             serial=p.serial_number, location=p.location, native_usb=p.vid==0x303a and p.pid==0x1001))
     return result
+
+SHOW_FIRMWARE = (1, 5, 0)   # first cube firmware that loads a show from NVS (neocore_usb.ino loadStoredShow)
+
+def firmware_tuple(version):
+    m = re.match(r'v(\d+)\.(\d+)\.(\d+)', version or '')
+    return tuple(map(int, m.groups())) if m else (0, 0, 0)
+
+def show_line(version, crc):
+    """The `?` reply line of a cube running this show from NVS (neocore_usb.ino printShowLine)."""
+    return f'SHOW: v={version} crc={crc:08x} src=nvs'
 
 def validate_partition(data):
     if data == b'\xff'*len(data): return 'Blank flash'
@@ -87,13 +98,26 @@ class Runner:
         self.line(f'Tool completed in {time.monotonic()-started:.2f}s')
         return '\n'.join(lines)
 
+SHOW_DETAIL = dict(current='show v{version} already current', newer='cube holds show v{version}, newer than published v{published}; kept',
+                   written='show v{version} written · read back · reported by the cube',
+                   unsupported='firmware too old to hold a show; built-in show kept')
+
 class Flasher:
     def __init__(self, database, emit): self.database,self.emit=database,emit
-    def execute(self, port, manifest, manual=False, session_start=None):
+    def execute(self, port, manifest, manual=False, session_start=None, show=None, show_only=None):
+        """Flash the cube firmware (unless auto mode finds this build already on this MAC) and, when
+        `show` (dict version, crc, image: the published main show) is given, make the cube's NVS hold
+        at least that show. The show is written only when the cube has an older, missing or damaged
+        one, by rebuilding the NVS partition with every other value kept (nvs.with_show), reading it
+        back, and confirming the cube's `?` reply reports it from NVS. `show_only` (the firmware version
+        the cube reported over USB) leaves the firmware alone and does only that."""
+        if show_only and not show:
+            raise ValueError('A show-only update needs a show')
         ident=uuid.uuid4().hex
         folder=ROOT/'data'/'runs'/ident;folder.mkdir(parents=True)
         log=folder/'upload.log'; runner=Runner(self.emit,log)
-        db=Store(self.database); mac=None; result='failed';detail=''; written=False
+        db=Store(self.database); mac=None; result='failed';detail=''; written=False; show_written=False
+        show_result=None; show_version=None; self._show_written=False
         record=dict(id=ident,port=port['port'],version=manifest['version'],build_hash=manifest['build_hash'],log_path=str(log))
         def stage(name):
             db.update_run(ident,stage=name)
@@ -145,19 +169,28 @@ class Flasher:
                     raise RuntimeError('Earlier attempt needs attention; select Manual Retry')
                 if not re.search(r'Detected flash size:\s*4\s*MB',identity,re.I):
                     raise RuntimeError('Requires a 4 MB XIAO ESP32-C3')
-                if not manual and db.seen(mac,manifest['build_hash']):
-                    result='skipped'; detail='This MAC already completed this firmware build'
+                if show_only or (not manual and db.seen(mac,manifest['build_hash'])):
+                    result='skipped'; detail='Show only; firmware not touched' if show_only else 'This MAC already completed this firmware build'
+                    running=show_only or manifest['version']
+                    if show:
+                        current=folder/'nvs-show-before.bin';tool('read-flash','0x9000','0x5000',current)
+                        show_result,show_version=self.update_show(show,running,folder,current,tool,stage,runner)
+                        show_written=show_result=='written'
                     tool('read-mac',after=reset_mode)
+                    if show_written:
+                        stage('Confirm boot')
+                        if not self.boot(port,mac,running,runner,show=show):
+                            result='boot_unconfirmed';detail='Show written and read back, but the cube did not report it. Use Check boot.'
                 else:
                     row=db.reserve(mac,source='usb_flash');self.emit('device',row)
                     stage('Back up registration')
-                    table=folder/'partitions.bin';nvs=folder/'nvs.bin'
+                    table=folder/'partitions.bin';nvs_backup=folder/'nvs.bin'
                     backup=folder/'registration-region.bin'
                     tool('read-flash','0x8000','0x6000',backup)
                     raw=backup.read_bytes()
-                    table.write_bytes(raw[:0x1000]);nvs.write_bytes(raw[0x1000:])
+                    table.write_bytes(raw[:0x1000]);nvs_backup.write_bytes(raw[0x1000:])
                     runner.line(validate_partition(table.read_bytes()))
-                    if nvs.stat().st_size != 0x5000:
+                    if nvs_backup.stat().st_size != 0x5000:
                         raise RuntimeError('Incomplete NVS backup; upload blocked')
                     stage('Write and verify')
                     args=['write-flash','--flash-mode','dio','--flash-freq','80m','--flash-size','4MB']
@@ -166,20 +199,30 @@ class Flasher:
                     tool(*args,timeout=180)
                     written=True
                     stage('Check preserved registration')
-                    after=folder/'nvs-after.bin';tool('read-flash','0x9000','0x5000',after,after=reset_mode)
-                    if after.read_bytes()!=nvs.read_bytes(): raise RuntimeError('Registration storage changed unexpectedly; backup retained')
+                    after=folder/'nvs-after.bin';tool('read-flash','0x9000','0x5000',after,after=reset_mode if not show else 'no-reset-stub')
+                    if after.read_bytes()!=nvs_backup.read_bytes(): raise RuntimeError('Registration storage changed unexpectedly; backup retained')
+                    if show:
+                        show_result,show_version=self.update_show(show,manifest['version'],folder,after,tool,stage,runner)
+                        show_written=show_result=='written'
+                        tool('read-mac',after=reset_mode)
                     stage('Confirm boot')
-                    if self.boot(port,mac,manifest['version'],runner):
+                    if self.boot(port,mac,manifest['version'],runner,show=show if show_written else None):
                         result='success';detail='Firmware verified · boot confirmed · registration preserved'
                     else:
                         result='boot_unconfirmed';detail='Firmware verified; boot not confirmed. Use Check boot, without reflashing.'
-            record.update(result=result,detail=detail,finished_at=timestamp())
+                if show_result:
+                    detail+=' · '+SHOW_DETAIL[show_result].format(version=show_version,published=show['version'])
+            record.update(result=result,detail=detail,finished_at=timestamp(),show_result=show_result,show_version=show_version)
             # Durable independent receipt permits DB recovery without another write to hardware.
             atomic_json(folder/'receipt.json',record)
-            db.update_run(ident,result=result,detail=detail,finished_at=record['finished_at'],stage='Complete')
+            db.update_run(ident,result=result,detail=detail,finished_at=record['finished_at'],stage='Complete',
+                          show_result=show_result,show_version=show_version)
         except Exception as exc:
-            detail=str(exc); result='failed' if not written else 'attention'
-            record.update(result=result,detail=detail,finished_at=timestamp(),written=written)
+            show_written=show_written or self._show_written
+            detail=str(exc); result='failed' if not (written or show_written) else 'attention'
+            if show_written:
+                detail+=' · The show was written to NVS; the previous contents are kept in '+str(folder/'nvs-show-before.bin')
+            record.update(result=result,detail=detail,finished_at=timestamp(),written=written,show_written=show_written)
             receipt=folder/'receipt.json'
             if receipt.exists():
                 record=json.loads(receipt.read_text(encoding='utf-8'));result='save_failed';detail='Hardware result saved locally; database save failed: '+str(exc)
@@ -191,7 +234,44 @@ class Flasher:
             db.close()
         return dict(**record,ui_result=result,ui_detail=detail)
 
-    def boot(self, original, mac, version, runner):
+    def update_show(self, show, firmware, folder, current, tool, stage, runner):
+        """Bring the show in NVS up to `show`, given `current` (the NVS read just now). Returns
+        (show_result, version now in NVS). Leaves the chip in the bootloader; the caller resets it."""
+        stage('Check show')
+        before=current.read_bytes()
+        try:
+            stored=nvs.show_of(before)
+        except nvs.NvsError as exc:
+            raise RuntimeError(f'Cube storage could not be read completely ({exc}); show not changed') from None
+        if stored and stored['valid']:
+            runner.line(f"Show in NVS: v{stored['version']} crc={stored['crc']:08x} ({stored['length']} bytes)")
+        else:
+            runner.line('Show in NVS: none' if not stored else f"Show in NVS: v{stored['version']} damaged (CRC mismatch)")
+        if stored and stored['valid'] and stored['version']>=show['version']:
+            return ('current' if stored['version']==show['version'] else 'newer'), stored['version']
+        if firmware_tuple(firmware)<SHOW_FIRMWARE:
+            return 'unsupported', stored['version'] if stored else None
+        target=folder/'nvs-show.bin'
+        try:
+            target.write_bytes(nvs.with_show(before,show['version'],show['crc'],show['image']))
+        except nvs.NvsError as exc:
+            raise RuntimeError(f'Show could not be added to the cube storage ({exc}); nothing written') from None
+        if current.name!='nvs-show-before.bin':
+            shutil.copyfile(current,folder/'nvs-show-before.bin')
+        stage('Write show')
+        # From here a failure may have changed NVS: execute() reports 'attention' and names the backup.
+        self._show_written=True
+        tool('write-flash','0x9000',target)
+        written=folder/'nvs-show-after.bin'
+        tool('read-flash','0x9000','0x5000',written)
+        if written.read_bytes()!=target.read_bytes():
+            raise RuntimeError('Show storage read back differently from what was written')
+        if not nvs.same_except_show(before,written.read_bytes()):
+            raise RuntimeError('Registration storage changed while writing the show')
+        runner.line(f"Show v{show['version']} written to NVS and read back")
+        return 'written', show['version']
+
+    def boot(self, original, mac, version, runner, show=None):
         db = Store(self.database)
         try:
             protected = {m for m,role in db.roles().items() if role=='excluded'} | PROTECTED
@@ -219,7 +299,8 @@ class Flasher:
                         conn.write(b'?')
                         line=conn.read(4096).decode(errors='replace')
                         if line: runner.line(line.rstrip());text+=line
-                        if f'FW: {version}' in text and f'Cube MAC: {mac}' in text and 'ESP-NOW CHANNEL: 2' in text and 'Cube READY' in text:
+                        if f'FW: {version}' in text and f'Cube MAC: {mac}' in text and 'ESP-NOW CHANNEL: 2' in text and 'Cube READY' in text \
+                                and (not show or show_line(show['version'],show['crc']) in text):
                             return True
             except (OSError,serial.SerialException) as exc:
                 if str(exc)!=last_error:runner.line('Waiting for USB boot: '+str(exc));last_error=str(exc)

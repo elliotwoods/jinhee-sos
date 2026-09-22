@@ -1,4 +1,4 @@
-"""Write the pairing-station relay or the Mainshow controller firmware onto a spare ESP32-C3."""
+"""Write the Workstation or the Mainshow controller firmware onto a spare ESP32-C3."""
 import paths  # noqa: F401
 import uuid
 
@@ -6,19 +6,15 @@ import dongle
 
 from jobs.base import Job
 
-# The General Radio is built like the Mainshow controller (NeoPixel from live files/libraries, the zone
-# protocol headers), on the same board recipe. It replaces a relay or a controller on any spare ESP32-C3.
-GENERAL = dongle.Firmware('General Radio', 'general-radio-1.0.0', paths.ROOT / 'zones/firmware/GeneralRadio',
-                          paths.ROOT / 'zones/build/GeneralRadio',
-                          (paths.ROOT / 'zones/firmware/libraries', paths.ROOT / 'live files/libraries'))
-FIRMWARES = {'dongle': dongle.PAIRING, 'mainshow': dongle.MAINSHOW, 'general': GENERAL}
+# The relay dongle and General Radio targets became the Workstation: one firmware for every host job.
+FIRMWARES = {'workstation': dongle.WORKSTATION, 'mainshow': dongle.MAINSHOW}
 
 
-def flash_job(hub, device, which='dongle', force_build=False):
+def flash_job(hub, device, which='workstation', force_build=False):
     firmware = FIRMWARES[which]
     known = dongle.known_boards(hub.db, hub.store.zones())
-    if which == 'general':
-        # A General Radio is a superset of the relay and the controller: converting either is allowed.
+    if which == 'workstation':
+        # A Workstation is a superset of the relay and the controller: converting either is allowed.
         known = dict(known, controllers=set())
     port = hub.port_dict(device)
     if device.mac:
@@ -38,8 +34,8 @@ def flash_job(hub, device, which='dongle', force_build=False):
             mac = str(job.result).upper()
             hub.db.set_role(mac, 'excluded')
             dongle.set_controller(hub.db, mac, firmware is dongle.MAINSHOW)
-            if which == 'general':
-                hub.record_general_radio(mac)
+            if which == 'workstation':
+                hub.record_workstation(mac)
             job.outcome = dict(level='verified', text=f'{firmware.label} written to {mac}; recorded as excluded from cube service')
             hub.mark_dirty('inventory')
 

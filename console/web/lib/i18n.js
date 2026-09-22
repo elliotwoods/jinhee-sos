@@ -24,6 +24,9 @@ export function applyLang(value, { persist = true } = {}) {
   return current;
 }
 
+// Marks a literal translated later with t(variable) (label tables); the i18n test counts it as used.
+export const tk = (en) => en;
+
 export function onLangChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 
 const fill = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m)) : text);

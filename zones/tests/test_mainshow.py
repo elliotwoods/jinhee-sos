@@ -63,6 +63,16 @@ class SessionTests(unittest.TestCase):
         self.assertIsNone(self.session.problem)
         self.session.set_zone(CUBE, 4, '#44')
         self.assertEqual(self.sent[-1]['cmd'], 'set_zone')
+        # So does a Workstation; its hello's roles, not its name, say so.
+        self.connect(firmware='workstation-1.0.0', zones=1, show=1, nfc_ok=True, button_pin=None, trigger_pin=None,
+                     roles=['cube', 'zone', 'pool', 'preshow', 'nfc'])
+        self.assertTrue(self.session.usable())
+        self.assertIsNone(self.session.problem)
+        self.session.trigger('broadcast')
+        self.assertEqual(self.sent[-1]['cmd'], 'show_start')
+        self.connect(firmware='bench-0.1', zones=1, roles=['zone'], button_pin=None, trigger_pin=None)
+        self.assertFalse(self.session.usable())
+        self.assertIn('not the Mainshow controller', self.session.problem)
 
     def test_ready_trigger_idle_and_wording(self):
         self.connect()
@@ -210,6 +220,15 @@ class WindowTests(unittest.TestCase):
             app.transport.inbox.put(general)
             app.poll()
             self.assertIn('general radio', app.link_status.cget('text'))
+            self.assertFalse(app.ready_button.instate(['disabled']))
+            self.assertEqual(mainshow.dongle.controllers(app.db), {HELLO['mac']})
+            # A Workstation likewise: usable, named, not the controller.
+            workstation = dict(general, mac='AC:27:6E:82:68:AA', firmware='workstation-1.0.0', show=1, nfc_ok=True,
+                               roles=['cube', 'zone', 'pool', 'preshow', 'nfc'])
+            app.transport.inbox.put(workstation)
+            app.poll()
+            self.assertIn('no physical trigger (workstation)', app.link_status.cget('text'))
+            self.assertNotIn('Flash controller firmware', app.link_status.cget('text'))  # current: no update hint
             self.assertFalse(app.ready_button.instate(['disabled']))
             self.assertEqual(mainshow.dongle.controllers(app.db), {HELLO['mac']})
         finally:

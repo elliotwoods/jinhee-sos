@@ -5,7 +5,8 @@ The controller is an ESP32-C3 running zones/firmware/MainshowController ("Flash 
 firmware…" installs it on a spare dongle board). Cube firmware is unchanged: MSG_SET_ZONE 4 makes a
 cube mainshow-ready (neon), and MSG_SHOW_START with a fresh showId starts its local timeline, but
 only on cubes that are ready. The board's BOOT button and trigger input start the show without this
-app; their triggers appear in the log.
+app; their triggers appear in the log. A Workstation (or a legacy General Radio) answers the same
+verbs from this app, but has no physical trigger and is never recorded as the controller.
 
 Threading: serial I/O runs in Transport's worker and flashing in a worker thread. Tk widgets and
 SQLite are only touched from the Tk poll callback.
@@ -96,7 +97,7 @@ class Session:
         self.reset()
 
     def usable(self):
-        return self.connected and self.info.get('radio_ok') and dongle.show_capable(self.info.get('firmware'))
+        return self.connected and self.info.get('radio_ok') and dongle.show_capable(self.info)
 
     def busy(self):
         if self.pending and self.clock() - self.pending['sent'] > self.REPLY_TIMEOUT:
@@ -152,7 +153,7 @@ class Session:
             self.info = event
             firmware = event.get('firmware', '?')
             self.connected = True
-            if not dongle.show_capable(firmware):
+            if not dongle.show_capable(event):
                 self.problem = (f'This board runs {firmware}: it is not the Mainshow controller. '
                                 'Use Flash controller firmware… to convert a spare dongle.')
             elif not event.get('radio_ok'):
@@ -409,14 +410,14 @@ class App:
         if self.session.problem:
             self.link_status.configure(text=f'{mac} · {self.session.problem}', foreground=RED)
             return
-        general = dongle.is_general(firmware)
-        # A general radio also answers ① and ②, but it is a dongle, not the show trigger: it is not
-        # recorded as the controller (that record would lock it out of every other firmware).
-        if mac and not general and mac not in dongle.controllers(self.db):
+        dongle_board = not dongle.is_controller(firmware)
+        # A Workstation or General Radio also answers ① and ②, but it is a dongle, not the show trigger:
+        # it is not recorded as the controller (that record would lock it out of every other firmware).
+        if mac and not dongle_board and mac not in dongle.controllers(self.db):
             dongle.set_controller(self.db, mac, True)  # so the dongle flasher leaves it alone
             self.log(f'Recorded {mac} as the Mainshow controller')
-        old = firmware != (dongle.GENERAL.version if general else FIRMWARE)
-        inputs = (' · no physical trigger (general radio)' if general else
+        old = not dongle.current(firmware)
+        inputs = (f' · no physical trigger ({dongle.label(info).lower()})' if info.get('button_pin') is None else
                   f' · BOOT button GPIO{info.get("button_pin")} · trigger input GPIO{info.get("trigger_pin")} (XIAO D1)')
         self.link_status.configure(foreground=AMBER if old else GREEN, text=(
             f'Connected · {mac} · {firmware} · channel {info.get("channel")}{inputs} · {info.get("shows", 0)} show(s) since boot' +

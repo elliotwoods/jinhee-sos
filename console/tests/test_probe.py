@@ -10,6 +10,8 @@ ZONE = ['FW: preshow-3.4.0', 'MAC: 14:63:93:C0:EC:14', 'CHANNEL: 2', 'ZONE: type
         'NFC: ok=1 fw=00000132 polls=10 found=3 last_ms=38 max_ms=52 fast_fail=0 recoveries=0 sda=1 scl=1 pins=4/3',
         'RXGAIN: stored=48dB applied=48dB', 'READY']
 MAINSHOW = ['NCT MAINSHOW CONTROLLER', 'FW: mainshow-1.2.0', 'MAC: 34:85:18:AA:BB:CC', 'CHANNEL: 2', 'RADIO: OK', 'READY']
+WORKSTATION = ['NCT WORKSTATION', 'FW: workstation-1.0.0', 'MAC: 02:AA:BB:CC:DD:F0', 'CHANNEL: 2', 'RADIO: OK', 'READY']
+GENERAL_RADIO = ['NCT GENERAL RADIO', 'FW: general-radio-1.2.0', 'MAC: 02:AA:BB:CC:DD:EE', 'CHANNEL: 2', 'RADIO: OK', 'READY']
 
 
 class ClassifyTests(unittest.TestCase):
@@ -32,12 +34,26 @@ class ClassifyTests(unittest.TestCase):
         hello = dict(event='hello', id='x', protocol=1, firmware='nct-pairing-1.8-zones', zones=1, mac='30:ed:a0:5b:6d:d8', channel=2,
                      radio_ok=True, nfc_ok=True)
         role, d = classify(['{"event":"error","detail":"Invalid JSON"}', json.dumps(hello)])
-        self.assertEqual(role, 'station')
+        self.assertEqual(role, 'workstation', 'a legacy pairing station is the workstation role; the hello says what it can do')
         self.assertEqual(d['mac'], '30:ED:A0:5B:6D:D8')
+
+    def test_workstation_hello_and_banner(self):
+        hello = dict(event='hello', id='x', protocol=1, firmware='workstation-1.0.0', zones=1, show=1, mac='02:aa:bb:cc:dd:f0', channel=2,
+                     radio_ok=True, nfc_ok=True, roles=['cube', 'zone', 'pool', 'preshow', 'nfc'])
+        role, d = classify([json.dumps(hello)])
+        self.assertEqual((role, d['mac'], d['roles'][-1]), ('workstation', '02:AA:BB:CC:DD:F0', 'nfc'))
+        role, d = classify(WORKSTATION)
+        self.assertEqual((role, d['firmware'], d['mac'], d['radio_ok']), ('workstation', 'workstation-1.0.0', '02:AA:BB:CC:DD:F0', True))
+
+    def test_legacy_general_radio_is_a_workstation(self):
+        hello = dict(event='hello', firmware='general-radio-1.2.0', zones=1, show=1, mac='02:aa:bb:cc:dd:ee', nfc_ok=False,
+                     roles=['cube', 'zone', 'pool', 'preshow'])
+        self.assertEqual(classify([json.dumps(hello)])[0], 'workstation')
+        self.assertEqual(classify(GENERAL_RADIO)[0], 'workstation')
 
     def test_station_hint_only(self):
         role, d = classify(['{"event":"error","detail":"Invalid JSON"}'])
-        self.assertEqual((role, d.get('hint')), ('unknown', 'station'))
+        self.assertEqual((role, d.get('hint')), ('unknown', 'workstation'))
 
     def test_mainshow_banner_and_hello(self):
         self.assertEqual(classify(MAINSHOW)[0], 'mainshow')
@@ -110,7 +126,7 @@ class RunProbeTests(unittest.TestCase):
     def test_station_needs_hello(self):
         hello = json.dumps(dict(event='hello', protocol=1, firmware='nct-pairing-1.8-zones', zones=1, mac='30:ED:A0:5B:6D:D8', radio_ok=True))
         role, details, transcript, fake = self.probe({'?': ['{"event":"error","detail":"Invalid JSON"}'], 'hello': [hello]})
-        self.assertEqual(role, 'station')
+        self.assertEqual(role, 'workstation')
         self.assertEqual(len(fake.written), 2)
         self.assertTrue(fake.written[1].startswith(b'{"cmd": "hello"') or fake.written[1].startswith(b'{"cmd":"hello"'))
 

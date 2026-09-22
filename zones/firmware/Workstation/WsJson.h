@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-namespace gr {
+namespace ws {
 
 inline const char *jsonValue(const char *line, const char *key) {
   char quoted[24];
@@ -75,4 +75,4 @@ inline void error(const char *id, const char *detail) {
 
 inline const char *boolText(bool value) { return value ? "true" : "false"; }
 
-}  // namespace gr
+}  // namespace ws

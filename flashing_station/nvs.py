@@ -116,7 +116,10 @@ def _items(image):
 
 
 def parse(image):
-    """Every live value in the partition as Entry(namespace, key, type, value), in storage order.
+    """(namespaces in index order, every live value as Entry(namespace, key, type, value)).
+
+    Values are grouped by namespace, in storage order within one, which is also how build() lays
+    them out, so parse(build(*parse(x))) == parse(x).
 
     Namespace names come from the index entries (namespace 0); blobs are reassembled from the
     chunks their BLOB_IDX names. Orphan chunks (an older blob version) are dropped, as IDF does."""
@@ -163,6 +166,7 @@ def parse(image):
             kind = BLOB
         out.append(Entry(names[ns], key, kind, value))
     namespaces = [names[i] for i in sorted(names)]
+    out.sort(key=lambda e: namespaces.index(e.namespace))   # stable: storage order within a namespace
     return namespaces, out
 
 

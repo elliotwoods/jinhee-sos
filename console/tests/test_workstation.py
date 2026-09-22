@@ -1,4 +1,7 @@
-"""The General Radio session: superset routing, leases and the show verbs, against the simulated board."""
+"""The Workstation session: superset routing, leases and the show verbs, against the simulated boards.
+
+One session kind for a legacy General Radio, a legacy pairing station and the Workstation firmware; what
+is live comes from the hello, and a legacy station must see no new traffic."""
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +24,8 @@ def logs(hub, needle):
 
 
 class GeneralRadioTests(unittest.TestCase):
+    """A legacy General Radio (general-radio-1.2.0) on the Workstation session."""
+
     def setUp(self):
         simulate.BOARDS.clear()
         from hub import Hub
@@ -39,15 +44,17 @@ class GeneralRadioTests(unittest.TestCase):
     def tearDown(self):
         self.hub.shutdown(force=True)
 
-    def test_identified_as_general_radio_and_recorded(self):
-        self.assertEqual(self.session.kind, 'generalradio')
-        self.assertEqual(classify(self.board.probe_lines())[0], 'generalradio')
+    def test_identified_as_workstation_and_recorded(self):
+        self.assertEqual(self.session.kind, 'workstation')
+        self.assertEqual(classify(self.board.probe_lines())[0], 'workstation')
         run_ticks(self.hub, 3)
-        self.assertIn(self.board.mac, self.hub.inventory_cache['general_radios'])
+        self.assertIn(self.board.mac, self.hub.inventory_cache['workstations'])
         self.assertEqual(self.hub.db.roles().get(self.board.mac), 'excluded')
         snap = self.session.snapshot()
         self.assertEqual(snap['roles'], ['cube', 'zone', 'pool', 'preshow'])
         self.assertTrue(snap['dongle'])
+        self.assertEqual((snap['label'], snap['family']), ('General Radio', 'general'))
+        self.assertEqual(snap['capabilities'], dict(reader=False, relay=True, show_verbs=True, show_relay=True, pool=True, preshow=True, live=True))
 
     def test_station_protocol_still_works_through_it(self):
         self.assertIs(self.hub.station_session(), self.session)
@@ -82,7 +89,7 @@ class GeneralRadioTests(unittest.TestCase):
         show = self.session.snapshot()['show']
         self.assertEqual(show['target'], 'A4:CF:12:34:56:78')
         self.assertIn('Neon hold', show['segment'])
-        self.assertEqual(self.hub.sections['show']['via'], 'generalradio')
+        self.assertEqual(self.hub.sections['show']['via'], 'workstation')
 
     def test_pool_lamp_is_leased_by_touches(self):
         commands.run(self.hub, 'radio.pool', dict(device=self.board.mac, member=7, radio_id=2))
@@ -231,8 +238,8 @@ class GeneralRadioTests(unittest.TestCase):
         self.assertIn('zone_send', self.board.sent)
 
 
-class RadioBesideStationTests(unittest.TestCase):
-    """A real pairing station and a General Radio plugged in together: the radio's own verbs stay reachable."""
+class WorkstationBesideLegacyTests(unittest.TestCase):
+    """A legacy pairing station, a Workstation and a General Radio plugged in together, in that order."""
 
     def setUp(self):
         simulate.BOARDS.clear()
@@ -242,34 +249,77 @@ class RadioBesideStationTests(unittest.TestCase):
         self.hub.boot()
         plate = simulate.FakeZone('/dev/sim.preshow1', '14:63:93:C0:EC:14')
         self.station = simulate.FakeStation('/dev/sim.station', '30:ED:A0:5B:6D:D8', cubes=[CUBE], zones=[plate])
+        self.workstation = simulate.FakeWorkstation('/dev/sim.workstation', '02:AA:BB:CC:DD:F0', cubes=[CUBE], zones=[plate],
+                                                    bridge=BRIDGE, clock=self.hub.clock)
         self.radio = simulate.FakeGeneralRadio('/dev/sim.radio', '02:AA:BB:CC:DD:EE', cubes=[CUBE], zones=[plate], central=CENTRAL,
                                                clock=self.hub.clock)
-        for board in (self.station, self.radio):
+        for board in (self.station, self.workstation, self.radio):
             self.hub.scanner.add(board)
         self.assertTrue(tick_until(self.hub, lambda: all(b.mac in self.hub.sessions and self.hub.sessions[b.mac].controller.connected
-                                                         for b in (self.station, self.radio))))
+                                                         for b in (self.station, self.workstation, self.radio))))
 
     def tearDown(self):
         self.hub.shutdown(force=True)
 
-    def test_primary_link_is_the_station_but_device_routes_to_the_radio(self):
-        self.assertIs(self.hub.station_session(), self.hub.sessions[self.station.mac])
-        self.assertIs(self.hub.station_session(self.radio.mac), self.hub.sessions[self.radio.mac])
-        self.station.sent = []
-        self.radio.sent.clear()
-        commands.run(self.hub, 'pairing.discover', dict(device=self.radio.mac))
-        commands.run(self.hub, 'zones.query', dict(device=self.radio.mac))
+    def session(self, board):
+        return self.hub.sessions[board.mac]
+
+    def test_every_board_is_the_workstation_role_and_reports_itself(self):
+        for board, label, family, reader in ((self.station, 'Pairing station', 'pairing', True),
+                                             (self.workstation, 'Workstation', 'workstation', True),
+                                             (self.radio, 'General Radio', 'general', False)):
+            snap = self.session(board).snapshot()
+            self.assertEqual((snap['kind'], snap['label'], snap['family'], snap['capabilities']['reader']),
+                             ('workstation', label, family, reader), board.port)
+            self.assertEqual(self.hub.device_by_id(board.mac).role, 'workstation')
+        self.assertEqual(classify(self.workstation.probe_lines())[0], 'workstation')
+        self.assertEqual(self.session(self.workstation).snapshot()['roles'], ['cube', 'zone', 'pool', 'preshow', 'nfc'])
+        self.assertEqual(self.session(self.station).snapshot()['capabilities'],
+                         dict(reader=True, relay=True, show_verbs=False, show_relay=False, pool=False, preshow=False, live=False))
+        self.assertTrue(self.session(self.workstation).snapshot()['capabilities']['live'])
+
+    def test_primary_is_the_earliest_reader_link(self):
+        self.assertIs(self.hub.station_session(), self.session(self.station))
+        self.assertIs(self.hub.relay_session(), self.session(self.station))
+        self.assertIs(self.hub.show_session(), self.session(self.workstation), 'the first link with the cube role')
+        self.assertIs(self.hub.station_session(self.radio.mac), self.session(self.radio))
+        self.hub.close_session(self.session(self.station), 'test')
+        self.assertIs(self.hub.station_session(), self.session(self.workstation))
         run_ticks(self.hub, 3)
-        self.assertIn('discover', self.radio.sent)
-        self.assertIn('zone_send', self.radio.sent)
-        commands.run(self.hub, 'pairing.discover', dict())  # no device: the station, as before
+        self.assertIn(self.workstation.mac, self.hub.inventory_cache['workstations'])
+        self.assertNotIn(self.station.mac, self.hub.inventory_cache['workstations'], 'a legacy station is never recorded')
+
+    def test_legacy_station_sees_no_new_traffic(self):
+        run_ticks(self.hub, 70, dt=0.1)   # past the 5 s status period
+        self.assertNotIn('status', self.station.sent)
+        self.assertIn('status', self.workstation.sent)
+        self.assertLessEqual(set(self.station.sent), {'hello', 'ping', 'discover', 'zone_send'})
+        with self.assertRaisesRegex(ValueError, 'Pairing station has no cube role; connect a Workstation'):
+            commands.run(self.hub, 'radio.set_zone', dict(device=self.station.mac, mac=CUBE, zone=4))
+        with self.assertRaisesRegex(ValueError, 'no pool role'):
+            commands.run(self.hub, 'radio.pool', dict(device=self.station.mac, member=3))
+        with self.assertRaisesRegex(ValueError, 'no preshow role'):
+            commands.run(self.hub, 'radio.preshow', dict(device=self.station.mac, point=1, on=True))
+        self.assertNotIn('set_zone', self.station.sent)
+        # Its own verbs still route to it by device.
+        commands.run(self.hub, 'pairing.discover', dict(device=self.station.mac))
+        self.assertEqual(self.station.sent[-1], 'discover')
+
+    def test_reader_verbs_work_on_the_workstation(self):
+        session = self.session(self.workstation)
+        self.assertTrue(session.has_reader and session.controller.reader_ok)
+        self.workstation.sent.clear()
+        commands.run(self.hub, 'station.nfc_status', dict(device=self.workstation.mac))
         run_ticks(self.hub, 2)
-        self.assertNotIn('discover', self.radio.sent[-1:])
-        with self.assertRaises(ValueError):
-            commands.run(self.hub, 'pairing.discover', dict(device='/dev/sim.preshow1'))
+        self.assertIn('nfc_status', self.workstation.sent)
+        self.assertEqual(session.hello.get('nfc_diagnostic', {}).get('i2c_status'), 0)
+        # and the radio verbs on the same link
+        commands.run(self.hub, 'radio.set_zone', dict(device=self.workstation.mac, mac=CUBE, zone=4))
+        run_ticks(self.hub, 2)
+        self.assertIn('set_zone', self.workstation.sent)
 
     def test_pool_beacon_from_a_central_is_kept(self):
-        session = self.hub.sessions[self.radio.mac]
+        session = self.session(self.radio)
         commands.run(self.hub, 'radio.status', dict(device=self.radio.mac))
         run_ticks(self.hub, 2)
         self.assertEqual(session.snapshot()['pool_beacon']['mac'], CENTRAL)
@@ -280,9 +330,9 @@ class RadioBesideStationTests(unittest.TestCase):
 
 class RadioAdvisorTests(unittest.TestCase):
     def sections(self, **session):
-        s = dict(kind='generalradio', connected=True, fatal=None, pool_held=0, preshow_held=0, pool={}, preshow={}, last_rx=fixtures.NOW)
+        s = dict(kind='workstation', connected=True, fatal=None, pool_held=0, preshow_held=0, pool={}, preshow={}, last_rx=fixtures.NOW)
         s.update(session)
-        return fixtures.sections(devices=[dict(id='r1', port='/dev/cu.radio', role='generalradio', mac='02:AA:BB:CC:DD:EE')],
+        return fixtures.sections(devices=[dict(id='r1', port='/dev/cu.radio', role='workstation', mac='02:AA:BB:CC:DD:EE')],
                                  sessions={'r1': s})
 
     def test_fatal_card(self):
@@ -301,19 +351,25 @@ class RadioAdvisorTests(unittest.TestCase):
                                  fixtures.NOW, ())
         self.assertFalse([s for s in quiet if s['rule'].startswith('radio.')])
 
+    def test_legacy_station_session_fires_nothing(self):
+        # A pairing station snapshot has no fatal and holds nothing: same kind, no radio cards.
+        out = advisor.evaluate(self.sections(label='Pairing station', pool_held=0, preshow_held=0), fixtures.NOW, ())
+        self.assertFalse([s for s in out if s['rule'].startswith('radio.')])
+
 
 class BuildJobTests(unittest.TestCase):
-    def test_general_firmware_builds_the_general_radio(self):
+    def test_workstation_firmware_builds_the_workstation(self):
         hub = simulated_hub('empty', seed=False)
         try:
             with patch.object(build_jobs.dongle, 'build') as build:
-                job = build_jobs.dongle_build_job(hub, 'general')
-                self.assertIn('general radio', job.title.lower())
+                job = build_jobs.dongle_build_job(hub, 'workstation')
+                self.assertIn('workstation', job.title.lower())
                 self.assertTrue(tick_until(hub, lambda: job.state in ('done', 'failed'), timeout=5))
             self.assertEqual(job.state, 'done')
-            self.assertEqual(build.call_args.args[1].version, 'general-radio-1.0.0')
-            with self.assertRaises(ValueError):
-                build_jobs.dongle_build_job(hub, 'nonsense')
+            self.assertEqual(build.call_args.args[1].version, 'workstation-1.0.0')
+            for gone in ('general', 'dongle', 'nonsense'):
+                with self.assertRaises(ValueError):
+                    build_jobs.dongle_build_job(hub, gone)
         finally:
             hub.shutdown(force=True)
 

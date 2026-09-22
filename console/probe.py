@@ -5,9 +5,11 @@ sequence on a worker, one port at a time, and only for ports the hub says are fr
 no job, not the protected station, not held by another app):
   1. listen 0.4 s               PoolCentral status and RangeTest STAT lines are unsolicited
   2. "?"                        cube (bare byte; a trailing newline is ignored), zone plate,
-                                Mainshow controller, PreshowBridge; a pairing station answers
-                                {"event":"error","detail":"Invalid JSON"}, which is a hint
-  3. {"cmd":"hello"}            pairing station / ESP-NOW dongle / Mainshow controller
+                                Mainshow controller, PreshowBridge; a pairing station or Workstation
+                                answers {"event":"error","detail":"Invalid JSON"}, which is a hint
+  3. {"cmd":"hello"}            Workstation (also a legacy pairing station, ESP-NOW dongle or General
+                                Radio: every JSON-hello board but the Mainshow controller is one role,
+                                'workstation'; what it can do is read from the hello) / Mainshow controller
   4. "STATUS"                   PoolRadioTest bridge, PoolCentral, RangeTest, PreshowBridge
 Nothing that arms, sets or moves anything is ever sent while probing.
 """
@@ -28,7 +30,8 @@ CUBE_MAC = re.compile(r'Cube MAC:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})')
 FW = re.compile(r'(?m)^FW:\s*([^\r\n]+)')
 MAC = re.compile(r'(?m)^MAC:\s*([0-9A-Fa-f:]{17})')
 CHANNEL = re.compile(r'(?m)^CHANNEL:\s*(\d+)')
-ROLES = ('cube', 'zone', 'station', 'generalradio', 'mainshow', 'poolcentral', 'preshowbridge', 'pooltest', 'rangetest', 'unknown')
+SHOW = re.compile(r'(?m)^SHOW: v=(\d+) crc=([0-9a-fA-F]{8}) src=(\w+)')   # cube v1.5.0+ (neocore_usb.ino printShowLine)
+ROLES = ('cube', 'zone', 'workstation', 'mainshow', 'poolcentral', 'preshowbridge', 'pooltest', 'rangetest', 'unknown')
 ZONE_ROLE_BY_TYPE = {1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow_plate', 5: 'reset'}
 
 
@@ -51,9 +54,8 @@ def classify(lines):
             firmware = str(value.get('firmware') or '')
             if firmware.startswith('mainshow-'):
                 return 'mainshow', dict(value, mac=(value.get('mac') or '').upper())
-            if firmware.startswith('general-radio-') or 'roles' in value:
-                return 'generalradio', dict(value, mac=(value.get('mac') or '').upper())
-            return 'station', dict(value, mac=(value.get('mac') or '').upper())
+            # nct-pairing, general-radio, workstation: one session class reads the capabilities from the hello.
+            return 'workstation', dict(value, mac=(value.get('mac') or '').upper())
         device = value.get('device')
         if device == 'PoolCentral':
             return 'poolcentral', dict(value, mac=(value.get('mac') or '').upper())
@@ -65,16 +67,18 @@ def classify(lines):
     if cube:
         fw = FW.search(text)
         channel = re.search(r'ESP-NOW CHANNEL:\s*(\d+)', text)
+        show = SHOW.search(text)
         return 'cube', dict(mac=cube[1].upper(), firmware=fw[1].strip() if fw else None,
                             channel=int(channel[1]) if channel else None, ready='Cube READY' in text,
-                            unregistered='UNREGISTERED' in text)
+                            unregistered='UNREGISTERED' in text,
+                            show=dict(version=int(show[1]), crc=int(show[2], 16), source=show[3]) if show else None)
     report = parse_report(text)
     if report and any(report['firmware'].startswith(p) for p in FIRMWARE_PREFIX):
         return 'zone', report
-    if 'NCT GENERAL RADIO' in text or re.search(r'(?m)^FW:\s*general-radio-', text):
+    if 'NCT GENERAL RADIO' in text or 'NCT WORKSTATION' in text or re.search(r'(?m)^FW:\s*(general-radio-|workstation-)', text):
         fw, mac, ch = FW.search(text), MAC.search(text), CHANNEL.search(text)
-        return 'generalradio', dict(firmware=fw[1].strip() if fw else None, mac=mac[1].upper() if mac else '',
-                                    channel=int(ch[1]) if ch else None, radio_ok='RADIO: OK' in text)
+        return 'workstation', dict(firmware=fw[1].strip() if fw else None, mac=mac[1].upper() if mac else '',
+                                   channel=int(ch[1]) if ch else None, radio_ok='RADIO: OK' in text)
     if 'NCT MAINSHOW CONTROLLER' in text or re.search(r'(?m)^FW:\s*mainshow-', text):
         fw, mac, ch = FW.search(text), MAC.search(text), CHANNEL.search(text)
         return 'mainshow', dict(firmware=fw[1].strip() if fw else None, mac=mac[1].upper() if mac else '',
@@ -92,7 +96,7 @@ def classify(lines):
     if 'NCT NEOCORE CUBE' in text:
         return 'cube', dict(mac=None, firmware=None, channel=None, ready=False, booting=True)
     if any(v.get('event') == 'error' and v.get('detail') == 'Invalid JSON' for v in _json_lines(lines)):
-        return 'unknown', dict(hint='station')
+        return 'unknown', dict(hint='workstation')
     return 'unknown', {}
 
 

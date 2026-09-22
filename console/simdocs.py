@@ -390,9 +390,8 @@ def install(hub):
                  (('PreshowZone', 'preshow-3.4.0'), ('DesertZone', 'desert-2.4.0'), ('TagPlateZone', 'tagplate-2.4.0'),
                   ('PoolZone', 'pool-3.2.0'), ('ResetZone', 'reset-1.0.0'))}
         hub.builds = dict(cube=dict(version='v1.4.1-USB.2', build_hash='simulated', error=None), zones=zones,
-                          dongle=dict(state='current', version='1.7', label='ESP-NOW dongle relay firmware'),
+                          workstation=dict(state='current', version='workstation-1.0.0', label='Workstation'),
                           mainshow=dict(state='current', version='1.2.0', label='Mainshow controller firmware'),
-                          general=dict(state='current', version='1.0.0', label='General Radio firmware'),
                           tools=dict(arduino_cli='arduino-cli', core_ok=True), checked_at=time.time())
         hub.dirty.add('builds')
 

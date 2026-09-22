@@ -30,7 +30,6 @@ from locks import instance_locks
 from probe import Prober
 from scanner import PortScanner
 from sessions.cube import CubeConsoleSession
-from sessions.general_radio import GeneralRadioSession
 from sessions.mainshow import MainshowSession
 from sessions.pool_central import PoolCentralSession
 from sessions.pool_radio import PoolRadioSession
@@ -38,14 +37,16 @@ from sessions.pool_test_bridge import PoolTestBridgeSession
 from sessions.preshow_bridge import PreshowBridgeSession
 from sessions.preshow_plate import PreshowPlateSession
 from sessions.rangetest import RangeTestSession
-from sessions.station import StationSession
+from sessions.workstation import WorkstationSession
 from sessions.zone_console import ZoneConsoleSession
 from store import ConsoleStore
 from showedit import ShowEditor
 from regflow import RegistrationFlow
+from flashflow import FlashFlow
+from sounds import Sounds
 
 SECTIONS = ('meta', 'ports', 'devices', 'inventory', 'station', 'registry', 'sessions', 'jobs', 'sync', 'advisor',
-            'locks', 'builds', 'show', 'settings', 'showedit', 'register')
+            'locks', 'builds', 'show', 'settings', 'showedit', 'register', 'flash')
 DATA = paths.CONSOLE / 'data'
 
 
@@ -129,6 +130,8 @@ class Hub:
         self.pinned_mac = None
         self.usb_firmware = {}
         self.regflow = RegistrationFlow(self)   # the guided registration workflow (regflow.py)
+        self.flashflow = FlashFlow(self)        # the guided USB flashing workflow (flashflow.py)
+        self.sounds = Sounds(self)              # the cube flasher's audio cues (sounds.py)
         self.inventory_cache = dict(rows_by_mac={}, roles={}, zones_by_mac={}, controllers=set())
         self.idle_flag = threading.Event()
         self.idle_flag.set()
@@ -216,7 +219,7 @@ class Hub:
         """Orderly close on the owner thread. Refuses while an esptool write is in progress."""
         if self.jobs.writing() and not force:
             raise ValueError('A flash write is in progress; wait for it to finish before closing')
-        graceful = [s for s in self.sessions.values() if isinstance(s, StationSession) and s.prepare_close()]
+        graceful = [s for s in self.sessions.values() if isinstance(s, WorkstationSession) and s.prepare_close()]
         if graceful:
             end = self.clock() + 1.2
             while self.clock() < end:
@@ -262,6 +265,11 @@ class Hub:
         except Exception as exc:
             self.log(f'Registration workflow failed: {exc}', 'bad', source='register')
         try:
+            self.flashflow.tick()
+        except Exception as exc:
+            self.log(f'Flash workflow failed: {exc}', 'bad', source='flash')
+        self.sounds.tick(now)
+        try:
             self.intake.tick()
         except Exception as exc:
             self.log(f'Auto intake failed: {exc}', 'bad', source='intake')
@@ -299,7 +307,7 @@ class Hub:
             self.auto_show_pull()
         if self.every('dismissed', 30.0, now):
             self.db.set_metadata('console_dismissed', json.dumps(sorted(self.dismissed)))
-        self.dirty.update(('sessions', 'station', 'devices', 'show', 'register'))
+        self.dirty.update(('sessions', 'station', 'devices', 'show', 'register', 'flash'))
         if self.showedit and self.every('showedit', 0.25, now):
             self.showedit.tick(now)
             self.dirty.add('showedit')
@@ -311,15 +319,16 @@ class Hub:
     def apply_auto_modes(self):
         """Keep the automatic database updates switched as the settings say, whatever sessions come and go.
 
-        Zones over the air: only the preferred relay (station_session(): a pairing station, else a General
-        Radio) walks, so two radios never broadcast chunks over each other; every other relay stops walking.
-        The main show: the show registry walks through whichever General Radio carries show frames.
+        Zones over the air: only one link walks the zone database (relay_session(): the reader link when it
+        relays, else the first relay-capable Workstation), so two radios never broadcast chunks over each
+        other; every other relay stops walking. The main show: the show registry walks through whichever
+        Workstation carries show frames.
         """
-        relay = self.station_session()
+        relay = self.relay_session()
         want = bool(self.settings['auto_zone_db_radio'])
         for session in self.sessions.values():
             zones = getattr(session, 'zones', None)
-            if not isinstance(session, StationSession) or zones is None:
+            if not isinstance(session, WorkstationSession) or zones is None:
                 continue
             walk = want and session is relay
             if zones.walkaround != walk:
@@ -373,12 +382,12 @@ class Hub:
         rows = self.db.rows()
         zones = self.store.zones()
         try:
-            radios = set(json.loads(self.db.metadata('general_radios') or '[]'))
+            workstations = set(json.loads(self.db.metadata(dongle.WORKSTATIONS_KEY) or '[]'))
         except ValueError:
-            radios = set()
+            workstations = set()
         self.inventory_cache = dict(rows_by_mac={r['mac']: r for r in rows}, roles=self.db.roles(),
                                     zones_by_mac={z['mac']: z for z in zones}, controllers=dongle.controllers(self.db),
-                                    general_radios=radios, rows=rows, zones=zones)
+                                    workstations=workstations, rows=rows, zones=zones)
 
     def apply_ports(self, ports):
         seen = set()
@@ -420,7 +429,7 @@ class Hub:
     def presume(self, device):
         c = self.inventory_cache
         device.presumed = presumed_role(device.mac, c['rows_by_mac'], c['roles'], c['zones_by_mac'], c['controllers'],
-                                        c.get('general_radios', ()))
+                                        workstations=c.get('workstations', ()))
 
     def request_probe(self):
         if self.probing is not None or not self.workers:
@@ -445,6 +454,8 @@ class Hub:
             device = self.devices.get(port['key'])
             if not device:
                 continue
+            if device.state == 'job':
+                continue   # a probe that raced a job (e.g. a flash started meanwhile): the job owns the port now
             device.probe_result(role, details, transcript, error)
             self.dirty.add('devices')
             if device.state == 'foreign':
@@ -460,7 +471,7 @@ class Hub:
         if device.role == 'zone':
             d = device.details
             detail = f' · {d.get("name") or "unconfigured"} · {d.get("firmware")} · database v{d.get("db_version")}'
-        elif device.role in ('station', 'mainshow', 'generalradio'):
+        elif device.role in ('workstation', 'mainshow'):
             detail = f' · {device.details.get("firmware")}'
         elif device.role == 'cube':
             detail = f' · {device.details.get("firmware")}'
@@ -513,7 +524,7 @@ class Hub:
             return CubeConsoleSession
         if role == 'zone':
             return {3: PoolRadioSession, 1: PreshowPlateSession}.get(device.zone_type, ZoneConsoleSession)
-        return {'station': StationSession, 'generalradio': GeneralRadioSession, 'mainshow': MainshowSession, 'poolcentral': PoolCentralSession,
+        return {'workstation': WorkstationSession, 'mainshow': MainshowSession, 'poolcentral': PoolCentralSession,
                 'preshowbridge': PreshowBridgeSession, 'pooltest': PoolTestBridgeSession,
                 'rangetest': RangeTestSession}.get(role)
 
@@ -576,44 +587,55 @@ class Hub:
                 device.state = 'idle'
         self.dirty.update(('devices', 'sessions', 'station', 'registry'))
 
-    def station_session(self, device=None):
-        """The link that carries the pairing protocol: a pairing station, a dongle or a General Radio.
+    def _workstations(self):
+        """Every Workstation link (pairing station, dongle, General Radio, Workstation), oldest first, so the
+        primary never hops between boards as hellos come and go; ties keep the order the sessions opened in."""
+        return sorted((s for s in self.sessions.values() if isinstance(s, WorkstationSession)), key=lambda s: s.opened_at)
 
-        With `device`, that board's own link (a station or a General Radio), so a General Radio's
-        discover/identify/zone relay stay reachable while a real pairing station is also plugged in.
+    def station_session(self, device=None):
+        """The link that carries the pairing protocol, picked by what the boards report rather than by kind:
+        the first connected link with a reader, else the first connected, else any.
+
+        With `device`, that board's own link, so a second Workstation's discover/identify/zone relay stay
+        reachable while the pairing station is also plugged in.
         """
         if device:
-            return self.session_for(device, ('station', 'generalradio'))
-        for session in self.sessions.values():
-            if isinstance(session, StationSession) and not isinstance(session, GeneralRadioSession):
-                return session
-        for session in self.sessions.values():
-            if isinstance(session, GeneralRadioSession):
-                return session
-        return None
+            return self.session_for(device, ('workstation',))
+        links = self._workstations()
+        for wanted in (lambda s: s.has_reader, lambda s: s.controller.connected):
+            for session in links:
+                if wanted(session):
+                    return session
+        return links[0] if links else None
+
+    def relay_session(self):
+        """The link whose registry talks to zones: the primary when it relays, else the first connected relay."""
+        primary = self.station_session()
+        if primary and primary.relay_capable:
+            return primary
+        return next((s for s in self._workstations() if s.relay_capable), None)
 
     def show_session(self):
-        """Whatever can make a cube mainshow-ready and start the show: the Mainshow controller or a General Radio."""
+        """Whatever can make a cube mainshow-ready and start the show: the Mainshow controller, else the first
+        connected Workstation with the cube role."""
         for session in self.sessions.values():
             if isinstance(session, MainshowSession):
                 return session
-        for session in self.sessions.values():
-            if isinstance(session, GeneralRadioSession) and session.controller.connected:
-                return session
-        return None
+        return next((s for s in self._workstations() if s.show_verbs), None)
 
-    def record_general_radio(self, mac):
-        radios = set(self.inventory_cache.get('general_radios', ()))
-        if mac not in radios:
-            radios.add(mac)
-            self.db.set_metadata('general_radios', json.dumps(sorted(radios)))
+    def record_workstation(self, mac):
+        """Remember a board that reported `roles` (the metadata key predates the Workstation name)."""
+        macs = set(self.inventory_cache.get('workstations', ()))
+        if mac not in macs:
+            macs.add(mac)
+            self.db.set_metadata(dongle.WORKSTATIONS_KEY, json.dumps(sorted(macs)))
             self.mark_dirty('inventory')
 
     def zone_relay(self, device=None):
-        """The station/dongle session whose registry can talk to zones (`device`: that board's), or raise."""
-        session = self.station_session(device)
+        """The Workstation session whose registry can talk to zones (`device`: that board's), or raise."""
+        session = self.station_session(device) if device else (self.relay_session() or self.station_session())
         if not session:
-            raise ValueError('Connect a pairing station or ESP-NOW dongle first')
+            raise ValueError('Connect a pairing station, ESP-NOW dongle or Workstation first')
         session.zones.require(session.controller.station, session.controller.connected)
         return session
 

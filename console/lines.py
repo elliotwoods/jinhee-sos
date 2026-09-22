@@ -69,7 +69,7 @@ RULES = {
         (re.compile(r'^EVENT USB watchdog'), 'pooltest.watchdog', 'warn', None),
         (re.compile(r'^ERR '), 'pooltest.err', 'warn', None),
     ],
-    'station': [],
+    'workstation': [],
     'mainshow': [],
     'rangetest': [
         (re.compile(r'^WARNING'), 'rangetest.warning', 'warn', None),

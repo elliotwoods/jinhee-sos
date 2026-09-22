@@ -118,6 +118,20 @@ class UiSmokeTests(unittest.TestCase):
             self.assertTrue(app.connected)
             self.assertIn('general radio', app.radio_status['text'])
             self.assertNotIn('Flash dongle', app.radio_status['text'])
+            # A Workstation (the firmware Flash dongle… writes now) is a current relay with a reader.
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, show=1, mac='AA:BB:CC:00:11:22',
+                                         firmware='workstation-1.0.0', nfc_ok=True, roles=['cube', 'zone', 'pool', 'preshow', 'nfc']))
+            app.poll()
+            self.assertTrue(app.connected)
+            self.assertIn(' · workstation', app.radio_status['text'])
+            self.assertNotIn('older relay', app.radio_status['text'])
+            self.assertNotIn('Flash dongle', app.radio_status['text'])
+            # The Mainshow controller is refused by name: it has no zone relay and must not be mistaken for one.
+            app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, mac='AA:BB:CC:00:11:22',
+                                         firmware='mainshow-1.3.0'))
+            app.poll()
+            self.assertFalse(app.connected)
+            self.assertIn('Mainshow controller', app.radio_status['text'])
             app.transport.inbox.put(dict(event='hello', protocol=1, channel=2, radio_ok=True, zones=1, mac='AA:BB:CC:00:11:22',
                                          firmware='nct-pairing-1.6-zones', nfc_ok=False))  # back to the 1.6 dongle for the rest
             app.poll()

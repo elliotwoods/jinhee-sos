@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import { useSections, useUI } from '../lib/hooks.js';
 import { timeline } from '../store.js';
 import { hhmmss } from '../lib/format.js';
+import { t } from '../lib/i18n.js';
 
 export function Timeline({ open, onToggle }) {
   useSections(['timeline', 'ui']);
@@ -17,9 +18,9 @@ export function Timeline({ open, onToggle }) {
     const text = timeline.items.map((e) => `${hhmmss(e.t)} ${e.kind} ${e.level || ''} ${e.device || ''} ${e.text || JSON.stringify(e.event || e)}`).join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = 'nct-console-log.txt'; a.click();
   };
-  return html`<div class="dock"><div class="timeline-head"><button class="dockbar" onClick=${onToggle} aria-expanded=${open ? 'true' : 'false'}>${open ? '▾' : '▴'} Timeline <span class="note">${items.length}</span></button>
-    ${open && html`<select class="field" value=${kind} onChange=${(e) => setKind(e.target.value)}><option value="all">All</option><option value="log">Log</option><option value="tag">Device events</option><option value="resolved">Resolved</option><option value="warn">Warnings</option><option value="bad">Errors</option></select>
-      <label class="check"><input type="checkbox" checked=${mine} onChange=${(e) => setMine(e.target.checked)} /> This device</label>
-      <span class="spacer"></span><button class="btn small quiet" onClick=${exportLog}>Export…</button>`}</div>
-    ${open && html`<div class="timeline-body" ref=${box}>${!items.length && html`<div class="empty">No timeline events since the console opened.</div>`}${items.slice(-800).map((e) => html`<div key=${e.seq} class=${e.level || ''}><span class="t">${hhmmss(e.t)}</span>${e.source ? html`<span class="src">[${e.source}] </span>` : ''}${e.text || (e.tag ? `${e.tag}: ${e.text}` : '')}</div>`)}</div>`}</div>`;
+  return html`<div class="dock"><div class="timeline-head"><button class="dockbar" onClick=${onToggle} aria-expanded=${open ? 'true' : 'false'}>${open ? '▾' : '▴'} ${t('Timeline')} <span class="note">${items.length}</span></button>
+    ${open && html`<select class="field" value=${kind} onChange=${(e) => setKind(e.target.value)}><option value="all">${t('All')}</option><option value="log">${t('Log')}</option><option value="tag">${t('Device events')}</option><option value="resolved">${t('Resolved')}</option><option value="warn">${t('Warnings')}</option><option value="bad">${t('Errors')}</option></select>
+      <label class="check"><input type="checkbox" checked=${mine} onChange=${(e) => setMine(e.target.checked)} /> ${t('This device')}</label>
+      <span class="spacer"></span><button class="btn small quiet" onClick=${exportLog}>${t('Export…')}</button>`}</div>
+    ${open && html`<div class="timeline-body" ref=${box}>${!items.length && html`<div class="empty">${t('No timeline events since the console opened.')}</div>`}${items.slice(-800).map((e) => html`<div key=${e.seq} class=${e.level || ''}><span class="t">${hhmmss(e.t)}</span>${e.source ? html`<span class="src">[${e.source}] </span>` : ''}${e.text || (e.tag ? `${e.tag}: ${e.text}` : '')}</div>`)}</div>`}</div>`;
 }

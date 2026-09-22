@@ -68,9 +68,10 @@ def main():
         ('Mainshow controller', 'zones/firmware/MainshowController', 'zones/build/MainshowController', C3,
          ('zones/firmware/libraries', 'live files/libraries')),
         # One dongle for every ESP-NOW host function (relay + Mainshow verbs + pool/preshow
-        # emulation); zones/tools/general_radio.py flashes it through zones/dbmanager/dongle.py.
-        ('General radio', 'zones/firmware/GeneralRadio', 'zones/build/GeneralRadio', C3,
-         ('zones/firmware/libraries', 'live files/libraries')),
+        # emulation + the station's PN532 reader); zones/tools/general_radio.py flashes it through
+        # zones/dbmanager/dongle.py. The PN532 library comes with the station's libraries.
+        ('Workstation', 'zones/firmware/Workstation', 'zones/build/Workstation', C3,
+         ('zones/firmware/libraries', 'live files/libraries', 'pairing_station/.arduino/libraries')),
         ('Registration console', 'registration_console', 'registration_console/build', C3, ()),
         ('Range test', 'rangetest/firmware/RangeTest', 'rangetest/build', XIAO, ('live files/libraries',)),
     ]:

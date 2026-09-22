@@ -16,11 +16,11 @@
 // is only relaying zone frames does not spray pool traffic.
 #include <string.h>
 #include <stdio.h>
-#include "GrRadio.h"
-#include "GrJson.h"
-#include "GrHex.h"
+#include "WsRadio.h"
+#include "WsJson.h"
+#include "WsHex.h"
 
-namespace gr {
+namespace ws {
 namespace pool {
 
 using namespace nctzone;
@@ -167,4 +167,4 @@ inline void begin() {
 }
 
 }  // namespace pool
-}  // namespace gr
+}  // namespace ws

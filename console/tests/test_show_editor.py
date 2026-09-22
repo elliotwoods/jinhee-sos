@@ -20,8 +20,8 @@ CUBES = ['1C:DB:D4:F0:A8:30', 'AC:27:6E:80:00:D0']
 
 
 class FakeRelay:
-    """A General Radio that speaks show_send, with two v1.5.0 cubes in range."""
-    kind = 'generalradio'
+    """A Workstation link that speaks show_send, with two v1.5.0 cubes in range."""
+    kind = 'workstation'
 
     def __init__(self, hub):
         self.hub = hub
@@ -106,7 +106,7 @@ class ShowEditorTests(unittest.TestCase):
         self.assertEqual(self.hub.jobs.jobs[job['job']].state, 'done', self.hub.jobs.jobs[job['job']].error)
         self.assertEqual(self.editor.registry.store.published()['version'], 1)
         # Updates need a relay.
-        with self.assertRaisesRegex(ValueError, 'General Radio'):
+        with self.assertRaisesRegex(ValueError, 'Connect a Workstation'):
             commands.run(self.hub, 'show.update_all', token(self.hub, 'show.update_all', {}))
         relay = FakeRelay(self.hub)
         self.hub.sessions['relay'] = relay
@@ -139,7 +139,7 @@ class ShowEditorTests(unittest.TestCase):
         self.assertEqual(len(requests), 1, 'sent once per publication')
 
     def test_update_through_the_simulated_general_radio(self):
-        """The real GeneralRadioSession + FakeGeneralRadio (general-radio-1.1.0) + a simulated v1.5.0 cube."""
+        """The real WorkstationSession + FakeGeneralRadio (general-radio-1.2.0) + a simulated v1.5.0 cube."""
         self.assertTrue(support.tick_until(self.hub, lambda: self.editor.relay() is not None, timeout=10))
         radio = self.editor.relay()
         self.editor.registry.store.cache(dict(version=4, **self._doc_fields(self.edited())))
@@ -157,7 +157,7 @@ class ShowEditorTests(unittest.TestCase):
 
     def test_live_mirror_reaches_numbered_cubes_through_a_relay(self):
         entries = [[7, [10, 20, 30]], [8, [0, 100, 0]]]
-        with self.assertRaisesRegex(ValueError, 'general-radio-1.2.0 and cubes with firmware v1.7.0-USB.1'):
+        with self.assertRaisesRegex(ValueError, r'Workstation \(or General Radio general-radio-1.2.0\) and cubes with firmware v1.7.0-USB.1'):
             commands.run(self.hub, 'show.live', dict(entries=entries))
         relay = FakeRelay(self.hub)
         cube7, cube8 = relay.cubes.values()

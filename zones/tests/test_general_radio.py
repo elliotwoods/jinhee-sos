@@ -1,5 +1,7 @@
-"""General radio client and command line with a fake serial link: id matching, event routing, the
-verbs' JSON, cube-number resolution, leases released on exit, and the flash entry point."""
+"""Workstation client and command line with a fake serial link: id matching, event routing, the
+verbs' JSON, cube-number resolution, leases released on exit, and the flash entry point. The hello
+fixture is a legacy General Radio 1.0.0, driven by the same client; the Workstation hello is checked
+beside it, and the old general_radio module name still loads."""
 import importlib.util
 import queue
 import sys
@@ -19,7 +21,7 @@ def load(name, path):
     return module
 
 
-gr = load('general_radio', ROOT / 'tools/general_radio.py')
+gr = load('workstation', ROOT / 'tools/workstation.py')
 from database import Database  # noqa: E402
 import zonedb  # noqa: E402
 
@@ -27,6 +29,9 @@ MAC = 'AC:27:6E:82:68:54'
 CUBE = 'AC:27:6E:80:00:D0'
 HELLO = dict(event='hello', protocol=1, firmware='general-radio-1.0.0', zones=1, mac=MAC, channel=2, radio_ok=True, nfc_ok=False,
              roles=['cube', 'zone', 'pool', 'preshow'], pool=dict(armed=False, member=0), preshow=dict(armed=False, point=0))
+WS_HELLO = dict(HELLO, firmware='workstation-1.0.0', nfc_ok=True, show=1, roles=['cube', 'zone', 'pool', 'preshow', 'nfc'])
+# What the pairing-station relay says: no roles, no pool/preshow state.
+RELAY_HELLO = {k: v for k, v in HELLO.items() if k not in ('roles', 'pool', 'preshow')} | dict(firmware='nct-pairing-1.8-zones')
 
 
 class Clock:
@@ -189,21 +194,51 @@ class ClientTests(unittest.TestCase):
                 self.radio.keepalive(None)
         self.assertEqual({k: v for k, v in self.link.sent[-1].items() if k != 'id'}, dict(cmd='preshow', point=1, state=0))
 
-    def test_roles_need_the_general_firmware(self):
-        relay = gr.GeneralRadio(FakeTransport(lambda m: [dict(HELLO, id=m['id'], firmware='nct-pairing-1.8-zones')]), Clock())
+    def test_roles_need_the_workstation_or_general_firmware(self):
+        relay = gr.Workstation(FakeTransport(lambda m: [dict(RELAY_HELLO, id=m['id'])]), Clock())
         relay.hello()
         self.assertFalse(relay.general)
+        self.assertEqual(relay.roles, [])
         for call in (lambda: relay.pool(1), lambda: relay.preshow(1, 1), lambda: relay.set_zone(CUBE, 0), lambda: relay.show_start()):
-            with self.assertRaisesRegex(gr.RadioError, 'general radio firmware'):
+            with self.assertRaisesRegex(gr.RadioError, 'Workstation .* or the general radio firmware'):
                 call()
-        controller = gr.GeneralRadio(FakeTransport(lambda m: [dict(HELLO, id=m['id'], firmware='mainshow-1.2.0')]), Clock())
+        controller = gr.Workstation(FakeTransport(lambda m: [dict(RELAY_HELLO, id=m['id'], firmware='mainshow-1.2.0')]), Clock())
         controller.hello()
         with self.assertRaisesRegex(gr.RadioError, 'general radio firmware'):
             controller.pool(1)
         controller.set_zone(CUBE, 4)  # the controller answers this one
         self.assertEqual(controller.transport.sent[-1]['cmd'], 'set_zone')
-        relay.status()  # falls back to hello on older firmware
+        relay.status()  # falls back to hello on a plain relay (no `roles`, no status verb)
         self.assertEqual(relay.transport.sent[-1]['cmd'], 'hello')
+
+    def test_workstation_hello_answers_every_verb(self):
+        radio = gr.Workstation(FakeTransport(lambda m: scripted(m) if m['cmd'] not in ('hello', 'status')
+                                             else [dict(WS_HELLO, event=m['cmd'], id=m['id'])]), Clock())
+        info = radio.hello()
+        self.assertEqual((info['firmware'], radio.general, radio.roles), ('workstation-1.0.0', True, ['cube', 'zone', 'pool', 'preshow', 'nfc']))
+        self.assertEqual(radio.set_zone(CUBE, 4)['status'], 'delivered')
+        self.assertEqual(radio.show_start()['target'], 'broadcast')
+        self.assertEqual(radio.pool(3)['member'], 3)
+        self.assertEqual(radio.preshow(1, True)['point'], 1)
+        radio.status()
+        self.assertEqual(radio.transport.sent[-1]['cmd'], 'status')
+        # A board of an unknown name is judged by its roles too, never by the firmware prefix.
+        odd = gr.Workstation(FakeTransport(lambda m: [dict(WS_HELLO, event='hello', id=m['id'], firmware='bench-0.1', roles=['cube', 'pool'])]), Clock())
+        odd.hello()
+        self.assertFalse(odd.general)
+        odd.set_zone(CUBE, 0)
+        odd.pool(1)
+        with self.assertRaisesRegex(gr.RadioError, 'preshow needs'):
+            odd.preshow(1, True)
+
+    def test_general_radio_module_is_an_alias(self):
+        alias = load('general_radio', ROOT / 'tools/general_radio.py')
+        self.assertIs(alias.GeneralRadio, alias.Workstation)
+        self.assertIs(alias.flash_general, alias.flash_workstation)
+        self.assertTrue(callable(alias.main) and issubclass(alias.RadioError, RuntimeError))
+        radio = alias.GeneralRadio(FakeTransport(scripted), Clock())
+        self.assertEqual(radio.hello()['firmware'], 'general-radio-1.0.0')
+        self.assertTrue(radio.general)
 
 
 class TargetTests(unittest.TestCase):
@@ -277,11 +312,12 @@ class CommandLineTests(unittest.TestCase):
         with patch.object(gr.dongle, 'ports', return_value=[port]), patch.object(gr.dongle, 'flash', return_value=MAC) as flash, \
                 patch.object(gr, 'DATA', Path(self.tmp.name)):
             self.assertEqual(gr.main(['--port', '/dev/cu.fake', '--database', str(self.db.path), 'flash'], out=self.out.append), 0)
-        self.assertEqual(flash.call_args.kwargs, dict(firmware=gr.dongle.GENERAL, backup='always'))
+        self.assertEqual(flash.call_args.kwargs, dict(firmware=gr.dongle.WORKSTATION, backup='always'))
         self.assertEqual(flash.call_args.args[0], port)
         self.assertEqual(len(flash.call_args.args[1]['cubes']), 32)  # the inventory snapshot the refusal rules need
         self.assertEqual(self.db.roles().get(MAC), 'excluded')
         self.assertIn('"flashed": "AC:27:6E:82:68:54"', self.out[-1])
+        self.assertIn('"firmware": "workstation-1.0.0"', self.out[-1])
         with patch.object(gr.dongle, 'ports', return_value=[]):
             self.assertEqual(gr.main(['--port', '/dev/cu.fake', '--database', str(self.db.path), 'flash'], out=self.out.append), 1)
 

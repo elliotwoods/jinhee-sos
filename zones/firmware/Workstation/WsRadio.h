@@ -1,5 +1,5 @@
 #pragma once
-// ESP-NOW for the general radio: channel 2, no encryption, broadcast peer pinned, unicast
+// ESP-NOW for the Workstation: channel 2, no encryption, broadcast peer pinned, unicast
 // peers added around one send and removed again (the pairing station and the Mainshow
 // controller do the same). Sends are synchronous and wait briefly for the MAC-layer result.
 //
@@ -23,7 +23,7 @@
 #include <NctPreshowProtocol.h>
 #include <NctShowProtocol.h>
 
-namespace gr {
+namespace ws {
 
 constexpr uint8_t CHANNEL = nctzone::ESPNOW_CHANNEL;
 constexpr uint32_t SEND_WAIT_MS = 100;  // wait for the MAC-layer result of one send (Mainshow controller)
@@ -163,4 +163,4 @@ inline bool beginRadio() {
   return radioOk;
 }
 
-}  // namespace gr
+}  // namespace ws

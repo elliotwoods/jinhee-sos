@@ -163,4 +163,117 @@ class PipelineTests(unittest.TestCase):
         self.mac=MAC;self.size='8MB';self.assertEqual(self.execute()['ui_result'],'failed')
         self.assertFalse(any('write-flash' in c for c in self.calls))
 
+class ShowPipelineTests(unittest.TestCase):
+    """The show stage: the published show written into the cube's NVS over USB, everything else kept."""
+    def setUp(self):
+        import zlib
+        import nvs
+        self.nvs,self.zlib=nvs,zlib
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.path=self.root/'db.sqlite3'
+        self.port=dict(port='fake',key='fake');self.calls=[];self.boots=[];self.corrupt_readback=False;self.fail_show_write=False
+        (self.root/'build').mkdir();(self.root/'build/app.bin').write_bytes(b'firmware')
+        self.manifest=dict(version='v1.7.0-USB.1',build_hash='h',segments=[dict(offset=0x10000,file='app.bin',sha256=digest(self.root/'build/app.bin'))])
+        self.image=bytes((i*13+5)%256 for i in range(600))
+        self.show=dict(version=7,crc=zlib.crc32(self.image),image=self.image)
+        self.flash=self.registered()
+    def tearDown(self):self.tmp.cleanup()
+    def registered(self,show=None):
+        E=self.nvs.Entry
+        entries=[E('phy','cal_data',self.nvs.BLOB,bytes(range(256))*7),E('cube','cubeID',self.nvs.U32,34),E('cube','uidLen',self.nvs.U8,7),
+                 E('cube','uid',self.nvs.BLOB,bytes.fromhex('04776655443324'))]
+        if show:
+            version,img=show
+            entries+=[E('show','img',self.nvs.BLOB,img),E('show','crc',self.nvs.U32,self.zlib.crc32(img)),E('show','ver',self.nvs.U32,version)]
+        return self.nvs.build(['phy','cube']+(['show'] if show else []),entries)
+    def run_fake(self,args,timeout=90):
+        args=list(map(str,args));self.calls.append(args)
+        if args[-1]=='version':return 'esptool v5.3.1'
+        if 'flash-id' in args:return f'MAC: {MAC}\nDetected flash size: 4MB'
+        if 'read-flash' in args:
+            data=self.flash
+            if self.corrupt_readback and any('nvs-show.bin' in a for c in self.calls for a in c):data=data[:-1]+b'\x00'
+            Path(args[-1]).write_bytes(b'\xff'*4096+data if args[-3]=='0x8000' else data)
+        if 'write-flash' in args and '0x9000' in args:
+            if self.fail_show_write:raise RuntimeError('Disconnected while writing')
+            self.flash=Path(args[args.index('0x9000')+1]).read_bytes()
+        return 'verified'
+    def boot(self,port,mac,version,runner,show=None):
+        self.boots.append(show);return True
+    def execute(self,manual=False,show='default',show_only=None):
+        show=self.show if show=='default' else show
+        with patch('backend.ROOT',self.root),patch('backend.Runner.__call__',side_effect=self.run_fake),patch.object(Flasher,'boot',self.boot),patch('backend.ports',return_value=[self.port]):
+            return Flasher(self.path,lambda *e:None).execute(self.port,self.manifest,manual,show=show,show_only=show_only)
+    def shows_written(self):return sum('write-flash' in c and '0x9000' in c for c in self.calls)
+    def test_new_cube_gets_firmware_and_show(self):
+        before=self.flash
+        result=self.execute()
+        self.assertEqual((result['ui_result'],result['show_result'],result['show_version']),('success','written',7))
+        self.assertEqual(self.nvs.show_of(self.flash),dict(version=7,crc=self.show['crc'],length=600,valid=True))
+        self.assertTrue(self.nvs.same_except_show(before,self.flash))
+        self.assertEqual(self.boots,[self.show],'the boot check requires the cube to report the show from NVS')
+        self.assertEqual(self.calls[-1][self.calls[-1].index('--after')+1],'hard-reset')
+        db=Store(self.path);row=db.history()[0];db.close()
+        self.assertEqual((row['show_result'],row['show_version']),('written',7))
+    def test_matching_firmware_still_gets_the_show(self):
+        self.execute(show=None)
+        self.assertEqual(self.shows_written(),0)
+        result=self.execute()
+        self.assertEqual((result['ui_result'],result['show_result']),('skipped','written'))
+        self.assertEqual(sum('write-flash' in c for c in self.calls),2,'one firmware write, then the show only')
+        self.assertEqual(self.nvs.show_of(self.flash)['version'],7)
+        self.assertEqual(self.boots[-1],self.show)
+    def test_current_show_is_not_rewritten(self):
+        self.flash=self.registered((7,self.image))
+        result=self.execute()
+        self.assertEqual(result['show_result'],'current');self.assertEqual(self.shows_written(),0)
+        self.assertEqual(self.boots,[None])
+        self.flash=self.registered((9,self.image))
+        self.assertEqual(self.execute()['show_result'],'newer');self.assertEqual(self.shows_written(),0)
+    def test_damaged_or_older_show_is_replaced(self):
+        self.flash=self.registered((3,b'old show'))
+        self.assertEqual(self.execute()['show_result'],'written')
+        namespaces,entries=self.nvs.parse(self.registered((7,self.image)))
+        self.flash=self.nvs.build(namespaces,[e._replace(value=e.value+1) if e.key=='crc' else e for e in entries])
+        self.assertEqual(self.execute(manual=True)['show_result'],'written')
+        self.assertTrue(self.nvs.show_of(self.flash)['valid'])
+    def test_unreadable_storage_is_never_written(self):
+        self.flash=b'N'*0x5000
+        result=self.execute(manual=True)
+        self.assertEqual(result['ui_result'],'attention','firmware was written before the show check')
+        self.assertIn('could not be read',result['detail']);self.assertEqual(self.shows_written(),0)
+    def test_readback_mismatch_needs_attention_and_keeps_backup(self):
+        self.execute(show=None)
+        self.corrupt_readback=True
+        result=self.execute()
+        self.assertEqual(result['ui_result'],'attention')
+        self.assertIn('nvs-show-before.bin',result['detail'])
+        self.assertTrue(Path(result['detail'].rsplit(' ',1)[-1]).exists())
+    def test_interrupted_show_write_needs_attention(self):
+        self.execute(show=None)
+        self.fail_show_write=True
+        self.assertEqual(self.execute()['ui_result'],'attention')
+    def test_show_only_never_writes_firmware(self):
+        result=self.execute(manual=True,show_only='v1.6.0-USB.1')
+        self.assertEqual((result['ui_result'],result['show_result']),('skipped','written'))
+        self.assertEqual(sum('write-flash' in c for c in self.calls),1)
+        self.assertEqual(self.shows_written(),1)
+        self.assertEqual(self.execute(manual=True,show_only='v1.4.1-USB.2')['show_result'],'current')
+        self.flash=self.registered()
+        self.assertEqual(self.execute(manual=True,show_only='v1.4.1-USB.2')['show_result'],'unsupported')
+        self.assertEqual(self.shows_written(),1)
+    def test_old_firmware_never_gets_a_show(self):
+        self.manifest['version']='v1.4.1-USB.2'
+        result=self.execute()
+        self.assertEqual(result['show_result'],'unsupported');self.assertEqual(self.shows_written(),0)
+    def test_boot_check_requires_the_nvs_show_line(self):
+        from backend import show_line
+        conn=MagicMock();conn.__enter__.return_value=conn
+        reply=f'FW: v1.7.0-USB.1\nCube MAC: {MAC}\nESP-NOW CHANNEL: 2\nSHOW: v=0 crc=00000000 src=builtin\nCube READY\n'
+        conn.read.return_value=reply.encode()
+        with patch('backend.ports',return_value=[self.port]),patch('backend.serial.Serial',return_value=conn),patch('backend.time.monotonic',side_effect=[0]+[0]*20+[99]*5):
+            self.assertFalse(Flasher(self.path,lambda *_:None).boot(self.port,MAC,'v1.7.0-USB.1',MagicMock(),show=self.show))
+        conn.read.return_value=reply.replace('SHOW: v=0 crc=00000000 src=builtin',show_line(7,self.show['crc'])).encode()
+        with patch('backend.ports',return_value=[self.port]),patch('backend.serial.Serial',return_value=conn):
+            self.assertTrue(Flasher(self.path,lambda *_:None).boot(self.port,MAC,'v1.7.0-USB.1',MagicMock(),show=self.show))
+
 if __name__=='__main__':unittest.main()

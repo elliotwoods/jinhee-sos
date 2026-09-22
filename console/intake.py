@@ -16,7 +16,7 @@ import zone_build
 import zone_detect
 import zonedb
 
-from jobs import cube as cube_jobs, zone as zone_jobs
+from jobs import zone as zone_jobs
 
 
 class Intake:
@@ -72,14 +72,14 @@ class Intake:
         if busy:
             return
         if self.cubes.armed:
-            port = self.cubes.next()
+            port = self.next_settled_cube()
             if port:
                 device = hub.devices.get(port['key'])
                 self.cubes.mark(port)
                 if device and device.role in ('cube', 'unknown', None) and device.state != 'protected' \
-                        and not (device.presumed.get('role') in ('zone', 'station', 'mainshow')):
+                        and not (device.presumed.get('role') in ('zone', 'workstation', 'mainshow')):
                     try:
-                        cube_jobs.flash_job(hub, device, manual=False)
+                        hub.flashflow.begin(device)   # firmware, then the published show (flashflow.py)
                         self.results[port['key']] = 'flashing'
                     except Exception as exc:
                         self.results[port['key']] = f'NOT FLASHED · {exc}'
@@ -93,8 +93,9 @@ class Intake:
                     continue
                 detection = device.detection or (zone_detect.from_report(device.details) if device.role == 'zone' and device.details.get('firmware') else None)
                 if detection is None:
-                    if device.role in ('cube', 'station', 'mainshow', 'poolcentral', 'preshowbridge', 'pooltest', 'rangetest'):
-                        detection = dict(kind={'cube': 'cube', 'station': 'station'}.get(device.role, 'other'),
+                    if device.role in ('cube', 'workstation', 'mainshow', 'poolcentral', 'preshowbridge', 'pooltest', 'rangetest'):
+                        # zone_detect's kind vocabulary still says 'station' for every relay-type board.
+                        detection = dict(kind={'cube': 'cube', 'workstation': 'station'}.get(device.role, 'other'),
                                          label=device.role_label(), mac=device.mac, profile=None, source='serial probe')
                     else:
                         continue  # unknown boards need an explicit bootloader detect
@@ -124,6 +125,21 @@ class Intake:
                 return
         if hub.settings.get('auto_zone_db_usb'):
             self.database_step()
+
+    def next_settled_cube(self):
+        """The next unattempted candidate port the console itself has finished with. A port is probed (and
+        may get a live session) when it appears; both hold its PortLock, so esptool started meanwhile fails
+        with "USB port is owned by another Neocore application". Wait for the probe to end: `idle` (identified,
+        or a board that never answered "?") or `session` (hold_port closes it first). `foreign` is another
+        application's port: never ours to take."""
+        hub = self.hub
+        for port in self.cubes.present.values():
+            if port['key'] in self.cubes.attempted or not port['candidate']:
+                continue
+            device = hub.devices.get(port['key'])
+            if device and device.state in ('idle', 'session') and hub.probing != port['key']:
+                return port
+        return None
 
     def database_step(self):
         """Start one database-only USB update for a zone board that is behind the published database."""

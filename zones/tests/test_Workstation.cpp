@@ -1,9 +1,10 @@
 // Real sketch: the pairing-station protocol it must keep (gate, discover, register, identify,
-// zone relay), the Mainshow verbs (set_zone with the plate's repeats, show_start with the showId
-// rules and lockout), the emulated pool radio and preshow plate (bursts, heartbeats, beacon
-// latching, acknowledgements, host leases), all against the shared protocol headers.
+// zone relay, and the PN532 reader with its fresh-tag gating, ported from
+// pairing_station/tests/firmware_test.cpp), the Mainshow verbs (set_zone with the plate's repeats,
+// show_start with the showId rules and lockout), the emulated pool radio and preshow plate (bursts,
+// heartbeats, beacon latching, acknowledgements, host leases), all against the shared protocol headers.
 #include "zone_stubs.h"
-#include "../firmware/GeneralRadio/GeneralRadio.ino"
+#include "../firmware/Workstation/Workstation.ino"
 #include "sketch_common.h"
 #include "fixtures.h"
 
@@ -102,15 +103,23 @@ static void preshowAck(const nctzone::PreshowEvent &e, bool applied) {
 
 static std::string ping() { return serial("{\"cmd\":\"ping\",\"id\":\"p\"}"); }
 
-// Keep the host lease alive for `ms`, pinging every second.
+// Keep the host lease alive for `ms`, pinging every second. Every line the board said is in the
+// result exactly once, so a test can count events.
 static std::string hold(uint32_t ms) {
   std::string out;
   for (uint32_t t = 0; t < ms; t += 1000) {
     out += ping();
+    Serial.output.clear();
     run(ms - t < 1000 ? ms - t : 980);
     out += Serial.output;
   }
   return out;
+}
+
+static size_t count(const std::string &text, const char *needle) {
+  size_t n = 0;
+  for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) n++;
+  return n;
 }
 
 static std::string hex(const uint8_t *data, size_t n) {
@@ -127,28 +136,40 @@ int main() {
   assert(radioOk && radioChannel == 2);
   assert(!wifiSleep && !wifiPersistent && !wifiAutoReconnect);
   assert(esp_now_is_peer_exist(BROADCAST) && esp_now_is_peer_exist(LEGACY) && espPeers.size() == 2);
-  assert(has(Serial.output, "NCT GENERAL RADIO\nFW: general-radio-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2\nRADIO: OK\nREADY"));
+  // boot_reader_ready: the station's bus clear and init events, then the report and hello with the
+  // reader's real state. The NFC report line sits between RADIO and READY (probe.py / zone_detect
+  // parse the others unchanged).
+  assert(has(Serial.output, "{\"event\":\"nfc_bus\",\"id\":\"\",\"sda_before\":1,\"scl_before\":1,\"sda_after\":1,\"scl_after\":1,\"pulses\":0}"));
+  assert(has(Serial.output, "{\"event\":\"nfc_init\",\"id\":\"\",\"attempt\":1,\"i2c_status\":0,\"firmware\":838927879,\"ready\":true}"));
+  assert(count(Serial.output, "nfc_init") == 1 && !has(Serial.output, "nfc_error"));
+  assert(has(Serial.output, "NCT WORKSTATION\nFW: workstation-1.0.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2\nRADIO: OK\n"
+                            "NFC: ok=1 fw=32010607 polling=0 polls=0 found=0 last_ms=0 max_ms=0 fast_fail=0 recoveries=0 sda=1 scl=1\nREADY"));
   // Signatures zone_detect.py would match first, and what the cube identifier looks for.
-  for (const char *needle : {"nct-pairing", "Cube READY", "Cube MAC:", "MAINSHOW ENTRANCE", "POOL RADIO", "DESERT TAG PLATE",
-                             "MEDIA BRIDGE PEER", "PRESHOW EXIT TAG", "NCT PRESHOW TAG PLATE", "NCT MAINSHOW CONTROLLER",
-                             "NCT PRESHOW MEDIA BRIDGE", "POOL CENTRAL", "NCT RANGE TEST"})
+  for (const char *needle : {"nct-pairing", "NCT GENERAL RADIO", "Cube READY", "Cube MAC:", "MAINSHOW ENTRANCE", "POOL RADIO",
+                             "DESERT TAG PLATE", "MEDIA BRIDGE PEER", "PRESHOW EXIT TAG", "NCT PRESHOW TAG PLATE",
+                             "NCT MAINSHOW CONTROLLER", "NCT PRESHOW MEDIA BRIDGE", "POOL CENTRAL", "NCT RANGE TEST"})
     assert(!has(Serial.output, needle));
-  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"protocol\":1,\"firmware\":\"general-radio-1.2.0\",\"zones\":1,\"show\":1"));
+  assert(has(Serial.output, "{\"event\":\"hello\",\"id\":\"\",\"protocol\":1,\"firmware\":\"workstation-1.0.0\",\"zones\":1,\"show\":1"));
+  assert(has(Serial.output, "\"radio_ok\":true,\"nfc_ok\":true,\"nfc_polling\":false,\"nfc_firmware\":838927879,\"nfc_i2c_status\":0,\"tag_present\":false,"));
+  assert(criticalDepth == 0 && wireBegins == 1 && wireSda == 4 && wireScl == 3);
   assert(sentFrames.empty() && "nothing is sent until asked");
 
   // ---- Host protocol ----
   std::string out = serial("{\"cmd\":\"hello\",\"id\":\"h1\"}");
   assert(has(out, "\"event\":\"hello\",\"id\":\"h1\"") && has(out, "\"channel\":2") && has(out, "\"radio_ok\":true"));
-  assert(has(out, "\"nfc_ok\":false") && has(out, "\"roles\":[\"cube\",\"zone\",\"pool\",\"preshow\"]"));
+  assert(has(out, "\"nfc_ok\":true") && has(out, "\"roles\":[\"cube\",\"zone\",\"pool\",\"preshow\",\"nfc\"]"));
   assert(has(out, "\"pool\":{\"armed\":false,\"member\":0") && has(out, "\"preshow\":{\"armed\":false,\"point\":0"));
   assert(has(out, "\"lockout_ms\":3000") && has(out, "\"show_running\":false") && has(out, "\"busy\":\"idle\""));
   assert(has(serial("{\"cmd\": \"ping\", \"id\": \"p1\"}"), "{\"event\":\"pong\",\"id\":\"p1\"}"));
   assert(has(serial("{\"cmd\":\"status\",\"id\":\"s1\"}"), "{\"event\":\"status\",\"id\":\"s1\",\"protocol\":1"));
   assert(has(serial("{\"cmd\":\"ping\"}"), "Missing/invalid request id"));
   assert(has(serial("{\"cmd\":\"dance\",\"id\":\"x\"}"), "Unknown command"));
-  assert(has(serial("{\"cmd\":\"nfc_status\",\"id\":\"n\"}"), "No NFC reader on this radio"));
+  // nfc_status_live: the station's fields, the firmware queried now rather than a cached flag.
+  out = serial("{\"cmd\":\"nfc_status\",\"id\":\"n\"}");
+  assert(has(out, "{\"event\":\"nfc_status\",\"id\":\"n\",\"sda\":1,\"scl\":1,\"i2c_status\":0,\"status_source\":\"firmware_response\","
+                  "\"firmware_now\":838927879,\"nfc_polling\":false,\"polls\":0,\"found\":0,\"last_poll_ms\":0,\"max_poll_ms\":0,\"trace\":false}"));
   assert(has(serial("hello"), "one JSON object per line"));
-  assert(has(serial("?"), "NCT GENERAL RADIO\nFW: general-radio-1.2.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2"));
+  assert(has(serial("?"), "NCT WORKSTATION\nFW: workstation-1.0.0\nMAC: 02:AA:BB:CC:DD:EE\nCHANNEL: 2\nRADIO: OK\nNFC: ok=1 fw=32010607"));
   assert(has(serial("{\"cmd\":\"led_test\",\"id\":\"l\",\"on\":1}"), "\"event\":\"led_test\",\"id\":\"l\",\"on\":true,\"pin\":10"));
   assert(neoShown.size() == 8 && neoShown[0] == 0x3C0000u);  // red, whole strip
   assert(has(serial("{\"cmd\":\"led_test\",\"id\":\"l\",\"on\":0}"), "\"on\":false"));
@@ -323,6 +344,11 @@ int main() {
   assert(packets(before, MSG_SET_ZONE, CUBE44).size() == 1 && packets(before, MSG_SET_ZONE, CUBE44)[0].success == 1);
   assert(has(serial("{\"cmd\":\"set_zone\",\"id\":\"s7\",\"mac\":\"AC:27:6E:80:00:D0\",\"zone\":2}"), "held by identify"));
   assert(has(serial("{\"cmd\":\"identify\",\"id\":\"i2\",\"mac\":\"AC:27:6E:80:00:D0\",\"duration_ms\":10}"), "stop first"));
+  // nfc_commands_refused_while_busy: the station's three wordings.
+  assert(has(serial("{\"cmd\":\"nfc_recover\",\"id\":\"nb1\"}"), "{\"event\":\"error\",\"id\":\"nb1\",\"detail\":\"Stop before reader recovery\"}"));
+  assert(has(serial("{\"cmd\":\"nfc_poll\",\"id\":\"nb2\",\"enabled\":1}"), "{\"event\":\"error\",\"id\":\"nb2\",\"detail\":\"Stop before reader diagnostics\"}"));
+  assert(has(serial("{\"cmd\":\"nfc_status\",\"id\":\"nb3\"}"), "{\"event\":\"error\",\"id\":\"nb3\",\"detail\":\"Stop the current operation before reader diagnostics\"}"));
+  assert(!nfc::polling && "refused: not switched on");
   out = hold(1300);
   {
     auto blink = packets(before, MSG_SET_ZONE, CUBE44);
@@ -555,6 +581,185 @@ int main() {
   for (size_t i = before; i < sentFrames.size(); i++)
     assert(nctshow::frameType(sentFrames[i].data.data(), int(sentFrames[i].data.size())) != nctshow::SHOW_TIMECODE);
 
+  // ---- Reader (workstation-1.0.0): the station's PN532, polled only while a host asks ----
+  ping();
+  // nfc_not_polled_until_asked: a tag on an idle reader is never read, so a bare relay is never
+  // slowed by the 80 ms read.
+  presentedTag = {4, 1, 2, 3};
+  out = hold(2000);
+  assert(!has(out, "tag_state") && nfc::polls == 0);  // (tagPresent is still the identify's synthetic true: only polling clears it)
+  // nfc_poll_enable_and_once: `once` reads now and leaves polling off (the station's semantics);
+  // `enabled` switches it on and off.
+  out = serial("{\"cmd\":\"nfc_poll\",\"id\":\"n1\",\"once\":1}");
+  assert(out.find("{\"event\":\"tag_state\",\"id\":\"\",\"present\":true}") < out.find("nfc_poll_result"));
+  assert(has(out, "{\"event\":\"nfc_poll_result\",\"id\":\"n1\",\"ready\":true,\"enabled\":false,\"polls\":1,\"found\":1,\"duration_ms\":20,"
+                  "\"tag_present\":true,\"uid\":\"04:01:02:03\"}"));
+  assert(!has(out, "\"event\":\"tag\"") && "not identifying: no pairing scan");
+  out = hold(1000);
+  assert(!has(out, "tag_state") && nfc::polls == 1 && "once leaves polling off");
+  out = serial("{\"cmd\":\"nfc_poll\",\"id\":\"n2\",\"enabled\":true}");
+  assert(has(out, "{\"event\":\"nfc_poll_result\",\"id\":\"n2\",\"ready\":true,\"enabled\":true,\"polls\":1,"));
+  hold(1000);
+  assert(nfc::polls >= 15 && nfc::found >= 15 && "every 50 ms");
+  presentedTag.clear();
+  out = hold(1000);
+  assert(has(out, "{\"event\":\"tag_state\",\"id\":\"\",\"present\":false}") && count(out, "tag_state") == 1);
+  assert(has(serial("{\"cmd\":\"status\",\"id\":\"s\"}"), "\"nfc_ok\":true,\"nfc_polling\":true,\"nfc_firmware\":838927879,\"nfc_i2c_status\":0,\"tag_present\":false,"));
+  out = serial("{\"cmd\":\"nfc_status\",\"id\":\"n3\"}");
+  assert(has(out, "\"firmware_now\":838927879,\"nfc_polling\":true,") && has(out, "\"last_poll_ms\":80,\"max_poll_ms\":80,\"trace\":false}"));
+  assert(has(serial("{\"cmd\":\"nfc_poll\",\"id\":\"n4\",\"enabled\":false}"), "\"ready\":true,\"enabled\":false,"));
+  {
+    uint32_t polls = nfc::polls;
+    hold(1000);
+    assert(nfc::polls == polls && "off again");
+  }
+  assert(has(serial("?"), "NFC: ok=1 fw=32010607 polling=0 polls="));
+
+  // identify_fresh_tag_gating: the station's rule that a tag already on the reader is not a pairing
+  // scan. The synthetic tag_state precedes the radio and identifying events; the reader must see the
+  // interval clear, then exactly one `tag` per placement.
+  serial("{\"cmd\":\"nfc_poll\",\"id\":\"n5\",\"enabled\":true}");
+  before = sentFrames.size();
+  out = serial("{\"cmd\":\"identify\",\"id\":\"i6\",\"mac\":\"AC:27:6E:80:00:D0\",\"duration_ms\":0}");
+  assert(out.find("{\"event\":\"tag_state\",\"id\":\"\",\"present\":true}") < out.find("{\"event\":\"radio\",\"id\":\"i6\""));
+  assert(out.find("{\"event\":\"radio\",\"id\":\"i6\"") < out.find("{\"event\":\"identifying\",\"id\":\"i6\"}"));
+  presentedTag = {4, 1, 2, 3};
+  out = hold(100);
+  assert(!has(out, "\"event\":\"tag\"") && "a tag already on the reader cannot carry over");
+  presentedTag.clear();
+  out = hold(800);
+  assert(has(out, "{\"event\":\"tag_state\",\"id\":\"\",\"present\":false}"));
+  presentedTag = {4, 1, 2, 3};
+  out = hold(100);
+  assert(has(out, "{\"event\":\"tag\",\"id\":\"i6\",\"uid\":\"04:01:02:03\"}") && count(out, "\"event\":\"tag\"") == 1);
+  out = hold(100);
+  assert(!has(out, "\"event\":\"tag\"") && "still there: no second scan");
+  {
+    auto blink = packets(before, MSG_SET_ZONE, CUBE44);
+    assert(blink.size() >= 3 && blink[0].success == 1 && blink[1].success == 3 && blink[2].success == 1 && "blinking throughout");
+  }
+  // identify_blink_timing_with_polling: the 500 ms alternation and flash_done hold with the 80 ms
+  // no-tag read inside the loop, allowing one poll period of slack.
+  serial("{\"cmd\":\"stop\",\"id\":\"x3\"}");
+  presentedTag.clear();
+  hold(800);
+  before = sentFrames.size();
+  serial("{\"cmd\":\"identify\",\"id\":\"i7\",\"mac\":\"AC:27:6E:80:00:D0\",\"duration_ms\":1200}");
+  out = hold(1400);
+  {
+    auto blink = packets(before, MSG_SET_ZONE, CUBE44);
+    assert(blink.size() == 4 && blink[0].success == 1 && blink[1].success == 3 && blink[2].success == 1 && blink[3].success == 0);
+    assert(has(out, "{\"event\":\"flash_done\",\"id\":\"i7\"}"));
+  }
+  // register_disarms: after the scan, register (the station clears scanArmed there), stop and hello
+  // all end the scan; a tag placed afterwards is state only.
+  serial("{\"cmd\":\"identify\",\"id\":\"i8\",\"mac\":\"AC:27:6E:80:00:D0\",\"duration_ms\":0}");
+  hold(800);
+  presentedTag = {4, 1, 2, 3};
+  out = hold(100);
+  assert(has(out, "{\"event\":\"tag\",\"id\":\"i8\",\"uid\":\"04:01:02:03\"}"));
+  out = serial("{\"cmd\":\"register\",\"id\":\"r5\",\"mac\":\"AC:27:6E:80:00:D0\",\"cube_id\":44,\"uid\":\"04:01:02:03\"}");
+  assert(has(out, "{\"event\":\"attempt\",\"id\":\"r5\",\"attempt\":1,"));
+  presentedTag.clear();
+  out = hold(800);
+  presentedTag = {4, 1, 2, 3};
+  out += hold(100);
+  assert(has(out, "\"present\":false") && has(out, "\"present\":true") && !has(out, "\"event\":\"tag\""));
+  cubeReply(CUBE44, MSG_REGISTER_ACK, 44, 1);
+  out = hold(1300);
+  assert(has(out, "\"event\":\"registered\",\"id\":\"r5\",\"mac\":\"AC:27:6E:80:00:D0\",\"cube_id\":44,\"acknowledged\":true"));
+  for (const char *release : {"{\"cmd\":\"stop\",\"id\":\"x4\"}", "{\"cmd\":\"hello\",\"id\":\"h2\"}"}) {
+    ping();
+    serial("{\"cmd\":\"identify\",\"id\":\"i9\",\"mac\":\"AC:27:6E:80:00:D0\",\"duration_ms\":0}");
+    presentedTag.clear();
+    hold(800);  // the interval clears: a scan is armed
+    assert(nfc::scanArmed);
+    serial(release);
+    assert(!nfc::scanArmed && !nfc::identifying);
+    presentedTag = {4, 1, 2, 3};
+    out = hold(100);
+    assert(has(out, "{\"event\":\"tag_state\",\"id\":\"\",\"present\":true}") && !has(out, "\"event\":\"tag\""));
+  }
+  // uid_rejection: a 10-byte UID is reported and refused, as the station does.
+  presentedTag = {4, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  out = hold(100);
+  assert(has(out, "{\"event\":\"nfc_error\",\"id\":\"\",\"detail\":\"Unsupported UID length; remove this tag\"}"));
+  presentedTag.clear();
+  hold(800);
+  assert(!nfc::tagPresent);
+  // bus_recovery_held_low: the station's nine-clock bus clear. The station clocks all nine whenever
+  // SCL is free and SDA is held (it stops early only for a stuck SCL), then STOPs.
+  {
+    int begins = wireBegins;
+    heldLow[4] = 3;  // released after three clocks
+    out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b1\"}");
+    assert(has(out, "{\"event\":\"nfc_bus\",\"id\":\"\",\"sda_before\":0,\"scl_before\":1,\"sda_after\":1,\"scl_after\":1,\"pulses\":9}"));
+    assert(has(out, "{\"event\":\"nfc_recovered\",\"id\":\"b1\",\"bus_clear\":true,\"ready\":true,\"firmware\":838927879,\"i2c_status\":0}"));
+    assert(wireBegins == begins + 1 && !nfc::polling && "recovery restarts the bus and stops polling");
+    heldLow[4] = -1;  // never released
+    out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b2\"}");
+    assert(has(out, "\"sda_before\":0,\"scl_before\":1,\"sda_after\":0,\"scl_after\":1,\"pulses\":9}"));
+    assert(has(out, "\"event\":\"nfc_recovered\",\"id\":\"b2\",\"bus_clear\":false,\"ready\":false,") && has(out, "\"i2c_status\":5}"));
+    assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h3\"}"), "\"nfc_ok\":false,\"nfc_polling\":false,\"nfc_firmware\":838927879,\"nfc_i2c_status\":5,"));
+    heldLow.clear();
+    heldLow[3] = -1;  // SCL held: nothing to clock
+    out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b3\"}");
+    assert(has(out, "\"sda_before\":1,\"scl_before\":0,\"sda_after\":1,\"scl_after\":0,\"pulses\":0}"));
+    assert(has(out, "\"bus_clear\":false,\"ready\":false,"));
+    heldLow.clear();
+    out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b4\"}");
+    assert(has(out, "\"pulses\":0}") && has(out, "\"bus_clear\":true,\"ready\":true,\"firmware\":838927879,\"i2c_status\":0}"));
+  }
+  // bare_dongle_degrades: no reader wired, every command still answers and the radio still works.
+  pn532Present = false;
+  out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b5\"}");
+  assert(has(out, "{\"event\":\"nfc_recovered\",\"id\":\"b5\",\"bus_clear\":true,\"ready\":false,\"firmware\":0,\"i2c_status\":5}"));
+  assert(has(serial("{\"cmd\":\"hello\",\"id\":\"h4\"}"), "\"nfc_ok\":false,\"nfc_polling\":false,\"nfc_firmware\":0,\"nfc_i2c_status\":5,\"tag_present\":false,"));
+  out = serial("{\"cmd\":\"nfc_poll\",\"id\":\"n6\",\"enabled\":1}");
+  assert(has(out, "{\"event\":\"nfc_poll_result\",\"id\":\"n6\",\"ready\":false,\"enabled\":true,"));
+  out = serial("{\"cmd\":\"nfc_status\",\"id\":\"n7\"}");
+  assert(has(out, "\"i2c_status\":5,\"status_source\":\"firmware_response\",\"firmware_now\":0,\"nfc_polling\":true,"));
+  assert(has(serial("{\"cmd\":\"discover\",\"id\":\"d3\"}"), "{\"event\":\"discover_sent\",\"id\":\"d3\"}"));
+  assert(!has(serial("{\"cmd\":\"nfc_status\",\"id\":\"n8\"}"), "No NFC reader"));
+  pn532Present = true;
+  out = serial("{\"cmd\":\"nfc_recover\",\"id\":\"b6\"}");
+  assert(has(out, "\"bus_clear\":true,\"ready\":true,\"firmware\":838927879,\"i2c_status\":0}"));
+  // reader_lost_supervision: a reader that stops answering is reported once and dropped; because a
+  // host asked for polling it is brought back automatically (the plates' 5 s retry).
+  serial("{\"cmd\":\"nfc_poll\",\"id\":\"n9\",\"enabled\":true}");
+  pn532Present = false;
+  out = hold(1500);
+  assert(has(out, "{\"event\":\"nfc_error\",\"id\":\"\",\"detail\":\"PN532 lost: ") && count(out, "nfc_error") == 1 && !nfc::ok);
+  assert(has(serial("{\"cmd\":\"status\",\"id\":\"s\"}"), "\"nfc_ok\":false,\"nfc_polling\":true,"));
+  pn532Present = true;
+  {
+    uint32_t recoveries = nfc::recoveries;
+    out = hold(5100);
+    assert(nfc::ok && nfc::recoveries == recoveries + 1 && has(out, "\"event\":\"nfc_bus\"") && !has(out, "nfc_error"));
+  }
+  assert(has(serial("{\"cmd\":\"status\",\"id\":\"s\"}"), "\"nfc_ok\":true,\"nfc_polling\":true,\"nfc_firmware\":838927879,\"nfc_i2c_status\":0,"));
+  // trace_gating: `trace` switches the I2C transaction trace on. The trace body lives in the ESP32
+  // Pn532Wire (status-0 lines and a starved USB port are skipped there), which the host cannot run.
+  serial("{\"cmd\":\"nfc_poll\",\"id\":\"n10\",\"enabled\":true,\"trace\":1}");
+  assert(pn532TraceAll && has(serial("{\"cmd\":\"nfc_status\",\"id\":\"n11\"}"), "\"trace\":true}"));
+  serial("{\"cmd\":\"nfc_poll\",\"id\":\"n12\",\"enabled\":true,\"trace\":0}");
+  assert(!pn532TraceAll && has(serial("{\"cmd\":\"nfc_status\",\"id\":\"n13\"}"), "\"trace\":false}"));
+  // serial_backpressure: a port nobody drains still drops zone replies (counted) while the reader
+  // polls with a tag on it; nothing blocks.
+  presentedTag = {4, 1, 2, 3};
+  hold(100);
+  serialTxSpace = 100;
+  {
+    uint32_t dropped = rxZoneDropped;
+    radioFrom(ZONE1, (const uint8_t *)&status, sizeof(status), false);
+    hold(100);
+    assert(rxZoneDropped == dropped + 1 && nfc::tagPresent);
+  }
+  serialTxSpace = 4096;
+  presentedTag.clear();
+  serial("{\"cmd\":\"nfc_poll\",\"id\":\"n14\",\"enabled\":false}");
+  hold(800);
+
   // ---- Radio failure is reported, not hidden ----
   ping();
   autoSendCallback = false;
@@ -564,6 +769,6 @@ int main() {
   assert(has(serial("{\"cmd\":\"discover\",\"id\":\"f2\"}"), "Radio unavailable"));
   assert(has(serial("{\"cmd\":\"hello\",\"id\":\"f3\"}"), "\"radio_ok\":false"));
 
-  puts("GeneralRadio OK");
+  puts("Workstation OK");
   return 0;
 }

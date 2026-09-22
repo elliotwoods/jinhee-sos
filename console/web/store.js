@@ -1,5 +1,6 @@
 // Snapshot sections with versions, an event stream, per-device line rings, and coalesced notifications.
 import { Ring } from './lib/ring.js';
+import { applyLang } from './lib/i18n.js';
 
 const listeners = new Map();   // section name -> Set(fn)
 let frame = 0;
@@ -7,7 +8,7 @@ const changed = new Set();
 
 export const state = {
   sections: {}, versions: {}, seq: 0, copy: null, commands: {}, connected: false, lastPull: 0, errors: 0,
-  ui: { route: { section: 'devices' }, selected: null, search: '', theme: 'dark', dismissedCards: new Set(),
+  ui: { route: { section: 'devices' }, selected: null, search: '', theme: 'dark', lang: 'en', dismissedCards: new Set(),
     // The documentation query parsed once at boot (lib/doc.js): hl/open tokens, dock, theme, still, explainers, search.
     doc: { hl: [], open: [], dock: false, theme: null, still: false, explainers: false, search: '', cube: null, active: false } },
 };
@@ -67,3 +68,5 @@ export function section(name) { return state.sections[name]; }
 export function select(id) { state.ui.selected = id; touch('ui'); }
 export function setSearch(q) { state.ui.search = q; touch('ui'); }
 export function setRoute(route) { state.ui.route = route; touch('ui'); }
+// EN/KR: the whole window re-renders on 'lang' (the App root subscribes to it).
+export function setLang(value, opts) { state.ui.lang = applyLang(value, opts); touch('ui'); touch('lang'); return state.ui.lang; }

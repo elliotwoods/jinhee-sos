@@ -13,11 +13,11 @@
 // held cue is turned OFF, so an unplugged laptop cannot leave TouchDesigner latched ON.
 #include <string.h>
 #include <stdio.h>
-#include "GrRadio.h"
-#include "GrJson.h"
-#include "GrHex.h"
+#include "WsRadio.h"
+#include "WsJson.h"
+#include "WsHex.h"
 
-namespace gr {
+namespace ws {
 namespace preshow {
 
 using namespace nctzone;
@@ -231,4 +231,4 @@ inline void begin() {
 }
 
 }  // namespace preshow
-}  // namespace gr
+}  // namespace ws

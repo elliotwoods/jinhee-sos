@@ -1,4 +1,4 @@
-// Hash routes: #/devices/<id>[/<tab>], #/register, #/inventory/<tab>, #/show, #/showedit, #/bench, #/settings
+// Hash routes: #/devices/<id>[/<tab>], #/register, #/flash, #/inventory/<tab>, #/show, #/showedit, #/bench, #/settings
 import { setRoute, select, state } from './store.js';
 import { parseDoc } from './lib/doc.js';
 

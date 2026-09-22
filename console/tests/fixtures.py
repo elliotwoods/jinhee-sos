@@ -71,7 +71,7 @@ def tap(uid, cube_id=None, mac=None, state='unknown tag', at=NOW - 20, zone=1):
 def station_section(connected=True, reader_ok=True, nfc_ok=True, nfc_i2c_status=0, mode='', phase='', feedback=None, zones=1,
                     channel=2, firmware='nct-pairing-1.8-zones', discovered=None, dongle=False, active=None, last_disconnect=None,
                     device=STATION_MAC):
-    return dict(present=True, kind='station', id='st', device=device, port='/dev/cu.usbmodem2101', connected=connected,
+    return dict(present=True, kind='workstation', id='st', device=device, port='/dev/cu.usbmodem2101', connected=connected,
                 reader_ok=reader_ok, mode=mode, phase=phase, active=active, message='', feedback=feedback or {},
                 hello=dict(firmware=firmware, zones=zones, mac=device, channel=channel, radio_ok=True, nfc_ok=nfc_ok,
                            nfc_polling=nfc_ok, nfc_i2c_status=nfc_i2c_status),
@@ -96,7 +96,7 @@ def sections(**overrides):
                   password_known=True),
         locks={'.lock': False, '.flasher.lock': False, '.zonedb.lock': False, '.mainshow.lock': False},
         builds=dict(cube=dict(version='v1.4.1-USB.2', build_hash='h', error=None), zones={},
-                    dongle=dict(state='current', version='nct-pairing-1.8-zones'), mainshow=dict(state='current', version='mainshow-1.2.0'),
+                    workstation=dict(state='current', version='workstation-1.0.0'), mainshow=dict(state='current', version='mainshow-1.2.0'),
                     tools=dict(esptool_ok=True, esptool_text='esptool 5.3.1', arduino_cli='/usr/bin/arduino-cli', core_ok=True)),
         show=dict(present=False), settings={})
     base = copy.deepcopy(base)

@@ -211,6 +211,16 @@ export function zoomAround({ zoom, factor, anchorPx, scrollLeft, lengthMs, viewP
 }
 
 // Cube numbers as short ranges: [1,2,3,4,12] -> "#1-#4, #12".
+// Append cube numbers to a "Preview cubes" text (e.g. "1-8, 12") without repeating any already in it.
+// `parsed` is the text's current numbers (parseCubes); returns the new text, or the same text if nothing new.
+export function addCubeNumbers(text, parsed, numbers) {
+  const have = new Set(parsed || []);
+  const extra = [...new Set(numbers)].filter((n) => Number.isInteger(n) && n >= 1 && !have.has(n)).sort((a, b) => a - b);
+  if (!extra.length) return text;
+  const base = String(text || '').trim().replace(/[\s,]+$/, '');
+  return (base ? base + ', ' : '') + extra.join(', ');
+}
+
 export function cubeRanges(nums) {
   const out = [];
   [...nums].sort((a, b) => a - b).forEach((n) => {
