@@ -479,12 +479,12 @@ def save(recording, folder):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"recording-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    path.write_text(json.dumps(recording, indent=2))
+    path.write_text(json.dumps(recording, indent=2), encoding='utf-8')
     return path
 
 
 def load(path):
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
     if 'steps' not in data:
         raise ValueError('Not a PoolZone recording.')
     return data

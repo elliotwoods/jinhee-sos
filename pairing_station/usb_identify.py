@@ -67,7 +67,7 @@ def check_firmware(port, mac, stop):
     expected = None
     try:
         manifest = Path(__file__).resolve().parents[1]/'flashing_station/build/manifest.json'
-        expected = json.loads(manifest.read_text())['version']
+        expected = json.loads(manifest.read_text(encoding='utf-8'))['version']
     except (OSError, ValueError, KeyError):
         pass
     try:

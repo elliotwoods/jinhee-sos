@@ -1,4 +1,3 @@
-import fcntl
 import os
 from pathlib import Path
 import stat
@@ -9,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from database import Database  # noqa: E402
+import hostos  # noqa: E402
 from fake_web_inventory import FakeWebInventory  # noqa: E402
 import sync_all  # noqa: E402
 import web_client  # noqa: E402
@@ -32,7 +32,8 @@ class PasswordStoreTests(unittest.TestCase):
         self.assertIsNone(web_client.load_password())
         self.assertIsNone(WebClient('http://x').password)
         web_client.save_password('s3cret')
-        self.assertEqual(stat.S_IMODE(os.stat(web_client.PASSWORD_FILE).st_mode), 0o600)
+        if not hostos.WINDOWS:  # Windows has no mode bits: the file takes the ACL of its folder
+            self.assertEqual(stat.S_IMODE(os.stat(web_client.PASSWORD_FILE).st_mode), 0o600)
         self.assertEqual(WebClient('http://x').password, 's3cret')
         self.assertIsNone(WebClient('http://x', None).password)  # explicit None: no password
         web_client.forget_password()
@@ -130,7 +131,7 @@ class SyncAllTests(unittest.TestCase):
         self.register('b', 100)
         sync_all.sync(self.paths['b'], self.client(), 'b')
         lock = self.paths['a'].with_suffix('.lock').open('a')  # the pairing app itself is open
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        hostos.lock_file(lock)
         try:
             busy = sync_all.sync(self.paths['a'], self.client(), 'a', held=('.lock',), apply_ok=False)
             self.assertEqual((busy['sync']['applied'], busy['sync']['unapplied']), (False, 1))

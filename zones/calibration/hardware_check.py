@@ -32,7 +32,7 @@ def main():
             cal=next(d for d in rows if d.get('type')=='calibration')
             before_path=Path(__file__).parent/'build/calibration-before-integration.json'
             if before_path.exists():
-                before=json.loads(before_path.read_text())
+                before=json.loads(before_path.read_text(encoding='utf-8'))
                 assert cal['ticks']==before['ticks'] and cal['anchors']==before['anchors'] and cal['saved']
             states=[d for d in rows if d.get('type')=='interaction']
             assert states and states[-1]['nfc'] and states[-1]['radio']
@@ -58,6 +58,6 @@ def main():
         finally:
             send('HOST DISARM')
             directory=Path(__file__).parent/'build'; directory.mkdir(exist_ok=True)
-            (directory/'integration-hardware.log').write_text('\n'.join(evidence)+'\n')
+            (directory/'integration-hardware.log').write_text('\n'.join(evidence)+'\n',encoding='utf-8')
 
 if __name__=='__main__': main()

@@ -11,10 +11,10 @@ decision is returned as a note, audited as an event and shown to the operator.
 """
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import json
 import os
 from pathlib import Path
+import hostos
 from database import Database, hex_bytes, released_status
 
 KEY = 'git_inventory_baseline_v1'
@@ -41,7 +41,7 @@ def app_locks(database, skip=()):
             handle = Path(database).with_suffix(suffix).open('a')
             handles.append(handle)
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                hostos.lock_file(handle)
             except BlockingIOError:
                 raise AppsOpen('Close the pairing and flashing apps before applying inventory changes.') from None
         yield
@@ -365,7 +365,7 @@ def sync(db, folder):
     folder.mkdir(parents=True, exist_ok=True)
     remote = {}
     for path in sorted(folder.glob('*.json')):
-        row = json.loads(path.read_text())  # also rejects unresolved Git markers
+        row = json.loads(path.read_text(encoding='utf-8'))  # also rejects unresolved Git markers
         mac = row.get('mac', '') if isinstance(row, dict) else ''
         if path.stem != mac.replace(':', '').lower() or mac in remote:
             raise ValueError('Invalid inventory filename: ' + path.name)
@@ -380,9 +380,9 @@ def sync(db, folder):
     for mac, row in merged.items():
         path = folder / (mac.replace(':', '').lower() + '.json')
         content = json.dumps(row, indent=2, sort_keys=True) + '\n'
-        if not path.exists() or path.read_text() != content:
+        if not path.exists() or path.read_text(encoding='utf-8') != content:
             temporary = path.with_suffix('.tmp')
-            temporary.write_text(content)
+            temporary.write_text(content, encoding='utf-8', newline='\n')  # committed: LF on every OS
             os.replace(temporary, path)
     # If file writing fails, the old baseline allows a safe retry.
     save_baseline(db, KEY, merged)

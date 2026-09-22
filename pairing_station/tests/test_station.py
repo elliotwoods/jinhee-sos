@@ -321,7 +321,7 @@ class StationTests(unittest.TestCase):
         self.assertTrue(self.c.reader_ok)
 
     def test_originals_match_source_and_import_once(self):
-        source=(ROOT.parent/'mainshow_enter/mainshow_enter.ino').read_text()
+        source=(ROOT.parent/'mainshow_enter/mainshow_enter.ino').read_text(encoding='utf-8')
         expected=[]
         for ident,uid,mac in re.findall(r'\{(\d+),7,\{([^}]+)\},\{([^}]+)\}\}',source):
             fmt=lambda s: ':'.join(f'{int(x,16):02X}' for x in s.split(','))
@@ -428,7 +428,7 @@ class StationTests(unittest.TestCase):
     def test_exports_and_unique_ids(self):
         self.db.reserve(NEW);self.db.prepare(NEW,UID)
         self.db.export_header(Path(self.temp.name)/'table.h')
-        header=(Path(self.temp.name)/'table.h').read_text()
+        header=(Path(self.temp.name)/'table.h').read_text(encoding='utf-8')
         self.assertNotIn('{33,',header)
         with (Path(self.temp.name)/'devices.csv').open(encoding='utf-8-sig') as file:
             rows=list(csv.DictReader(file))
@@ -436,6 +436,6 @@ class StationTests(unittest.TestCase):
         self.assertEqual(rows[-1]['pending_uid'],UID)
         self.db.result(NEW,True,'ACK')
         self.db.export_header(Path(self.temp.name)/'table.h')
-        self.assertIn('{33,7,',(Path(self.temp.name)/'table.h').read_text())
+        self.assertIn('{33,7,',(Path(self.temp.name)/'table.h').read_text(encoding='utf-8'))
 
 if __name__=='__main__': unittest.main()

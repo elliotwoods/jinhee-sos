@@ -4,22 +4,28 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent          # zones/flasher
 ZONES = ROOT.parent                             # zones
 WORKSPACE = ZONES.parent
-CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
-CORE = Path.home() / 'Library/Arduino15/packages/esp32/hardware/esp32/3.3.11'
+if str(WORKSPACE / 'pairing_station') not in sys.path:
+    sys.path.append(str(WORKSPACE / 'pairing_station'))
+import hostos  # noqa: E402
+
+CORE = hostos.esp32_core('3.3.11')
 SUPERMINI = 'esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc,PartitionScheme=no_ota'
 LIBRARIES = [WORKSPACE / 'live files/libraries', ZONES / 'firmware/libraries']
 DATA_PARTITIONS = ('zcfg', 'zdb_a', 'zdb_b')
 
 # Firmware sketches (zones/firmware/<name>) and the board they are built for.
-SKETCHES = {'PreshowZone': SUPERMINI, 'TagPlateZone': SUPERMINI, 'DesertZone': SUPERMINI, 'PoolZone': SUPERMINI}
+SKETCHES = {'PreshowZone': SUPERMINI, 'TagPlateZone': SUPERMINI, 'DesertZone': SUPERMINI, 'PoolZone': SUPERMINI,
+            'ResetZone': SUPERMINI}
 
-# What the operator picks in the flasher. zone_type matches the neocube ZoneType enum; `params` are
-# integers stored in zcfg (label, default shown, multiplier applied before storing).
+# What the operator picks in the flasher. zone_type 1-4 match the neocube ZoneType enum; 5 (reset) is a plate
+# kind only, the plate sends zone 0 (idle) to the cube. `params` are integers stored in zcfg (label, default
+# shown, multiplier applied before storing).
 PROFILES = {
     'preshow': dict(label='Preshow plate (media points 1-4)', sketch='PreshowZone', zone_type=1, points=(1, 2, 3, 4),
                     name='Preshow {point}', params=()),
@@ -31,8 +37,11 @@ PROFILES = {
                    name='Desert {point}', params=()),
     'pool': dict(label='Pool radio (slider)', sketch='PoolZone', zone_type=3, points=(1, 2, 3, 4, 5, 6),
                  name='Pool Radio {point}', params=(('Slider mm at member 1', 383.0, 10), ('Slider mm at member 23', 43.0, 10))),
+    'reset': dict(label='Reset plate (cube → idle)', sketch='ResetZone', zone_type=5, points=tuple(range(1, 9)),
+                  name='Reset {point}', params=()),
 }
-FIRMWARE_PREFIX = {'preshow-': 'PreshowZone', 'tagplate-': 'TagPlateZone', 'desert-': 'DesertZone', 'pool-': 'PoolZone'}
+FIRMWARE_PREFIX = {'preshow-': 'PreshowZone', 'tagplate-': 'TagPlateZone', 'desert-': 'DesertZone', 'pool-': 'PoolZone',
+                   'reset-': 'ResetZone'}
 
 
 def profile_for(firmware, zone_type):
@@ -63,7 +72,7 @@ def source_hash(sketch):
 
 
 def firmware_version(sketch):
-    text = (ZONES / 'firmware' / sketch / f'{sketch}.ino').read_text()
+    text = (ZONES / 'firmware' / sketch / f'{sketch}.ino').read_text(encoding='utf-8')
     match = re.search(r'FIRMWARE_VERSION\s*=\s*"([^"]+)"', text)
     if not match:
         raise ValueError('Sketch has no FIRMWARE_VERSION')
@@ -72,7 +81,7 @@ def firmware_version(sketch):
 
 def parse_partitions(path):
     table = {}
-    for row in csv.reader(line for line in Path(path).read_text().splitlines() if line.strip() and not line.startswith('#')):
+    for row in csv.reader(line for line in Path(path).read_text(encoding='utf-8').splitlines() if line.strip() and not line.startswith('#')):
         row = [c.strip() for c in row]
         table[row[0]] = dict(type=row[1], subtype=row[2], offset=int(row[3], 0), size=int(row[4], 0))
     for name in ('nvs', 'app0') + DATA_PARTITIONS:
@@ -88,7 +97,7 @@ def build_dir(name):
 def build(name, run):
     """Build one sketch (a key of SKETCHES)."""
     fqbn = SKETCHES[name]
-    cli = str(CLI) if CLI.exists() else shutil.which('arduino-cli')
+    cli = hostos.arduino_cli()
     if not cli:
         raise RuntimeError('Install Arduino IDE or arduino-cli and ESP32 core 3.3.11')
     before = source_hash(name)
@@ -100,8 +109,8 @@ def build(name, run):
     for library in LIBRARIES:
         args += ['--libraries', str(library)]
     run(args + ['--build-path', str(out / 'cache'), '--output-dir', str(out), str(ZONES / 'firmware' / name)], timeout=900)
-    options = json.loads((out / 'cache/build.options.json').read_text())
-    if any(Path(folder).resolve() != CORE.resolve() for folder in options['hardwareFolders'].split(',')):
+    options = json.loads((out / 'cache/build.options.json').read_text(encoding='utf-8'))
+    if not all(hostos.same_folder(folder, CORE) for folder in options['hardwareFolders'].split(',')):
         raise RuntimeError('Build used an unexpected ESP32 core; select version 3.3.11')
     if source_hash(name) != before:
         raise RuntimeError('Source changed during build; rebuild before flashing')
@@ -116,7 +125,7 @@ def build(name, run):
                     segments=segments, data={p: partitions[p] for p in DATA_PARTITIONS}, source_hash=before)
     manifest['build_hash'] = hashlib.sha256(json.dumps(segments, sort_keys=True).encode()).hexdigest()
     temp = out / 'manifest.json.tmp'
-    temp.write_text(json.dumps(manifest, indent=2))
+    temp.write_text(json.dumps(manifest, indent=2), encoding='utf-8', newline='\n')
     temp.replace(out / 'manifest.json')
     return manifest
 
@@ -127,7 +136,7 @@ def load_manifest(name):
     path = out / 'manifest.json'
     if not path.exists():
         raise ValueError('No firmware build yet; choose Build firmware')
-    m = json.loads(path.read_text())
+    m = json.loads(path.read_text(encoding='utf-8'))
     if m.get('sketch') != name or m['fqbn'] != fqbn:
         raise ValueError('Firmware target mismatch; rebuild')
     if m['source_hash'] != source_hash(name):

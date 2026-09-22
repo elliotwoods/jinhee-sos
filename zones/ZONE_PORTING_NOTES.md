@@ -8,7 +8,9 @@ All current tag zones are already ported (see the table in `README.md`). A new z
 2. **Set the version.** `constexpr const char *FIRMWARE_VERSION = "<prefix>-<semver>";` (at most 15 chars). Add the prefix to `FIRMWARE_PREFIX` in `flasher/zone_build.py`.
 3. **Configure the plate.**
    - Create `TagPlate plate;`.
-   - Set `TagPlateOptions` (`banner`, `zoneType`, or `0` to take the zone from flash).
+   - Set `TagPlateOptions` (`banner`, `zoneType`, or `0` to take the zone from flash). `zoneType` is the plate *kind*
+     (`ZoneType` in `NctZoneProtocol.h`); the core sends `cubeZoneFor(kind)` to the cube, which is the kind itself for
+     1-4 and `ZONE_IDLE` for `ZONE_RESET` (5). A new kind that needs a new cube value cannot be added: the cube firmware is frozen.
    - Set the hooks:
      - `onTagEnter(uid, len, cube)` and `onTagLeave(uid, len, cube)`. `cube` is null for unregistered tags. The core has already sent `MSG_SET_ZONE` before `onTagEnter` runs, and keeps repeating it for up to three seconds (see `ZONE_REPEAT_MS` in `NctTagPlate.h`); set `options.repeatZone = false` only if a plate has a reason not to. Anything the hook sends to the same cube straight afterwards can overwrite the colour inside the cube, which is exactly what those repeats are for.
      - `onSerial(line)` for extra console commands, and `onReport()` for extra `?` lines (printed before `READY`).
@@ -18,7 +20,7 @@ All current tag zones are already ported (see the table in `README.md`). A new z
    - Extra messages to the cube: `plate.sendToCube(cube, MSG_…, value)`.
    - Anything else: `plate.sendFrame(mac, data, len, /*pinned*/true)`. Never send 24-byte frames that are not a cube `Packet`, and never send 2-byte frames.
 5. **Use flash for zone identity.** Read `plate.config.pointId` and `plate.params.values[]` (integers, written by the flasher). Validate them, and set `ERR_PARAMS`/`ERR_SENSOR` via `plate.link.setError()` when something is missing. Never guess a point or radio ID.
-6. **Register it.** In `flasher/zone_build.py`, add the sketch to `SKETCHES` and a `PROFILES` entry (label, sketch, `zone_type`, points, default name, params as `(label, default, multiplier)`). If legacy boards with a recognisable banner exist, add a signature to `zone_detect.SIGNATURES`.
+6. **Register it.** In `flasher/zone_build.py`, add the sketch to `SKETCHES` and a `PROFILES` entry (label, sketch, `zone_type`, points, default name, params as `(label, default, multiplier)`). If legacy boards with a recognisable banner exist, add a signature to `zone_detect.SIGNATURES`. A new plate kind also goes into `ZONE_TYPES` in `tools/zonedb.py` and `web/src/lib/model.ts` together (that dict is what lets the flasher write the `zcfg`).
 7. **Test it.** Write `tests/test_<Name>.cpp` (include the sketch, then `sketch_test.h`), add the name to `SKETCHES` in `tests/run_firmware_tests.py`, and add stubs in `tests/stubs/zone_stubs.h` for new hardware APIs.
 
 ## Decisions made while porting (keep consistent)

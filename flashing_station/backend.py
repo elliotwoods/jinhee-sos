@@ -14,6 +14,7 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 from core import ROOT, Store, PortLock, atomic_json, timestamp, PROTECTED, digest
+import hostos
 
 TOOL_ENTRY = Path(__file__).resolve().with_name('esptool_entry.py')
 
@@ -49,7 +50,7 @@ class Runner:
     def __init__(self, emit, logfile=None): self.emit,self.logfile=emit,logfile
     def line(self,line):
         if self.logfile:
-            with self.logfile.open('a') as f: f.write(line+'\n')
+            with self.logfile.open('a',encoding='utf-8') as f: f.write(line+'\n')
         self.emit('log',line)
         m=re.search(r'(\d+(?:\.\d+)?)\s*%',line)
         if m: self.emit('progress',float(m[1]))
@@ -59,8 +60,10 @@ class Runner:
         env=os.environ.copy()
         for key in ('PYTHONHOME','PYTHONEXECUTABLE','__PYVENV_LAUNCHER__'):
             env.pop(key,None)
+        env['PYTHONUTF8']='1'  # the tool's output is decoded as UTF-8 below, whatever the console codepage
         p=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                           text=True,bufsize=1,env=env,cwd=str(TOOL_ENTRY.parent))
+                           text=True,encoding='utf-8',errors='replace',bufsize=1,env=env,cwd=str(TOOL_ENTRY.parent),
+                           **hostos.quiet_kwargs())
         q=queue.Queue()
         def read():
             for line in p.stdout: q.put(line.rstrip())
@@ -179,7 +182,7 @@ class Flasher:
             record.update(result=result,detail=detail,finished_at=timestamp(),written=written)
             receipt=folder/'receipt.json'
             if receipt.exists():
-                record=json.loads(receipt.read_text());result='save_failed';detail='Hardware result saved locally; database save failed: '+str(exc)
+                record=json.loads(receipt.read_text(encoding='utf-8'));result='save_failed';detail='Hardware result saved locally; database save failed: '+str(exc)
             else: atomic_json(receipt,record)
             runner.line(detail)
             try: db.update_run(ident,result=result,detail=detail,finished_at=timestamp())

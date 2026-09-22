@@ -98,17 +98,17 @@ class InventoryTests(unittest.TestCase):
         self.a.reserve(M1); self.a.rename(M1, 100); stamp(self.a, M1, LATE)
         sync(self.a, self.folder)
         path = self.folder / '020000000002.json'
-        path.write_text(json.dumps(record(M2, cube_id=100)))
+        path.write_text(json.dumps(record(M2, cube_id=100)), encoding='utf-8')
         sync(self.b, self.folder)
         self.assertEqual((self.b.get(M1)['cube_id'], self.b.get(M2)['cube_id']), (100, None))
-        self.assertIsNone(json.loads(path.read_text())['cube_id'])
+        self.assertIsNone(json.loads(path.read_text(encoding='utf-8'))['cube_id'])
 
     def test_deleted_record_and_conflict_markers(self):
         path = next(self.folder.glob('*.json'))
-        content = path.read_text(); path.unlink()
+        content = path.read_text(encoding='utf-8'); path.unlink()
         sync(self.b, self.folder)  # nothing is ever deleted: the record is restored
-        self.assertEqual(path.read_text(), content)
-        path.write_text('<<<<<<< HEAD\n'+content)
+        self.assertEqual(path.read_text(encoding='utf-8'), content)
+        path.write_text('<<<<<<< HEAD\n'+content, encoding='utf-8')
         with self.assertRaises(ValueError):
             sync(self.b, self.folder)
 

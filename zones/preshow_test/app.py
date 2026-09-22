@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / 'rangetest'))
 sys.path.insert(0, str(ROOT / 'pairing_station'))
 from serial_open import open_serial          # noqa: E402  native USB-JTAG safe open
 from port_lock import PortLock               # noqa: E402
+import hostos                                # noqa: E402
 
 BG, PANEL, TEXT, MUTED, ACCENT = '#101820', '#1c2833', '#eff7fa', '#a7bac7', '#52e0bd'
 WARN, ALERT = '#e0c352', '#e08a7a'
@@ -103,7 +104,7 @@ class App:
         self.bridge = self.label(panel, '', 11)
         self.bridge.pack(anchor='w', pady=(4, 0))
 
-        self.log = tk.Text(outer, height=12, bg=PANEL, fg=MUTED, font=('Menlo', 10),
+        self.log = tk.Text(outer, height=12, bg=PANEL, fg=MUTED, font=(hostos.MONO_FONT, 10),
                            relief='flat', state='disabled')
         self.log.pack(fill='both', expand=True, pady=(16, 0))
         self.log.tag_configure('cue', foreground=ACCENT)

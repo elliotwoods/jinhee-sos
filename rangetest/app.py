@@ -4,6 +4,7 @@
 Screen only. Nothing is written to disk.
 """
 import argparse
+import sys
 import time
 from collections import deque
 import tkinter as tk
@@ -16,6 +17,8 @@ from serial_open import open_serial
 BG, CARD, TEXT, MUTED = '#101720', '#1b2633', '#e9f0f7', '#a5b5c8'
 GREEN, AMBER, BLUE, RED, LINE = '#54d6a0', '#ffc16b', '#82b8fa', '#ff647d', '#2a3849'
 PLOT = '#151e2a'
+# Standalone app (no shared modules on its path): the monospace face per host OS.
+MONO = 'Menlo' if sys.platform == 'darwin' else 'Consolas' if sys.platform == 'win32' else 'DejaVu Sans Mono'
 
 RSSI_TOP, RSSI_BOTTOM = -10, -100   # dBm window drawn on the signal charts
 MINUTE, HALF_HOUR = 60, 1800
@@ -174,7 +177,7 @@ class App:
         self.build_charts(frame)
         self.build_leds(frame)
 
-        self.log = tk.Text(frame, height=4, bg='#0b1119', fg=MUTED, font=('Menlo', 10),
+        self.log = tk.Text(frame, height=4, bg='#0b1119', fg=MUTED, font=(MONO, 10),
                            relief='flat', state='disabled', padx=10, pady=6,
                            highlightthickness=0, borderwidth=0)
         self.log.pack(fill='x', pady=(14, 0))
@@ -349,7 +352,7 @@ class App:
             value = RSSI_TOP - step * (RSSI_TOP - RSSI_BOTTOM) / 4
             y = 8 + step * (height - 26) / 4
             canvas.create_line(38, y, width, y, fill=LINE)
-            canvas.create_text(32, y, anchor='e', fill=MUTED, font=('Menlo', 9),
+            canvas.create_text(32, y, anchor='e', fill=MUTED, font=(MONO, 9),
                                text=f'{value:.0f}')
         coordinates = []
         for timestamp, rssi, _noise, _gap in points:
@@ -364,7 +367,7 @@ class App:
         elif not points:
             canvas.create_text(width / 2, height / 2, fill=MUTED, font=('Helvetica', 11),
                                text='No packets yet')
-        canvas.create_text(width - 4, height - 6, anchor='e', fill=MUTED, font=('Menlo', 9),
+        canvas.create_text(width - 4, height - 6, anchor='e', fill=MUTED, font=(MONO, 9),
                            text='dBm  ·  now at right')
 
     def draw_loss(self, canvas, points, span):
@@ -376,7 +379,7 @@ class App:
         for fraction, text in ((0.0, '100'), (0.5, '50'), (1.0, '0')):
             y = top + fraction * (base - top)
             canvas.create_line(38, y, width, y, fill=LINE)
-            canvas.create_text(32, y, anchor='e', fill=MUTED, font=('Menlo', 9), text=text)
+            canvas.create_text(32, y, anchor='e', fill=MUTED, font=(MONO, 9), text=text)
 
         # A filled area rather than one bar per sample: at 1 Hz the bars are ten
         # pixels apart and read as scattered dots rather than as a flat zero.
@@ -415,7 +418,7 @@ class App:
             canvas.create_oval(x, top, x + size, top + size, fill=fill,
                                outline='#33465c' if dark else fill, width=1)
             canvas.create_text(x + size / 2, top + size + 12, text=str(index), fill=MUTED,
-                               font=('Menlo', 9))
+                               font=(MONO, 9))
 
     def repaint(self):
         receiver = self.receiver

@@ -1,4 +1,3 @@
-import fcntl
 from pathlib import Path
 import sys
 import tempfile
@@ -6,6 +5,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from database import Database
+import hostos
 from fake_web_inventory import FakeWebInventory
 from inventory_sync import sync as git_sync
 from unittest.mock import patch
@@ -136,7 +136,7 @@ class WebSyncTests(unittest.TestCase):
         self.edit('a', lambda db: (db.reserve(MAC), db.rename(MAC, 100))); self.sync('a')
         self.edit('b', lambda db: (db.reserve('02:00:00:00:00:02'), db.rename('02:00:00:00:00:02', 101)))
         with self.paths['b'].with_suffix('.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            hostos.lock_file(lock, blocking=True)
             result = self.sync('b')
             self.assertFalse(result['applied'])
             self.assertEqual(result['unapplied'], 1)

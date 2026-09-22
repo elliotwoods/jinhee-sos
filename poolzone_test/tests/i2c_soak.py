@@ -1,20 +1,25 @@
-"""Live register-verified soak, mode fault recovery, and USB-monitor absence test."""
+"""Live register-verified soak, mode fault recovery, and USB-monitor absence test.
+
+Usage: i2c_soak.py [SENDER_PORT [CENTRAL_PORT]]  (defaults: the bench Mac's ports; on Windows pass COMn)
+"""
 import json
+import sys
 import time
 from pathlib import Path
 import serial
 
 ALL=(1<<23)-1
+TX_PORT,RX_PORT=(sys.argv[1:3]+['/dev/cu.usbmodem101','/dev/cu.usbmodem2101'][len(sys.argv[1:3]):])
 log=Path(__file__).resolve().parents[1]/'build/i2c-soak.log'
 
 class Rig:
     def __init__(self):
-        self.tx=serial.Serial('/dev/cu.usbmodem101',115200,timeout=0,write_timeout=1,exclusive=True)
-        self.rx=serial.Serial('/dev/cu.usbmodem2101',115200,timeout=0,write_timeout=1,exclusive=True)
+        self.tx=serial.Serial(TX_PORT,115200,timeout=0,write_timeout=1,exclusive=True)
+        self.rx=serial.Serial(RX_PORT,115200,timeout=0,write_timeout=1,exclusive=True)
         self.buffers={'TX':b'','RX':b''}
         self.status={}; self.sender={}; self.events=[]
         self.started=time.monotonic(); self.ping=0
-        self.log=log.open('w')
+        self.log=log.open('w',encoding='utf-8')
     def record(self,line):
         text=f'{time.monotonic()-self.started:8.3f} {line}'
         self.log.write(text+'\n'); self.log.flush()
@@ -104,7 +109,7 @@ try:
         r.read(.2)
         iteration+=1
     r.send('SET 2 16 17 23 0 0'); r.read(.3)
-    r.rx=serial.Serial('/dev/cu.usbmodem2101',115200,timeout=0,write_timeout=1,exclusive=True)
+    r.rx=serial.Serial(RX_PORT,115200,timeout=0,write_timeout=1,exclusive=True)
     r.buffers['RX']=b''
     after=r.check([2,16,17,23],5)
     assert after['uptime_ms']>before['uptime_ms']+40000,after

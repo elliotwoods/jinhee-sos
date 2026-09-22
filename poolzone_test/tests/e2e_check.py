@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     output = Path(__file__).resolve().parents[1] / 'build' / 'e2e-latest.log'
     output.parent.mkdir(exist_ok=True)
-    with output.open('w') as log, serial.Serial(args.sender, 115200, timeout=0, write_timeout=1, exclusive=True) as tx, serial.Serial(args.central, 115200, timeout=0, exclusive=True) as rx:
+    with output.open('w', encoding='utf-8') as log, serial.Serial(args.sender, 115200, timeout=0, write_timeout=1, exclusive=True) as tx, serial.Serial(args.central, 115200, timeout=0, exclusive=True) as rx:
         buffers = {'TX': b'', 'RX': b''}
         frames = set()
         events = []

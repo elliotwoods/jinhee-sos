@@ -421,6 +421,9 @@ class TagPlate {
     currentCube_ = cube ? *cube : Record{};
     currentDelivery_ = 0;
     currentTagHandle_ = 0;
+    // The value that goes to the cube: the plate kind for 1..4, ZONE_IDLE for a reset plate. The EVT
+    // line reports it (not the kind) so the flasher monitor matches it against the SENT value.
+    const uint8_t cubeZone = cubeZoneFor(zoneType());
     Serial.print("EVT TAG uid=");
     printHex(uid, length);
     if (cube) {
@@ -429,7 +432,7 @@ class TagPlate {
     } else {
       Serial.print(" cube=0 mac=-");
     }
-    Serial.printf(" zone=%u\n", zoneType());
+    Serial.printf(" zone=%u\n", cubeZone);
     if (!cube) {
       link.noteTag(uid, length, 0, TAG_UNKNOWN);
       Serial.println("UNKNOWN CUBE");
@@ -438,9 +441,9 @@ class TagPlate {
       uint32_t handle = link.noteTag(uid, length, cube->cubeID, TAG_PENDING);
       currentTagHandle_ = handle;
       if (flashing_ && flashCube_.cubeID == cube->cubeID) flashing_ = false;  // a real tap wins over a test flash
-      if (zoneType() >= ZONE_PRESHOW && zoneType() <= ZONE_MAINSHOW) {
-        if (!sendToCube(*cube, MSG_SET_ZONE, zoneType(), handle)) currentDelivery_ = -1;
-        startZoneRepeat(*cube, zoneType(), handle);
+      if (zoneSendsColour(zoneType())) {
+        if (!sendToCube(*cube, MSG_SET_ZONE, cubeZone, handle)) currentDelivery_ = -1;
+        startZoneRepeat(*cube, cubeZone, handle);
       } else {
         Serial.println("ZONE TYPE NOT CONFIGURED: cube not updated");
         link.updateTag(handle, TAG_UNCONFIRMED);

@@ -2,6 +2,7 @@
 """Poolzone USB / ESP-NOW light test console."""
 import argparse
 import json
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -9,6 +10,8 @@ import serial
 from serial.tools import list_ports
 
 BG, PANEL, TEXT, MUTED, ACCENT = '#101820', '#1c2833', '#eff7fa', '#a7bac7', '#52e0bd'
+# Standalone app (no shared modules on its path): the monospace face per host OS.
+MONO = 'Menlo' if sys.platform == 'darwin' else 'Consolas' if sys.platform == 'win32' else 'DejaVu Sans Mono'
 
 
 def toggle_member(slots, member):
@@ -97,7 +100,7 @@ class App:
         self.notice.pack(anchor='w', pady=(14,6))
         self.receiver_note = self.label(outer, 'Commanded state only — receiver USB diagnostics not connected.\nPower off other Poolzone radios during testing: this bridge uses radio IDs 1–6.', 11)
         self.receiver_note.pack(anchor='w')
-        self.log = tk.Text(outer, height=4, bg=PANEL, fg=MUTED, font=('Menlo',10), relief='flat', state='disabled')
+        self.log = tk.Text(outer, height=4, bg=PANEL, fg=MUTED, font=(MONO,10), relief='flat', state='disabled')
         self.log.pack(fill='both', expand=True, pady=(14,0))
         root.bind('<Escape>', lambda e: self.all_off())
         root.protocol('WM_DELETE_WINDOW', self.close)

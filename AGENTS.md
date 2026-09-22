@@ -15,7 +15,7 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | NFC pairing station | `pairing_station/firmware/pairing_station/` | PN532 scanning, selected-cube identification, registration relay, zone database distribution |
 | Pairing GUI | `pairing_station/app.py` | Inventory, number assignment, NFC registration, USB pinning, zone controls |
 | Cube USB flasher | `flashing_station/app.py` | Identity checks, builds/uploads, NVS preservation, flash receipts |
-| Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone}/` | NFC-driven show zones; PoolZone also has slider calibration |
+| Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone,ResetZone}/` | NFC-driven show zones; PoolZone also has slider calibration; ResetZone returns a cube to idle (`SET_ZONE 0`) at the end of the show |
 | Shared zone library | `zones/firmware/libraries/NctZone/src/` | Wire protocol, flash database, update transport, tag-plate behavior |
 | Pool central controller | `zones/firmware/PoolCentral/` | Receives `PoolState` from the six pool radios, OR arbitration with per-radio leases, verified PCA9685 output. Not a zone board |
 | Mainshow controller | `zones/firmware/MainshowController/`, `zones/mainshow/app.py` | Makes a cube mainshow-ready (`SET_ZONE 4`) and triggers the main show (`MSG_SHOW_START` = 8, fresh showId ×5) from the app, its BOOT button or a trigger input. Replaces the M5 Core2 show starter. Not a zone board |
@@ -55,6 +55,14 @@ ACK is not independent verification of NVS persistence or visible LED behavior.
 
 All apps use the shared `pairing_station/.venv`. Use its Python, not an unrelated
 system interpreter. Python 3.14 with Tk is the tested Mac configuration.
+
+**Host portability:** macOS is bench-tested; Windows is supported but nobody here can run it. Never
+write `fcntl`, `/tmp`, `os.getuid`, `os.fchmod`, `/dev/cu.*` assumptions, `.venv/bin`, Arduino paths,
+`'Menlo'` or `start_new_session` directly: use `pairing_station/hostos.py`, and give any new branch a
+case in `pairing_station/tests/test_hostos.py` (it drives the Windows code through a fake `msvcrt`).
+Always pass `encoding='utf-8'` to text I/O, plus `newline='\n'` for files committed to git (sources
+and manifests are hashed as raw bytes; `.gitattributes` pins LF). A new app needs both `Launch.command`
+and `Launch.bat`. `.github/workflows/tests.yml` runs the suites on `windows-latest`.
 
 - `pairing_station/database.py`: SQLite schema, migrations, number reservations,
   NFC ownership, audit events, CSV/header export. Reuse these methods for writes.
@@ -229,7 +237,7 @@ There is no guarantee that a historically recorded test count is current. Run an
 report the current suite. A GUI abort in a sandbox/headless process is different
 from a test assertion failure; use a desktop-capable execution environment.
 
-`python scripts/build_all_firmware.py --dry-run` lists twelve maintained firmware
+`python scripts/build_all_firmware.py --dry-run` lists thirteen maintained firmware
 and diagnostic targets. Without `--dry-run`, it builds them, reuses existing cube/
 zone manifest builders, reports failures, and exits nonzero if any fail. No uploads.
 `live files` sketches are historical and are not all part of this build command.

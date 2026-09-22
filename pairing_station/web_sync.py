@@ -8,13 +8,13 @@ The merge never needs a decision (inventory_sync.merge_records). A sync is safe 
 failure: a push is a compare-and-swap on the pushed records, and the baseline moves only at the end.
 """
 from contextlib import contextmanager
-import fcntl
 import json
 from pathlib import Path
 import sqlite3
 import time
 from datetime import datetime, timezone
 from database import Database
+import hostos
 from inventory_sync import (AppsOpen, LocalChanged, _device, _identity, _label, app_locks, apply, load_baseline,
                             merge_records, record_decisions, save_baseline, snapshot, validate)
 import sightings
@@ -45,7 +45,7 @@ class SyncBusy(RuntimeError):
 def sync_lock(database):
     with Path(database).with_suffix('.sync.lock').open('a') as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            hostos.lock_file(handle)
         except BlockingIOError:
             raise SyncBusy('Another app on this computer is syncing right now') from None
         yield

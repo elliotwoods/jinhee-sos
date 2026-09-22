@@ -16,6 +16,7 @@ from tkinter import ttk, simpledialog
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
+import hostos  # noqa: E402
 import web_client  # noqa: E402
 from sync_widget import SyncWidget  # noqa: E402
 from web_client import DEFAULT_DATASET, DEFAULT_SERVER, Unauthorized, WebClient  # noqa: E402
@@ -107,9 +108,9 @@ class App:
         self.tree.tag_configure('download', foreground=GREEN)
         self.tree.pack(side='left', fill='both', expand=True)
         self.tree.bind('<<TreeviewSelect>>', lambda _: self.show_detail())
-        self.detail = tk.Text(middle, width=44, bg=CARD, fg=FG, relief='flat', font=('Menlo', 10), wrap='word', state='disabled')
+        self.detail = tk.Text(middle, width=44, bg=CARD, fg=FG, relief='flat', font=(hostos.MONO_FONT, 10), wrap='word', state='disabled')
         self.detail.pack(side='right', fill='y', padx=(12, 0))
-        self.logbox = tk.Text(outer, height=7, bg=CARD, fg=MUTED, relief='flat', font=('Menlo', 10), state='disabled')
+        self.logbox = tk.Text(outer, height=7, bg=CARD, fg=MUTED, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled')
         self.logbox.pack(fill='x', pady=(12, 0))
         self.update_buttons()
 

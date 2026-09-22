@@ -24,6 +24,14 @@ class UsbIdentityTests(unittest.TestCase):
         self.assertIsNone(native_mac(self.port('adapter serial',vid=0x10C4)))
         self.assertIsNone(native_mac(self.port('FF:FF:FF:FF:FF:FF')))
 
+    def test_windows_port_names(self):
+        port=SimpleNamespace(device='COM7',serial_number='02:00:00:00:00:01',vid=0x303A,location=None)
+        self.assertTrue(eligible(port,{STATION_MAC},set()))
+        self.assertFalse(eligible(port,set(),{'COM7'}))
+        with patch('usb_identify.serial.Serial') as serial:
+            self.assertEqual(identify(port,threading.Event())[0],port.serial_number)
+            serial.assert_not_called()
+
 class FirmwareTests(unittest.TestCase):
     def test_version_requires_matching_mac_and_ready(self):
         mac='02:00:00:00:00:01'

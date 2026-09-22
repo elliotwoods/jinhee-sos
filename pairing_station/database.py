@@ -1,5 +1,4 @@
 """Durable mappings. All access is on the GUI/controller thread."""
-import fcntl
 import csv
 import json
 import os
@@ -7,6 +6,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import hostos
 
 ROOT = Path(__file__).resolve().parent
 
@@ -73,7 +73,7 @@ class Database:
 
     @staticmethod
     def originals():
-        return json.loads((ROOT / 'original_32.json').read_text())
+        return json.loads((ROOT / 'original_32.json').read_text(encoding='utf-8'))
 
     def rows(self):
         return [dict(r) for r in self.conn.execute('SELECT * FROM devices ORDER BY cube_id')]
@@ -255,7 +255,7 @@ class Database:
     def export_csv(self, path):
         path = Path(path)
         with path.with_suffix(path.suffix + '.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            hostos.lock_file(lock, blocking=True)
             temp = path.with_name(path.name + f'.{os.getpid()}.tmp')
             fields = ['cube_id', 'mac', 'uid', 'pending_uid', 'source', 'status', 'updated_at', 'detail']
             try:
@@ -287,7 +287,7 @@ class Database:
             mac = ','.join('0x' + b for b in r['mac'].split(':'))
             data.append(f'  {{{r["cube_id"]},{len(r["uid"].split(":"))},{{{uid}}},{{{mac}}}}},')
         data += ['};', 'const int CUBE_COUNT = sizeof(cubeTable) / sizeof(cubeTable[0]);', '']
-        Path(path).write_text('\n'.join(data))
+        Path(path).write_text('\n'.join(data), encoding='utf-8', newline='\n')  # committed C++ header: LF on every OS
 
     def close(self):
         self.conn.close()

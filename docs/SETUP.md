@@ -14,15 +14,19 @@ All shell commands below start in the repository root unless stated otherwise.
 | Move ongoing registration work | Shared inventory sync or a private SQLite backup; a clone alone is not the full local state |
 | Run software tests | Python dependencies; desktop session for Tk; C++ compiler for host firmware tests |
 
-**macOS is the supported, tested workstation environment.** The setup script accepts
+**macOS is the bench-tested workstation environment.** The setup script accepts
 Python 3.11+, but Python 3.14 with Tk is the tested configuration. Python environments
 are not portable: recreate `.venv` on the destination machine.
 
-Linux is a porting path, not a verified drop-in setup: install Tk and serial permissions,
-then adapt macOS Arduino paths, GUI launchers, and any device-path assumptions.
-Windows additionally needs replacements for `fcntl` file/port locks, Unix virtualenv
-paths in VS Code/launchers, and platform-specific tooling. The setup script's Windows
-interpreter-path branch does not mean the whole application supports Windows.
+**Windows is ported but has never touched the hardware.** Every host difference lives in
+`pairing_station/hostos.py` (file locks, temp/lock folder, port names, venv layout, Arduino
+paths, fonts, child processes); the Windows branches are unit-tested through a fake `msvcrt`
+and run for real in the GitHub Actions `windows-latest` job (`.github/workflows/tests.yml`).
+Serial ports, esptool flashing and audio cannot be covered there: work through the
+[Windows bring-up checklist](#windows-bring-up-checklist) the first time, see section 2b.
+
+Linux uses the macOS (POSIX) branches and is not verified: install Tk, give your user
+serial-port permission (`dialout`), and expect no audio cues and no bundled launchers.
 
 ## 2. Prepare another Mac
 
@@ -78,6 +82,45 @@ If setup reports missing or modified firmware artifacts, obtain the complete
 bundled files from the repository or rebuild them. Do not suppress hash validation.
 If inventory sync reports conflicts, follow section 4 instead of deleting the DB.
 
+## 2b. Prepare a Windows PC
+
+1. Install **Python 3.14** from python.org (keep *tcl/tk and IDLE* and the *py launcher* ticked) and
+   **Git for Windows**. `py -3 -m tkinter` must open a small test window.
+2. Clone into a short path without deep nesting, e.g. `C:\nct\jinhee-sos`. ESP32 builds create very
+   long object paths: run `git config --global core.longpaths true`, and enable Windows long paths if you
+   will build firmware. `.gitattributes` forces LF on checkout whatever `core.autocrlf` says; firmware
+   source hashes and the bundled build manifest depend on that, so do not convert line endings.
+3. Double-click **`Setup.bat`** (or `py -3 scripts\setup.py`). Then start any app with the
+   **`Launch.bat`** beside its `Launch.command`. The launchers keep a console window open: a startup
+   error stays readable there. From a terminal the equivalent of every `pairing_station/.venv/bin/python`
+   in this document is `pairing_station\.venv\Scripts\python.exe`.
+4. Ports are `COM3`-style names. An ESP32-C3 on its native USB needs no driver on Windows 10/11;
+   CP210x/CH340 adapter boards need the vendor driver. Close Arduino Serial Monitor first: Windows
+   serial ports are always exclusive.
+5. Firmware builds look for Arduino IDE 2's bundled `arduino-cli.exe` (per-user or Program Files install),
+   then `arduino-cli` on PATH; the ESP32 core is expected in `%LOCALAPPDATA%\Arduino15`.
+6. Host firmware simulations need a `g++` or `clang++` on PATH (MinGW-w64 or LLVM), or set `CXX`.
+   They run without sanitizers on Windows.
+7. Secrets: the stored web password and the local API token are owner-only (0600) on macOS. Windows has
+   no mode bits, so they rely on the folder's ACL: keep the checkout inside your own user profile.
+
+### Windows bring-up checklist
+
+CI proves imports, locks, paths, encodings and the sync logic. With a board plugged in, confirm once:
+
+- [ ] Pairing station **Connect** does not reset the board (DTR/RTS are set before the port opens in
+      `pairing_station/transport.py`, `usb_identify.py`, `rangetest/serial_open.py`; the Windows USB
+      serial driver is the unknown).
+- [ ] Cube flasher: a cube is detected with its MAC, flashes, verifies, and reboots. Watch for a spurious
+      *USB identity changed*: the identity key is serial number, then USB location, then the COM name
+      (`flashing_station/backend.py: ports`), and some drivers report neither of the first two.
+- [ ] Zone flasher detect + flash, and the Zone Database Manager dongle flash (first-time 4 MB backup).
+- [ ] Two copies of one app: the second is refused. Pairing app open + cube flasher: the port is refused.
+- [ ] Audio cues and the volume slider in the cube flasher; monospace log panes (Consolas); mouse-wheel
+      scrolling in the pairing dashboard.
+- [ ] Web Sync stores the password and a second app reuses it; `git status` is clean after
+      `scripts\sync_inventory.py` (no CRLF churn in `inventory/devices/`).
+
 ## 3. Launch the tools
 
 | Tool | Command from repository root |
@@ -90,7 +133,7 @@ If inventory sync reports conflicts, follow section 4 instead of deleting the DB
 | Pool calibration | `pairing_station/.venv/bin/python zones/calibration/app.py` |
 | Pool light test | `pairing_station/.venv/bin/python poolzone_test/app.py` |
 
-The component `Launch.command` files provide Finder launchers. Consult each app's
+The component `Launch.command` files provide Finder launchers (`Launch.bat` on Windows). Consult each app's
 README/`--help` for port and database overrides. Choose ports on the new machine;
 never assume this Mac's `/dev/cu.usbmodem101` or `/dev/cu.usbmodem2101` still applies.
 Close Arduino Serial Monitor and any other process holding the same serial port.
@@ -107,8 +150,9 @@ Debugger extensions, and use Run and Debug:
 - Build all firmwares
 
 Some pool launch entries contain explicit example port arguments: change them for
-your machine. These configs use `pairing_station/.venv/bin/python`. The prerequisite
-entry creates that environment using `python3` on PATH and runs pip; unlike
+your machine (the Windows variants drop them: pick the port in the app). These configs use
+`pairing_station/.venv/bin/python`, or `.venv/Scripts/python.exe` on Windows. The prerequisite
+entry creates that environment using `python3` on PATH (`py -3` on Windows) and runs pip; unlike
 `Setup.command`, it does **not** verify bundled firmware or synchronize inventory.
 Use full setup for a fresh workstation. Check `python3 -m tkinter` if using the
 VS Code prerequisite entry with a different interpreter than `python3.14`.
@@ -268,8 +312,9 @@ arduino-cli core list
 
 Keep the tested core **3.3.11**. ESP-NOW callback signatures and I²C behavior are
 version-sensitive. The build helpers verify the core directory. On macOS they
-expect `~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.11`; a custom Arduino
-data directory needs corresponding build-helper changes. If IDE and CLI are both
+expect `~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.11` (Windows:
+`%LOCALAPPDATA%\Arduino15\...`, Linux: `~/.arduino15/...`; see `hostos.arduino_data_dir`). A custom
+Arduino data directory needs corresponding build-helper changes. If IDE and CLI are both
 installed, ensure they use the same core installation: the builders prefer
 `/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli`.
 
@@ -317,7 +362,8 @@ Then build:
 pairing_station/.venv/bin/python scripts/build_all_firmware.py
 ```
 
-Or choose **Build all firmwares** in VS Code and press F5. Nine targets are included:
+Or choose **Build all firmwares** in VS Code and press F5. Thirteen targets are included (the
+`--dry-run` output is the authoritative list); the zone and diagnostic rows below are the main ones:
 
 | Target | Board/settings | Output |
 |---|---|---|
@@ -325,6 +371,7 @@ Or choose **Build all firmwares** in VS Code and press F5. Nine targets are incl
 | PreshowZone | ESP32-C3 SuperMini, CDC on, no OTA | `zones/build/PreshowZone/` |
 | TagPlateZone | Same | `zones/build/TagPlateZone/` |
 | DesertZone | Same | `zones/build/DesertZone/` |
+| ResetZone | Same | `zones/build/ResetZone/` |
 | PoolZone | Same, including custom data partitions | `zones/build/PoolZone/` |
 | Pairing station | ESP32-C3 dev module, CDC on | `pairing_station/build/` |
 | Pool radio diagnostic | ESP32-C3 SuperMini, CDC on, no OTA | `poolzone_test/build/` |
@@ -350,6 +397,10 @@ built by the aggregate command. Their board, pin, library and network assumption
 must be reviewed separately before intentionally reviving one.
 
 ## 8. Run tests before hardware work
+
+The same suites run on every push in GitHub Actions on `macos-latest` and `windows-latest`
+(`.github/workflows/tests.yml`). On Windows use `pairing_station\.venv\Scripts\python.exe` in the
+commands below; the Windows host-firmware step is informative only (MinGW, no sanitizers).
 
 Python suites (no real device required):
 

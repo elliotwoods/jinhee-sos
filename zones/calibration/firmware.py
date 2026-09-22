@@ -318,7 +318,7 @@ def flash(port_name, emit, database_only=False):
             target=folder/segment['file']
             shutil.copyfile(zone_build.build_dir('PoolZone')/segment['file'],target)
             if zone_build.digest(target)!=segment['sha256']: raise RuntimeError('Build changed while preparing upload.')
-        (folder/'before.json').write_text(json.dumps(dict(report=before,calibration=calibration),indent=2))
+        (folder/'before.json').write_text(json.dumps(dict(report=before,calibration=calibration),indent=2),encoding='utf-8')
         connected=False
         def tool(*args,after='no-reset-stub',timeout=180):
             nonlocal connected
@@ -390,7 +390,7 @@ def flash(port_name, emit, database_only=False):
     # A database-only update does not change the application; report what is running.
     result=dict(port=current['port'],version=before['firmware'] if database_only else manifest['version'],
                 db_version=publication.version,db_count=publication.count,backup=str(backup_path),log=str(folder/'upload.log'))
-    (folder/'result.json').write_text(json.dumps(result,indent=2))
+    (folder/'result.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     emit('stage',('Cube database verified · firmware and calibration untouched · reconnecting…'
                   if database_only else
                   'Firmware and cube database verified · NVS preserved · reconnecting…'))

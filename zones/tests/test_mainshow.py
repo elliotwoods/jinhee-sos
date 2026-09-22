@@ -122,7 +122,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.sent[-1]['cmd'], 'hello')
 
     def test_timeline_matches_the_cube_firmware(self):
-        source = (ROOT.parent / 'flashing_station/firmware/neocore_usb/neocore_usb.ino').read_text()
+        source = (ROOT.parent / 'flashing_station/firmware/neocore_usb/neocore_usb.ino').read_text(encoding='utf-8')
         body = source[source.index('void updateMainShowTimeline()'):source.index('MAIN SHOW TIMELINE END')]
         import re
         ends = [int(v) for v in re.findall(r't\s*<\s*(\d+)\s*\)', body)]

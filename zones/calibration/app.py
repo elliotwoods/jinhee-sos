@@ -15,6 +15,7 @@ from tkinter import ttk, messagebox
 import serial
 from serial.tools import list_ports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'pairing_station'))
+import hostos
 from port_lock import PortLock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'flasher'))
@@ -220,7 +221,7 @@ class App:
         self.registry_button.pack(anchor='w', pady=6)
         self.flash_progress = ttk.Progressbar(firmware_tab, mode='indeterminate')
         self.flash_progress.pack(fill='x')
-        self.flash_log = tk.Text(firmware_tab, height=5, bg=PANEL, fg=DIM, font=('Menlo',10), state='disabled', relief='flat')
+        self.flash_log = tk.Text(firmware_tab, height=5, bg=PANEL, fg=DIM, font=(hostos.MONO_FONT,10), state='disabled', relief='flat')
         self.flash_log.pack(fill='both', expand=True, pady=(8,0))
         self.cube_label = self.label(debug, 'No NeoCube status yet', 20, FG)
         self.cube_label.pack(anchor='w')
@@ -241,7 +242,7 @@ class App:
         self.stability_label = self.label(debug, 'Output stability · waiting for telemetry', 13, GREEN)
         self.stability_label.pack(anchor='w')
         self.label(debug, '150 ms heartbeat · 700 ms tag removal · 1.5 s override watchdog\nCentral packets are broadcasts: queued does not confirm receipt or physical illumination.', 11).pack(anchor='w', pady=8)
-        self.event_log = tk.Text(debug, height=5, bg=PANEL, fg=DIM, font=('Menlo',10), state='disabled', relief='flat')
+        self.event_log = tk.Text(debug, height=5, bg=PANEL, fg=DIM, font=(hostos.MONO_FONT,10), state='disabled', relief='flat')
         self.event_log.pack(fill='both', expand=True)
         # ---- Tuning & recording tab ----
         self.label(tune, 'Guided recording and filter tuning', 20, FG).pack(anchor='w')

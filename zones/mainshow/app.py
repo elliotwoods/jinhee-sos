@@ -11,7 +11,6 @@ Threading: serial I/O runs in Transport's worker and flashing in a worker thread
 SQLite are only touched from the Tk poll callback.
 """
 import argparse
-import fcntl
 import queue
 import sys
 import threading
@@ -23,6 +22,7 @@ from tkinter import messagebox, ttk
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
+import hostos  # noqa: E402
 from database import Database  # noqa: E402
 from transport import Transport  # noqa: E402
 from zone_registry import ZoneStore  # noqa: E402
@@ -313,7 +313,7 @@ class App:
         ttk.Label(clock, text='SHOW CLOCK (EXPECTED: CUBES DO NOT REPORT BACK)', style='CardMuted.TLabel',
                   font=('Helvetica', 10, 'bold')).pack(anchor='w')
         row = ttk.Frame(clock, style='Card.TFrame'); row.pack(fill='x')
-        self.clock_label = tk.Label(row, text='—', bg=CARD, fg=MUTED, font=('Menlo', 30, 'bold'))
+        self.clock_label = tk.Label(row, text='—', bg=CARD, fg=MUTED, font=(hostos.MONO_FONT, 30, 'bold'))
         self.clock_label.pack(side='left')
         self.segment_label = tk.Label(row, text='No show started', bg=CARD, fg=MUTED, font=('Helvetica', 15, 'bold'),
                                       anchor='w', justify='left', wraplength=620)
@@ -327,7 +327,7 @@ class App:
         self.status_label = tk.Label(outer, textvariable=self.status, bg=CARD, fg=BLUE, font=('Helvetica', 14, 'bold'),
                                      anchor='w', padx=14, pady=8, wraplength=920, justify='left')
         self.status_label.pack(fill='x', pady=(10, 8))
-        self.logbox = tk.Text(outer, height=10, bg=CARD, fg=MUTED, relief='flat', font=('Menlo', 10), state='disabled')
+        self.logbox = tk.Text(outer, height=10, bg=CARD, fg=MUTED, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled')
         self.logbox.pack(fill='both', expand=True)
 
     def log(self, text):
@@ -597,7 +597,7 @@ def main():
     instance_lock = args.database.with_suffix('.mainshow.lock').open('a')
     root = tk.Tk()
     try:
-        fcntl.flock(instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        hostos.lock_file(instance_lock)
     except BlockingIOError:
         root.withdraw()
         messagebox.showerror('Mainshow Controller', 'The Mainshow Controller is already open for this database.')

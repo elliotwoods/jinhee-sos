@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Neocore USB Flash Station: native Tk UI with a single serial worker."""
 import argparse
-import fcntl
 import json
 import queue
 import threading
@@ -15,6 +14,7 @@ from build import build
 from audio import Audio
 from identity import describe, usb_mac
 from sync_widget import SyncWidget
+import hostos
 
 BG='#101720'; CARD='#1b2633'; FG='#e9f0f7'; MUTED='#9aafc4'; GREEN='#54d6a0'; BLUE='#82b8fa'; AMBER='#ffc16b'
 
@@ -23,7 +23,7 @@ class App:
         self.root=root;self.path=database;self.simulate=simulate
         database.parent.mkdir(parents=True,exist_ok=True)
         self.lock=database.with_suffix('.flasher.lock').open('a')
-        fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        hostos.lock_file(self.lock)
         self.db=Store(database);self.db.recover()
         self.original_numbers={r['mac']:r['cube_id'] for r in self.db.originals()}
         self.port_macs={}
@@ -104,7 +104,7 @@ class App:
         self.volume=tk.DoubleVar(value=.5);ttk.Scale(footer,from_=0,to=1,variable=self.volume,command=lambda _:self.audio_settings(),length=110).pack(side='left')
         ttk.Button(footer,text='Test sound',command=lambda:self.audio.play('success')).pack(side='left',padx=10)
         ttk.Button(footer,text='Export log…',command=self.export_log).pack(side='right')
-        self.logbox=tk.Text(outer,height=5,bg='#0b1119',fg=MUTED,relief='flat',font=('Menlo',10),state='disabled',wrap='word')
+        self.logbox=tk.Text(outer,height=5,bg='#0b1119',fg=MUTED,relief='flat',font=(hostos.MONO_FONT,10),state='disabled',wrap='word')
         self.logbox.pack(fill='x')
         ttk.Label(outer,text=str(self.path)+('   ·   SIMULATED HARDWARE' if self.simulate else ''),foreground=MUTED,font=('Helvetica',9)).pack(anchor='w',pady=(6,0))
     def audio_settings(self): self.audio.muted=self.mute.get();self.audio.volume=self.volume.get()
@@ -199,7 +199,7 @@ class App:
         n=0
         for receipt in (ROOT/'data/runs').glob('*/receipt.json'):
             try:
-                r=json.loads(receipt.read_text())
+                r=json.loads(receipt.read_text(encoding='utf-8'))
                 current=self.db.conn.execute('SELECT result FROM flash_runs WHERE id=?',(r['id'],)).fetchone()
                 if not current or current[0]==r['result'] or current[0]=='success':continue
                 self.db.update_run(r['id'],result=r['result'],detail=r['detail'],finished_at=r['finished_at']);n+=1
@@ -223,7 +223,7 @@ class App:
         threading.Thread(target=work,daemon=True).start()
     def export_log(self):
         path=filedialog.asksaveasfilename(defaultextension='.log',initialfile='neocore-flash.log')
-        if path:Path(path).write_text('\n'.join(self.logs)+'\n')
+        if path:Path(path).write_text('\n'.join(self.logs)+'\n',encoding='utf-8')
     def scan(self):
         self.scanning=True
         def work():

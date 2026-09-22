@@ -14,6 +14,8 @@ import urllib.error
 from urllib.parse import quote
 import urllib.request
 
+import hostos
+
 DEFAULT_SERVER = os.environ.get('NCT_INVENTORY_SERVER', 'https://nct-inventory.auroravision.xyz')
 DEFAULT_DATASET = os.environ.get('NCT_INVENTORY_DATASET', 'jinhee-sos')
 # The shared password is asked for once and stored on this computer, owner-only and outside git
@@ -25,18 +27,18 @@ STORED = object()  # WebClient(password=STORED): use the stored password (explic
 
 def load_password():
     try:
-        return PASSWORD_FILE.read_text().strip() or None
+        return PASSWORD_FILE.read_text(encoding='utf-8').strip() or None
     except OSError:
         return None
 
 
 def save_password(password):
-    """Atomic, owner-only (0600) write."""
+    """Atomic, owner-only (0600; on Windows the folder's ACL) write."""
     PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(dir=PASSWORD_FILE.parent, prefix='.web_password.')
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, 'w') as handle:
+        hostos.private_file(fd)
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
             handle.write(password + '\n')
         os.replace(temp, PASSWORD_FILE)
     except BaseException:

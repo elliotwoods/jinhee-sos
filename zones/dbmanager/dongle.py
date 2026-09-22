@@ -11,16 +11,15 @@ flasher cannot quietly turn the show trigger back into a relay.
 """
 from pathlib import Path
 import json
-import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'flashing_station'))
 from backend import MAC_RE, Runner, ports, tool_command  # noqa: E402
 from core import PROTECTED, PortLock  # noqa: E402
+import hostos  # noqa: E402  (core puts pairing_station on the path)
 
 BOARD = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'  # same recipe as scripts/build_all_firmware.py
-IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 SEGMENTS = [(0x0, 'bootloader'), (0x8000, 'partitions'), (0xE000, 'boot_app0'), (0x10000, 'app')]
 BOOT_APP0 = slice(0xE000, 0x10000)  # taken from the merged image the build also produces
 BACKUPS = ROOT / 'pairing_station/data/dongle/backups'  # full 4 MB image before the first write to a board
@@ -70,7 +69,7 @@ def build_state(firmware=PAIRING):
 
 
 def build(runner, firmware=PAIRING):
-    cli = str(IDE_CLI) if IDE_CLI.exists() else shutil.which('arduino-cli')
+    cli = hostos.arduino_cli()
     if not cli:
         raise RuntimeError(f'Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 to build the {firmware.label} firmware')
     firmware.build.mkdir(parents=True, exist_ok=True)
@@ -178,7 +177,7 @@ def flash(port, known, folder, emit, force_build=False, firmware=PAIRING):
             tool('read-flash', '0x0', '0x400000', str(partial), timeout=300)
             if not partial.is_file() or partial.stat().st_size != 0x400000:
                 raise RuntimeError('Backup incomplete; nothing was written')
-            partial.rename(backup)
+            partial.replace(backup)
         emit('stage', f'Write {firmware.label} firmware to {mac}')
         args = ['write-flash', '--flash-mode', 'keep', '--flash-freq', 'keep', '--flash-size', 'keep']
         for offset, path in segments:

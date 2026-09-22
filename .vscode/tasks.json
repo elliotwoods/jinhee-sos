@@ -5,9 +5,24 @@
       "label": "Create shared Python environment",
       "type": "process",
       "command": "python3",
-      "args": ["-m", "venv", "${workspaceFolder}/pairing_station/.venv"],
-      "options": {"cwd": "${workspaceFolder}"},
-      "problemMatcher": []
+      "args": [
+        "-m",
+        "venv",
+        "${workspaceFolder}/pairing_station/.venv"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "windows": {
+        "command": "py",
+        "args": [
+          "-3",
+          "-m",
+          "venv",
+          "${workspaceFolder}/pairing_station/.venv"
+        ]
+      }
     }
   ]
 }

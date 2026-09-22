@@ -10,6 +10,7 @@ import base64
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'zones' / 'tools'))
@@ -26,7 +27,8 @@ SETTINGS_COLUMNS = ['rx_gain', 'rx_gain_applied', 'set_result']
 
 
 def _now_iso():
-    return time.strftime('%Y-%m-%dT%H:%M:%S%z')
+    # datetime computes the offset itself; the C runtime's %z is not dependable on Windows.
+    return datetime.now().astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
 
 
 class ZoneStore:

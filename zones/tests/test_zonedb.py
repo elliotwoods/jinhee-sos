@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import zonedb  # noqa: E402
 
-ORIGINALS = json.loads((ROOT.parent / 'pairing_station/original_32.json').read_text())
+ORIGINALS = json.loads((ROOT.parent / 'pairing_station/original_32.json').read_text(encoding='utf-8'))
 
 
 class ZoneDbTests(unittest.TestCase):
@@ -52,6 +52,11 @@ class ZoneDbTests(unittest.TestCase):
             zonedb.config_image(1, 3, 'x' * 16)
         with self.assertRaises(ValueError):
             zonedb.config_image(9, 3, 'bad type')
+        # The reset plate kind (5) is a plate kind only; it round-trips like the cube-valued kinds.
+        self.assertEqual(zonedb.parse_config(zonedb.config_image(5, 1, 'Reset 1')), dict(zone_type=5, point_id=1, name='Reset 1', rx_gain=48))
+        self.assertEqual(zonedb.ZONE_TYPES[5], 'reset')
+        with self.assertRaises(ValueError):
+            zonedb.config_image(6, 1, 'above the last kind')
 
     def test_publication_frames(self):
         records = zonedb.records_from_rows(ORIGINALS)

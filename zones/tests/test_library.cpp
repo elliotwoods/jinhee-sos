@@ -422,12 +422,23 @@ static void testPeers() {
   assert(link.lastError() == ERR_CONFIG);
 }
 
+// Plate kinds vs the value sent to a cube: 1..4 go through unchanged, the reset plate sends idle,
+// and only "unconfigured" (0) sends nothing. 5 itself must never be a cube value.
+static void testZoneKinds() {
+  for (uint8_t kind = ZONE_PRESHOW; kind <= ZONE_MAINSHOW; kind++)
+    assert(zoneSendsColour(kind) && cubeZoneFor(kind) == kind);
+  assert(zoneSendsColour(ZONE_RESET) && cubeZoneFor(ZONE_RESET) == ZONE_IDLE);
+  assert(!zoneSendsColour(ZONE_IDLE) && !zoneSendsColour(6) && !zoneSendsColour(255));
+  assert(ZONE_RESET == 5 && ZONE_MAINSHOW == 4);
+}
+
 int main() {
+  testZoneKinds();
   testProtocol();
   testStorage();
   testUpdates();
   testConfigSave();
   testUniversalVersionUpdate();
   testPeers();
-  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), universal versions, log, identify, reboot, set config, config save, peers");
+  puts("PASS: NctZone protocol, A/B storage, power-loss safety, updates (order/dup/stale/force/timeout/CRC), universal versions, log, identify, reboot, set config, config save, peers, zone kinds");
 }

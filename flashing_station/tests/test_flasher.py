@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -59,9 +60,11 @@ class PolicyTests(unittest.TestCase):
         with patch('core.time.monotonic',return_value=5):s.scan([])
         s.scan([p]);self.assertEqual(s.next(),p)
     def test_shared_port_lock(self):
-        with PortLock('/dev/cu.test-neocore'):
-            with self.assertRaises(RuntimeError):PortLock('/dev/tty.test-neocore')
-        with PortLock('/dev/cu.test-neocore'):pass
+        # One lock per physical port, however it is spelled: macOS lists cu./tty. twins, Windows ignores case.
+        port,alias=('COM250','\\\\.\\com250') if os.name=='nt' else ('/dev/cu.test-neocore','/dev/tty.test-neocore')
+        with PortLock(port):
+            with self.assertRaises(RuntimeError):PortLock(alias)
+        with PortLock(port):pass
     def test_partition_preservation_gate(self):
         self.assertEqual(validate_partition(b'\xff'*4096),'Blank flash')
         def table(offset):return struct.pack('<HBBII16sI',0x50aa,1,2,offset,0x5000,b'nvs',0)+b'\xff'*32
@@ -69,7 +72,7 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_partition(table(0x10000))
         with self.assertRaises(ValueError):validate_partition(b'\0'*4096)
     def test_firmware_has_no_upload_service_and_has_boot_query(self):
-        source=(ROOT/'firmware/neocore_usb/neocore_usb.ino').read_text()
+        source=(ROOT/'firmware/neocore_usb/neocore_usb.ino').read_text(encoding='utf-8')
         for token in ['ArduinoOTA','WiFi.begin(', 'OTA_PASSWORD','startTemporaryOTA']:self.assertNotIn(token,source)
         self.assertIn('esp_wifi_set_channel(2, WIFI_SECOND_CHAN_NONE)',source)
         self.assertIn("Serial.read() == '?'",source)

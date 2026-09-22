@@ -29,8 +29,16 @@ enum MessageType : uint8_t {
   // reach the sketch through TagPlate::onFrame instead. Do not reuse these values.
 };
 
-// Matches the neocube ZoneType enum (value sent in Packet.success of MSG_SET_ZONE).
-enum ZoneType : uint8_t { ZONE_IDLE = 0, ZONE_PRESHOW = 1, ZONE_DESERT = 2, ZONE_POOL = 3, ZONE_MAINSHOW = 4 };
+// Values 0..4 match the neocube ZoneType enum and are what goes on the wire in Packet.success of
+// MSG_SET_ZONE. ZONE_RESET is a plate kind only (zcfg, ZoneStatus, flasher profile, labels): a reset
+// plate sends ZONE_IDLE to the cube, which stops a running show, drops mainshow eligibility and shows
+// the idle colour. The cube firmware is frozen and knows nothing above 4, so 5 must never be sent to
+// a cube: the operator `zone <id> <0-4>` command and the Mainshow controller keep their 0..4 bound.
+enum ZoneType : uint8_t { ZONE_IDLE = 0, ZONE_PRESHOW = 1, ZONE_DESERT = 2, ZONE_POOL = 3, ZONE_MAINSHOW = 4, ZONE_RESET = 5 };
+// True for the plate kinds that command a cube on a tap (everything but "unconfigured").
+inline bool zoneSendsColour(uint8_t kind) { return kind >= ZONE_PRESHOW && kind <= ZONE_RESET; }
+// The Packet.success value a plate of this kind sends to a tapped cube.
+inline uint8_t cubeZoneFor(uint8_t kind) { return kind == ZONE_RESET ? uint8_t(ZONE_IDLE) : kind; }
 
 enum QueryWhat : uint8_t { QUERY_STATUS = 1, QUERY_LOG = 2 };
 

@@ -11,6 +11,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import hostos
+
 
 class AppAPI:
     def __init__(self, app, directory, port=8765):
@@ -105,8 +107,8 @@ class AppAPI:
         self.config.parent.mkdir(parents=True, exist_ok=True)
         # Recreate with private permissions before writing the per-launch token.
         self.config.unlink(missing_ok=True)
-        with self.config.open('x') as file:
-            self.config.chmod(0o600)
+        with self.config.open('x', encoding='utf-8') as file:
+            hostos.private_file(self.config)
             file.write(f'header = "Authorization: Bearer {self.token}"\n')
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

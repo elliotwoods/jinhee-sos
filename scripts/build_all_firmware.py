@@ -3,12 +3,10 @@
 import argparse
 import importlib.util
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-IDE_CLI = Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')
 C3 = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'
 # Kept for a board that cannot read its flash reliably at the default 80 MHz. One pool
 # central did exactly that: it boot-looped on `esp_image: Checksum failed` with the
@@ -32,9 +30,11 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='List targets and output directories without compiling')
     options = parser.parse_args()
     sys.path.insert(0, str(ROOT/'flashing_station'))
+    sys.path.append(str(ROOT/'pairing_station'))
+    import hostos
     cube = load('cube_build', ROOT/'flashing_station/build.py')
     zones = load('zone_build', ROOT/'zones/flasher/zone_build.py')
-    cli = str(IDE_CLI) if IDE_CLI.exists() else shutil.which('arduino-cli')
+    cli = hostos.arduino_cli()
     if not cli and not options.dry_run:
         parser.error('Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 first')
 

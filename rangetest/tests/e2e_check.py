@@ -74,7 +74,7 @@ def main():
         print(__doc__)
         return 2
     LOG.parent.mkdir(parents=True, exist_ok=True)
-    handle = LOG.open('w')
+    handle = LOG.open('w', encoding='utf-8')
 
     def log(text):
         line = f'{time.strftime("%H:%M:%S")} {text}'

@@ -23,7 +23,7 @@ def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def atomic_json(path, data):
     path = Path(path)
     temp = path.with_suffix('.tmp')
-    with temp.open('w') as f:
+    with temp.open('w',encoding='utf-8',newline='\n') as f:  # manifests are committed: same bytes on every OS
         json.dump(data, f, indent=2)
         f.flush(); os.fsync(f.fileno())
     temp.replace(path)
@@ -76,7 +76,7 @@ class Scheduler:
 
 def load_manifest():
     path = ROOT / 'build' / 'manifest.json'
-    m = json.loads(path.read_text())
+    m = json.loads(path.read_text(encoding='utf-8'))
     if m['version'] != VERSION or m['fqbn'] != FQBN: raise ValueError('Firmware target/version mismatch; rebuild')
     if m['source_hash'] != digest(ROOT/'firmware/neocore_usb/neocore_usb.ino'):
         raise ValueError('Firmware source changed; rebuild before flashing')

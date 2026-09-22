@@ -4,6 +4,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from database import Database
+import hostos
 
 ORIGINAL_NUMBERS = {r["mac"]: r["cube_id"] for r in Database.originals()}
 
@@ -145,7 +146,7 @@ class Dashboard:
         self.canvas.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y'); self.canvas.pack(fill='both', expand=True)
         self.canvas.bind('<Button-1>', self.click)
-        self.canvas.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-int(e.delta), 'units'))
+        self.canvas.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-hostos.wheel_units(e), 'units'))
         self.canvas.bind('<Key-Right>', lambda e: self.move(1))
         self.canvas.bind('<Key-Left>', lambda e: self.move(-1))
         self.canvas.configure(takefocus=True)
@@ -156,7 +157,7 @@ class Dashboard:
         detail_frame = ttk.Frame(inspector)
         detail_frame.pack(fill='both', expand=True, pady=8)
         self.detail = tk.Text(detail_frame, bg=BG, fg=TEXT, relief='flat', borderwidth=0, highlightthickness=0,
-                              font=('Menlo', 10), wrap='word', height=6, state='disabled')
+                              font=(hostos.MONO_FONT, 10), wrap='word', height=6, state='disabled')
         detail_scroll = ttk.Scrollbar(detail_frame, command=self.detail.yview)
         self.detail.configure(yscrollcommand=detail_scroll.set)
         detail_scroll.pack(side='right', fill='y')
@@ -190,7 +191,7 @@ class Dashboard:
         self.button(footer, 'Export CSV', app.export_csv).pack(side='right', padx=6)
         ttk.Label(frame, text='LED rings show commands, not measured light output. Discovery identifies protocol compatibility, not exact firmware.', style='Muted.TLabel').pack(anchor='w')
         app.logbox = tk.Text(frame, height=5, bg='#0b1119', fg=MUTED, insertbackground=TEXT,
-                             relief='flat', highlightthickness=0, state='disabled', wrap='word', font=('Menlo', 10))
+                             relief='flat', highlightthickness=0, state='disabled', wrap='word', font=(hostos.MONO_FONT, 10))
         app.logbox.pack(fill='x', pady=(8,0))
         self.filter.trace_add('write', lambda *_: self.reset_scroll())
         self.search.trace_add('write', lambda *_: self.reset_scroll())
@@ -292,7 +293,7 @@ class Dashboard:
                 canvas.create_oval(cx-3,cy-3,cx+3,cy+3,fill=led,outline='')
             canvas.create_text(x+65,y+49,text=LABELS.get(row['status'],row['status']) if row['role']!='excluded' else 'Excluded',anchor='w',fill=color,font=('Helvetica',10))
             canvas.create_text(x+65,y+67,text=label,anchor='w',fill=MUTED,font=('Helvetica',9))
-            canvas.create_text(x+14,y+96,text=row['mac'],anchor='w',fill=TEXT,font=('Menlo',10))
+            canvas.create_text(x+14,y+96,text=row['mac'],anchor='w',fill=TEXT,font=(hostos.MONO_FONT,10))
             age='Not seen' if row['age'] is None else f"Seen {int(row['age'])}s ago"
             canvas.create_text(x+14,y+119,text=('● ACTIVE  ·  ' if active else '')+age,anchor='w',fill=MUTED,font=('Helvetica',10))
             if row['original_number'] is not None:

@@ -1,2 +1,12 @@
+# Same bytes on every OS: firmware source hashes and build manifests are computed over raw file
+# bytes, and the macOS launchers must stay LF even when checked out on Windows.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.bin binary
+*.pdf binary
+*.wav binary
+*.png binary
+*.jpg binary
+
 # Treat each device as one transaction: concurrent changes require an explicit choice.
 inventory/devices/*.json -merge

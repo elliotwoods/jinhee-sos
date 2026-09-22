@@ -76,6 +76,10 @@ class DetectTests(unittest.TestCase):
         regions[0x210000] = zonedb.zcfg_image(1, 2, 'Preshow 2')  # type 1 is shared by two profiles
         zone = zone_detect.from_flash(MAC, self.db, flash(regions))
         self.assertTrue(zone['ambiguous'] and zone['configured'])
+        regions[0x210000] = zonedb.zcfg_image(5, 3, 'Reset 3')  # the reset plate kind has exactly one profile
+        zone = zone_detect.from_flash(MAC, self.db, flash(regions))
+        self.assertEqual((zone['kind'], zone['profile'], zone['point'], zone['name'], zone['zone_type'], zone['ambiguous']),
+                         ('nctzone', 'reset', 3, 'Reset 3', 5, False))
         regions[0x210000] = b''
         self.assertFalse(zone_detect.from_flash(MAC, self.db, flash(regions))['configured'])
         cube = self.db.rows()[0]
@@ -90,6 +94,8 @@ class DetectTests(unittest.TestCase):
         self.assertNotIn('rx_gain', d)  # tagplate-2.1.0 predates the setting
         self.assertEqual(zone_build.profile_for('tagplate-2.1.0', 1), 'preshow_exit')
         self.assertEqual(zone_build.profile_for('pool-2.1.0', 3), 'pool')
+        self.assertEqual(zone_build.profile_for('reset-1.0.0', 5), 'reset')
+        self.assertEqual(zone_build.PROFILES['reset']['sketch'], 'ResetZone')
         self.assertIsNone(zone_build.profile_for('mystery-1', 1))
 
     def test_plan(self):

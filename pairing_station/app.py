@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import fcntl
 from collections import deque
 from http_api import AppAPI
 from dashboard import Dashboard
@@ -17,6 +16,7 @@ from controller import Controller
 from transport import Transport
 from usb_identify import UsbIdentifier
 from sync_widget import SyncWidget
+import hostos
 import sightings
 
 class App:
@@ -94,7 +94,9 @@ class App:
             # Prefer a known station (its MAC is the USB serial number) over zone boards or cubes on USB.
             stations = {mac for mac, role in self.db.roles().items() if role == 'excluded'}
             known = next((p.device for p in found if (p.serial_number or '').upper() in stations), None)
-            self.port.set(known or next((p for p in ports if 'usbmodem' in p), ports[0] if ports else ''))
+            # ESP32 native USB: named usbmodem on macOS, but only the vendor ID says so on Windows (COMn).
+            native = next((p.device for p in found if 'usbmodem' in p.device or p.vid == 0x303A), None)
+            self.port.set(known or native or (ports[0] if ports else ''))
 
     def connect(self):
         if self.transport.port:
@@ -253,7 +255,7 @@ class App:
                 parent=self.root):
             return
         subprocess.Popen([sys.executable, str(ROOT.parent / 'zones' / 'dbmanager' / 'app.py'),
-                          '--database', str(self.db.path)], start_new_session=True)
+                          '--database', str(self.db.path)], **hostos.detached_kwargs())
         self.log('Opened the Zone Database Manager')
 
     def render(self):
@@ -333,7 +335,7 @@ if __name__ == '__main__':
     instance_lock = args.database.with_suffix('.lock').open('a')
     root = tk.Tk()
     try:
-        fcntl.flock(instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        hostos.lock_file(instance_lock)
     except BlockingIOError:
         root.withdraw()
         messagebox.showerror('Pairing station', 'This database is already open in another pairing window.')

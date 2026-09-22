@@ -10,10 +10,12 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 sys.path.insert(0, str(ROOT / 'tools'))
+sys.path.insert(0, str(WORKSPACE / 'scripts'))
+import host_cxx  # noqa: E402
 import zonedb  # noqa: E402
 
 LIBRARY = ROOT / 'firmware/libraries/NctZone/src'
-SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone']
+SKETCHES = ['PreshowZone', 'TagPlateZone', 'DesertZone', 'PoolZone', 'ResetZone']
 # Sketches that are not zone boards (no zcfg/zdb partitions, not a zone-flasher target)
 # but are still compiled for the host against the same stubs.
 EXTRA_SKETCHES = ['PoolCentral', 'PreshowBridge', 'MainshowController']
@@ -43,7 +45,7 @@ def frames(name, publication):
 
 
 def fixtures():
-    rows = json.loads((WORKSPACE / 'pairing_station/original_32.json').read_text())
+    rows = json.loads((WORKSPACE / 'pairing_station/original_32.json').read_text(encoding='utf-8'))
     v1 = zonedb.records_from_rows(rows)
     extra = dict(cube_id=99, mac='02:11:22:33:44:55', uid='04:AA:BB:CC')
     v2 = zonedb.records_from_rows(rows + [extra])
@@ -55,6 +57,7 @@ def fixtures():
     text += array('CONFIG_POINT2', zonedb.config_image(1, 2, 'Preshow 2'))
     text += array('CONFIG_MAINSHOW', zonedb.config_image(4, 0, 'Mainshow Entry'))
     text += array('CONFIG_DESERT', zonedb.config_image(2, 1, 'Desert 1'))
+    text += array('CONFIG_RESET', zonedb.config_image(5, 1, 'Reset 1'))
     text += array('CONFIG_POOL4', zonedb.zcfg_image(3, 4, 'Pool Radio 4', [3830, 430]))
     text += array('CONFIG_POOL_NOCAL', zonedb.config_image(3, 4, 'Pool Radio 4'))
     text += array('FIRST_UID', zonedb.hex_to_bytes(first['uid'], range(1, 8)))
@@ -85,14 +88,14 @@ def fixtures():
 
 
 def main():
-    cube = packet_text((WORKSPACE / 'ForKimchi.ino').read_text())
-    assert packet_text((LIBRARY / 'NctCubeProtocol.h').read_text()) == cube, 'NctCubeProtocol.h Packet differs from ForKimchi.ino'
+    cube = packet_text((WORKSPACE / 'ForKimchi.ino').read_text(encoding='utf-8'))
+    assert packet_text((LIBRARY / 'NctCubeProtocol.h').read_text(encoding='utf-8')) == cube, 'NctCubeProtocol.h Packet differs from ForKimchi.ino'
     # Sketches must use the shared definitions, never a private copy. The pool packet was
     # duplicated across five sketches with nothing cross-checking them; that is what let the
     # live central and the radios drift apart. Match through any attribute, so that a
     # `struct __attribute__((packed)) RadioPacket` cannot slip past a plain substring test.
     for name in SKETCHES + EXTRA_SKETCHES:
-        source = (ROOT / 'firmware' / name / f'{name}.ino').read_text()
+        source = (ROOT / 'firmware' / name / f'{name}.ino').read_text(encoding='utf-8')
         for private in PRIVATE_STRUCTS:
             assert not re.search(rf'struct\s+(?:__attribute__\s*\(\(.*?\)\)\s+)?{private}\b', source), \
                 f'{name} declares its own {private}; include the shared header instead'
@@ -102,17 +105,17 @@ def main():
         for shim in SHIMS:
             path = directory / shim
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('#include "zone_stubs.h"\n')
-        (directory / 'fixtures.h').write_text(fixtures())
-        flags = ['c++', '-std=c++17', '-Wall', '-Wno-unused-function', '-g', '-fsanitize=address,undefined',
+            path.write_text('#include "zone_stubs.h"\n', encoding='utf-8')
+        (directory / 'fixtures.h').write_text(fixtures(), encoding='utf-8')
+        flags = [host_cxx.compiler(), '-std=c++17', '-Wall', '-Wno-unused-function', '-g'] + host_cxx.SANITIZE + [
                  '-I' + str(directory), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(LIBRARY)]
         tests = (['test_library.cpp', 'test_PoolProtocol.cpp', 'test_PreshowProtocol.cpp',
                   'test_OneEuroFilter.cpp', 'test_SliderTuning.cpp'] +
                  [f'test_{name}.cpp' for name in SKETCHES + EXTRA_SKETCHES])
         for test in tests:
-            binary = directory / test.replace('.cpp', '')
-            subprocess.run(flags + [str(ROOT / 'tests' / test)] + sources + ['-o', str(binary)], check=True)
-            subprocess.run([str(binary)], check=True)
+            binary = host_cxx.executable(directory / test.replace('.cpp', ''))
+            subprocess.run(flags + [str(ROOT / 'tests' / test)] + sources + ['-o', binary], check=True)
+            subprocess.run([binary], check=True)
 
 
 if __name__ == '__main__':

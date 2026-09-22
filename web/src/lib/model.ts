@@ -10,7 +10,8 @@ export const KIND_LABELS: Record<string, string> = {
   usb_flash: "USB flash",
   zone_tap: "zone tap",
 };
-export const ZONE_TYPES: Record<number, string> = { 1: "preshow", 2: "desert", 3: "pool", 4: "mainshow" };
+// Plate kinds; mirrors zones/tools/zonedb.py ZONE_TYPES (5 = reset plate, sends the cube to idle).
+export const ZONE_TYPES: Record<number, string> = { 1: "preshow", 2: "desert", 3: "pool", 4: "mainshow", 5: "reset" };
 export const STATUSES = ["acknowledged", "not_transmitted", "awaiting_tag", "needs_number", "pending", "unconfirmed"] as const;
 
 export type SeenEntry = { kind: string; at: string; detail: string; computer: string };

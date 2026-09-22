@@ -1,9 +1,15 @@
 """Launch pinned esptool from our project environment, independent of GUI launch context."""
+import os
 from pathlib import Path
 import site
 import sys
 
-packages = Path(__file__).resolve().parent.parent / 'pairing_station' / '.venv' / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
+environment = Path(__file__).resolve().parent.parent / 'pairing_station' / '.venv'
+# Self-contained on purpose (no hostos import): nothing of ours is on the path yet.
+if os.name == 'nt':
+    packages = environment / 'Lib' / 'site-packages'
+else:
+    packages = environment / 'lib' / f'python{sys.version_info.major}.{sys.version_info.minor}' / 'site-packages'
 # macOS framework/GUI launchers need not preserve the virtualenv in child processes.
 # Put the intended environment first and process its .pth files explicitly.
 sys.path.insert(0, str(packages))

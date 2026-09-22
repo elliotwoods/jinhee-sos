@@ -32,7 +32,10 @@ RX_GAIN_DEFAULT = 48
 SET_NONE, SET_OK, SET_INVALID, SET_UNCONFIGURED, SET_FLASH_FAILED, SET_NOT_APPLIED = range(6)
 SET_RESULTS = {0: '', 1: 'ok', 2: 'invalid value', 3: 'zone unconfigured', 4: 'flash write failed',
                5: 'stored, reader did not accept it'}
-ZONE_TYPES = {1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow'}
+# Plate kinds stored in zcfg / reported in ZoneStatus. 1-4 are also the cube zone values; 5 (reset) is a
+# plate kind only, the plate sends cube zone 0 (idle). Mirrored in web/src/lib/model.ts.
+ZONE_TYPES = {1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow', 5: 'reset'}
+# Cube zone values as reported in a plate's EVT TAG / EVT SENT lines (a reset plate reports 0).
 ZONE_COLORS = {0: ('idle', '#d8d8d8'), 1: ('preshow', '#ff2a1a'), 2: ('desert', '#ffb000'), 3: ('pool', '#1f4dff'), 4: ('mainshow', '#d4ff2a')}
 TAG_RESULTS = {0: 'unknown', 1: 'delivered', 2: 'unconfirmed', 3: 'pending'}
 ERRORS = {0: '', 1: 'zone config invalid', 2: 'database empty', 3: 'NFC reader not found', 4: 'radio init failed',

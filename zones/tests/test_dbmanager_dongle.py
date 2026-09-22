@@ -92,7 +92,9 @@ class DongleTests(unittest.TestCase):
             (self.build / f'{stem}{"" if name == "app" else "." + name}.bin').write_bytes(data)
         (self.build / f'{stem}.merged.bin').write_bytes((self.build / 'pairing_station.ino.merged.bin').read_bytes())
         known = dict(KNOWN, controllers={MAC})
-        with patch.object(dongle.MAINSHOW, 'build', self.build), patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
+        # Both firmwares build into the fixture: the refused write below is the (default) pairing one.
+        with patch.object(dongle.MAINSHOW, 'build', self.build), patch.object(dongle.PAIRING, 'build', self.build), \
+                patch.object(dongle, 'BACKUPS', self.build / 'backups'), \
                 patch.object(dongle, 'build_state', return_value='current'), patch('backend.Runner.__call__', side_effect=self.fake_tool), \
                 patch.object(dongle, 'ports', return_value=[PORT]), patch.object(dongle, 'PortLock', lambda _: contextlib.nullcontext()):
             # The controller cannot be turned back into a relay dongle by the dongle flasher...

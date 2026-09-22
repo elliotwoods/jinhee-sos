@@ -10,7 +10,6 @@ Threading: serial I/O runs in Transport's worker, web and flashing in worker thr
 and SQLite are only touched from the Tk poll callback.
 """
 import argparse
-import fcntl
 import queue
 import sys
 import threading
@@ -22,6 +21,7 @@ from tkinter import messagebox, ttk
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'pairing_station'))
+import hostos  # noqa: E402
 from database import Database  # noqa: E402
 from transport import Transport  # noqa: E402
 from sync_widget import SyncWidget  # noqa: E402
@@ -368,9 +368,9 @@ class App:
         self.gain_button.pack(side='left', padx=(6, 0))
 
         bottom = ttk.Frame(outer); bottom.pack(fill='x')
-        self.detail = tk.Text(bottom, height=8, width=70, bg=CARD, fg=FG, relief='flat', font=('Menlo', 10), state='disabled')
+        self.detail = tk.Text(bottom, height=8, width=70, bg=CARD, fg=FG, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled')
         self.detail.pack(side='left', fill='both', expand=True, padx=(0, 8))
-        self.logbox = tk.Text(bottom, height=8, width=70, bg=CARD, fg=MUTED, relief='flat', font=('Menlo', 10), state='disabled')
+        self.logbox = tk.Text(bottom, height=8, width=70, bg=CARD, fg=MUTED, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled')
         self.logbox.pack(side='left', fill='both', expand=True)
 
     def log(self, text):
@@ -877,7 +877,7 @@ def main():
     instance_lock = args.database.with_suffix('.zonedb.lock').open('a')
     root = tk.Tk()
     try:
-        fcntl.flock(instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        hostos.lock_file(instance_lock)
     except BlockingIOError:
         root.withdraw()
         messagebox.showerror('Zone Database Manager', 'The Zone Database Manager is already open for this database.')

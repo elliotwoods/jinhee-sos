@@ -1,6 +1,6 @@
 # Neocore USB Flash Station
 
-Double-click **Launch.command**. The separate Tkinter window shares the device studio's SQLite inventory. **Auto starts disarmed.** The attached registration station (`3C:0F:02:AD:83:24`) is protected by USB identity before its serial port is opened, and by MAC before any write. Do not use it as a test cube.
+Double-click **Launch.command** (Windows: **Launch.bat**). The separate Tkinter window shares the device studio's SQLite inventory. **Auto starts disarmed.** The attached registration station (`3C:0F:02:AD:83:24`) is protected by USB identity before its serial port is opened, and by MAC before any write. Do not use it as a test cube.
 
 ## Flash cubes
 
@@ -37,7 +37,7 @@ Flash results have their own `flash_runs` table and never replace NFC registrati
 
 ## Development and validation
 
-The launcher reuses `../pairing_station/.venv` (Python 3.14, Tk and pyserial 3.5). Arduino CLI is resolved from the installed Arduino IDE, with a PATH fallback. Flashing runs the Python `esptool_entry.py` launcher, which explicitly loads esptool 5.3.1 from the project environment, avoiding the slow startup of Arduino’s bundled executable. Install dependencies with `../pairing_station/.venv/bin/pip install -r requirements.txt`.
+The launcher reuses `../pairing_station/.venv` (Python 3.14, Tk and pyserial 3.5). Arduino CLI is resolved from the installed Arduino IDE, with a PATH fallback. Audio cues use `afplay` on macOS and `winsound` on Windows. Flashing runs the Python `esptool_entry.py` launcher, which explicitly loads esptool 5.3.1 from the project environment, avoiding the slow startup of Arduino’s bundled executable. Install dependencies with `../pairing_station/.venv/bin/pip install -r requirements.txt`.
 
 From the workspace root:
 

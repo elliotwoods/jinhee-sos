@@ -23,7 +23,13 @@ All are built on the shared tag-plate core (`NctTagPlate.h`). It handles PN532 p
 | Mainshow entrance plate | `TagPlateZone` | `mainshow_enter`, `Mainshow_Tagplate` | cube → MAINSHOW |
 | Desert plate | `DesertZone` | `desert_zone_tagplate(_OTA)` | light panel MOSFET on GPIO1; cube → DESERT; `MSG_TAG_STATE` 1/0 |
 | Pool radio | `PoolZone` | `laser_sensor` | VL53L4CD slider → member 1-23, LED strip on GPIO5, `PoolState` unicast to the pool central controller with a 150 ms heartbeat; cube → POOL |
+| Reset plate (cube → idle) | `ResetZone` | — (new, end of show) | cube → IDLE (dim white 3,3,3): stops a running main show and clears mainshow eligibility. No local hardware |
 
+- **Reset means idle, not off.** The cube firmware is frozen and `MSG_SET_ZONE` 0 (idle) is the only clearing command it
+  has. Nothing can switch a cube's LEDs fully off from outside; only the cube's own show timeline end does that, and a
+  dark cube tapped on the reset plate rises to the dim idle white. The plate's kind is `ZONE_RESET` (5) in `zcfg`, the
+  registry and the web page; the value sent to the cube is 0 (`cubeZoneFor()` in `NctZoneProtocol.h`), and 5 must
+  never be sent to a cube, so the operator `zone <id> <0-4>` command keeps its bound.
 - **No router dependency.** No zone joins the Wi-Fi router any more; the channel is fixed at 2.
 - **Desert OTA is gone.** The cube table now updates over ESP-NOW, so OTA is no longer needed.
 - **Pool calibration and diagnostics.** PoolZone restores NeoCube-gated pool light output and provides an explicitly armed, watchdog-protected Python override. Use [`calibration/Launch.command`](calibration/README.md) for live hardware tracking, control-point interpolation across 23 ticks, ±33% acceptance windows and persistent flash calibration.
@@ -259,7 +265,7 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 | Path | Contents |
 |---|---|
 | `firmware/libraries/NctZone/` | Shared Arduino library: `NctTagPlate.h` (tag-plate application core), `NctCubeProtocol.h` (cube Packet), `NctZoneProtocol.h` (zone wire format), `NctPoolProtocol.h` (pool wire format), `NctPreshowProtocol.h` (preshow media wire format), `NctZoneDb` (slots/config/params), `NctZoneLink` (ESP-NOW updates, status, log, peers), `NctZonePartition.h` |
-| `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone` sketches, each with the same `partitions.csv` |
+| `firmware/<Zone>/` | `PreshowZone`, `TagPlateZone`, `DesertZone`, `PoolZone`, `ResetZone` sketches, each with the same `partitions.csv` |
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
 | `firmware/MainshowController/` | Main show trigger (SET_ZONE 4 / SHOW_START over ESP-NOW, BOOT button, trigger input): not a zone board |

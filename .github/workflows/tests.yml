@@ -1,0 +1,76 @@
+# Hardware-free checks on macOS (the bench platform) and Windows. Nobody develops on Windows, so this
+# job is the only place the Windows branches of pairing_station/hostos.py really run. It cannot cover
+# serial ports, esptool flashing or audio: see "Windows bring-up checklist" in docs/SETUP.md.
+name: tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Line endings survived the checkout (hashed firmware sources must be LF)
+        run: test -z "$(git ls-files --eol | grep 'w/crlf' | grep -v '\.bat$')"
+      - name: Setup (creates pairing_station/.venv, verifies the bundled cube firmware checksums)
+        run: python scripts/setup.py
+      - name: Locate the environment's Python
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then echo "PY=pairing_station/.venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else echo "PY=pairing_station/.venv/bin/python" >> "$GITHUB_ENV"; fi
+      - name: Unit tests
+        run: |
+          status=0
+          for suite in pairing_station/tests flashing_station/tests zones/tests zones/calibration poolzone_test/tests; do
+            echo "::group::$suite"
+            "$PY" -m unittest discover -s "$suite" -p 'test_*.py' || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+      - name: Every app imports
+        run: |
+          for app in pairing_station flashing_station inventory_web poolzone_test rangetest zones/calibration zones/dbmanager zones/flasher zones/mainshow zones/preshow_test; do
+            (cd "$app" && "$GITHUB_WORKSPACE/$PY" -c "import importlib.util as u,sys;sys.path.insert(0,'.');s=u.spec_from_file_location('app_under_test','app.py');m=u.module_from_spec(s);s.loader.exec_module(m);print('ok','$app')") || exit 1
+          done
+      - name: Firmware build plan
+        run: '"$PY" scripts/build_all_firmware.py --dry-run'
+      - name: Host firmware simulations
+        # The firmware logic is OS-independent and gated on macOS; Windows (MinGW g++, no sanitizers) is informative.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          git clone --quiet --depth 1 --branch v7.4.3 https://github.com/bblanchon/ArduinoJson pairing_station/.arduino/libraries/ArduinoJson
+          "$PY" pairing_station/tests/run_firmware_test.py
+          "$PY" zones/tests/run_firmware_tests.py
+          "$PY" registration_console/tests/run_tests.py
+
+  web:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck

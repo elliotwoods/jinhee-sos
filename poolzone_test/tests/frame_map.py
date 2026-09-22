@@ -27,7 +27,7 @@ COUNT = 23
 
 def current_map():
     """POOL_OUTPUT_FOR_MEMBER as a list, so this can never drift from the firmware."""
-    text = HEADER.read_text()
+    text = HEADER.read_text(encoding='utf-8')
     body = re.search(r'POOL_OUTPUT_FOR_MEMBER\[23\]\s*=\s*\{([^}]*)\}', text)
     if not body:
         raise SystemExit(f'Could not find POOL_OUTPUT_FOR_MEMBER in {HEADER}')

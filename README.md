@@ -16,6 +16,11 @@ cd jinhee-sos
 ./flashing_station/Launch.command
 ```
 
+On **Windows**: install Python 3.14 from python.org (with tcl/tk) and Git, clone, then double-click `Setup.bat` and
+`flashing_station\Launch.bat`. Windows is ported and CI-tested but not yet bench-tested: see
+[docs/SETUP.md section 2b](docs/SETUP.md#2b-prepare-a-windows-pc). Wherever this page says
+`pairing_station/.venv/bin/python`, use `pairing_station\.venv\Scripts\python.exe`.
+
 Setup creates a local Python environment, installs pinned dependencies, and verifies the included firmware hashes. An internet connection is needed for setup. Arduino is **not required** to flash the included cube firmware.
 
 1. Connect a Neocore cube using a USB data cable.

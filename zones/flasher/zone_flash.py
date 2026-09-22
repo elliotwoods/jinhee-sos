@@ -35,7 +35,7 @@ MAC_RE = re.compile(r'(?i)MAC:\s*([0-9a-f]{2}(?::[0-9a-f]{2}){5})')
 
 def atomic_json(path, data):
     temp = Path(path).with_suffix('.tmp')
-    temp.write_text(json.dumps(data, indent=2))
+    temp.write_text(json.dumps(data, indent=2), encoding='utf-8')
     temp.replace(path)
 
 

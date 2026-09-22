@@ -12,7 +12,11 @@
         "/dev/cu.usbmodem101"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe",
+        "args": []
+      }
     },
     {
       "name": "Poolzone Light Test",
@@ -27,7 +31,11 @@
         "/dev/cu.usbmodem2101"
       ],
       "cwd": "${workspaceFolder}/poolzone_test",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe",
+        "args": []
+      }
     },
     {
       "name": "Pairing Station",
@@ -39,7 +47,10 @@
         "--connect"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "USB Flash Station",
@@ -48,7 +59,10 @@
       "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
       "program": "${workspaceFolder}/flashing_station/app.py",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "Zone Flasher",
@@ -57,7 +71,10 @@
       "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
       "program": "${workspaceFolder}/zones/flasher/app.py",
       "cwd": "${workspaceFolder}/zones/flasher",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "Zone Database Manager",
@@ -66,7 +83,10 @@
       "python": "${workspaceFolder}/pairing_station/.venv/bin/python",
       "program": "${workspaceFolder}/zones/dbmanager/app.py",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "Mainshow Controller",
@@ -78,7 +98,10 @@
         "--connect"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "Install prerequisites (both apps)",
@@ -95,7 +118,10 @@
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "preLaunchTask": "Create shared Python environment"
+      "preLaunchTask": "Create shared Python environment",
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     },
     {
       "name": "Build all firmwares",
@@ -105,7 +131,10 @@
       "program": "${workspaceFolder}/scripts/build_all_firmware.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "justMyCode": true
+      "justMyCode": true,
+      "windows": {
+        "python": "${workspaceFolder}/pairing_station/.venv/Scripts/python.exe"
+      }
     }
   ]
 }

@@ -20,6 +20,7 @@ import zonedb
 
 sys.path.insert(0, str(WORKSPACE / 'flashing_station'))
 from core import Scheduler  # noqa: E402  (armed intake with reconnect debounce)
+import hostos  # noqa: E402
 from sync_widget import SyncWidget  # noqa: E402  (universal web Sync: inventory + zone database)
 
 BG, CARD, FG, MUTED = '#101720', '#1b2633', '#e9f0f7', '#9aafc4'
@@ -213,7 +214,7 @@ class App:
             self.port_tree.tag_configure(tag, foreground=color)
         self.port_tree.pack(fill='x', pady=(4, 10))
         self.port_tree.bind('<<TreeviewSelect>>', lambda _: self.port_selected())
-        self.log = tk.Text(tab, bg='#0b1119', fg=MUTED, relief='flat', font=('Menlo', 10), state='disabled', wrap='none', height=12)
+        self.log = tk.Text(tab, bg='#0b1119', fg=MUTED, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled', wrap='none', height=12)
         self.log.pack(fill='both', expand=True)
 
     def profile_key(self):
@@ -572,7 +573,7 @@ class App:
         detail.pack(side='left', fill='both', expand=True)
         self.cube_title = tk.StringVar(value='No neocube on the plate')
         ttk.Label(detail, textvariable=self.cube_title, font=('Helvetica', 26, 'bold')).pack(anchor='w')
-        self.cube_detail = tk.Text(detail, height=8, bg=BG, fg=FG, relief='flat', highlightthickness=0, font=('Menlo', 12), state='disabled')
+        self.cube_detail = tk.Text(detail, height=8, bg=BG, fg=FG, relief='flat', highlightthickness=0, font=(hostos.MONO_FONT, 12), state='disabled')
         self.cube_detail.pack(fill='x', pady=(8, 8))
         actions = ttk.Frame(detail)
         actions.pack(anchor='w')
@@ -595,7 +596,7 @@ class App:
             self.history_tree.tag_configure(tag, foreground=color)
         self.history_tree.pack(fill='both', expand=True, pady=(4, 8))
         self.history_tree.bind('<<TreeviewSelect>>', lambda _: self.render_monitor())
-        self.zone_log = tk.Text(tab, bg='#0b1119', fg=MUTED, relief='flat', font=('Menlo', 10), state='disabled', wrap='none', height=6)
+        self.zone_log = tk.Text(tab, bg='#0b1119', fg=MUTED, relief='flat', font=(hostos.MONO_FONT, 10), state='disabled', wrap='none', height=6)
         self.zone_log.pack(fill='x')
 
     def toggle_monitor(self):

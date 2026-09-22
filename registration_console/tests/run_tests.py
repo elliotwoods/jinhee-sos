@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Host simulation of the real sketch: no hardware, radio, or third-party packages."""
-import pathlib, re, subprocess, tempfile
+import pathlib, re, subprocess, sys, tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-source = (ROOT.parent / 'mainshow_enter/mainshow_enter.ino').read_text()
-table = (ROOT / 'CubeTable.h').read_text()
+sys.path.insert(0, str(ROOT.parent / 'scripts'))
+import host_cxx
+source = (ROOT.parent / 'mainshow_enter/mainshow_enter.ino').read_text(encoding='utf-8')
+table = (ROOT / 'CubeTable.h').read_text(encoding='utf-8')
 rows = lambda s: re.findall(r'\{\d+,7,\{[^}]+\},\{[^}]+\}\}', s)
 assert rows(source) == rows(table) and len(rows(table)) == 32
 # Confirm the wire declaration remains identical to the receiver, ignoring whitespace.
 packet = lambda s: re.sub(r'\s+', '', re.search(r'struct Packet\s*\{(.*?)\};', s, re.S)[1])
-assert packet((ROOT / 'registration_console.ino').read_text()) == packet((ROOT.parent / 'ForKimchi.ino').read_text())
+assert packet((ROOT / 'registration_console.ino').read_text(encoding='utf-8')) == packet((ROOT.parent / 'ForKimchi.ino').read_text(encoding='utf-8'))
 stub = r'''
 #pragma once
 #include <cstdint>
@@ -130,9 +132,10 @@ int main() {
 '''
 with tempfile.TemporaryDirectory(prefix='nct-tests-') as d:
     d=pathlib.Path(d)
-    (d/'stub.h').write_text(stub)
+    (d/'stub.h').write_text(stub,encoding='utf-8')
     for name in ['WiFi.h','esp_now.h','esp_wifi.h','freertos/FreeRTOS.h','freertos/queue.h']:
-        p=d/name; p.parent.mkdir(parents=True,exist_ok=True); p.write_text('#include "stub.h"\n')
-    (d/'test.cpp').write_text('#include "'+str(ROOT/'registration_console.ino')+'"\n'+tests)
-    subprocess.run(['c++','-std=c++17','-I'+str(d),str(d/'test.cpp'),'-o',str(d/'test')],check=True)
-    subprocess.run([str(d/'test')],check=True)
+        p=d/name; p.parent.mkdir(parents=True,exist_ok=True); p.write_text('#include "stub.h"\n',encoding='utf-8')
+    (d/'test.cpp').write_text('#include "'+(ROOT/'registration_console.ino').as_posix()+'"\n'+tests,encoding='utf-8')
+    binary=host_cxx.executable(d/'test')
+    subprocess.run([host_cxx.compiler(),'-std=c++17','-I'+str(d),str(d/'test.cpp'),'-o',binary],check=True)
+    subprocess.run([binary],check=True)

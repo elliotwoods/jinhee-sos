@@ -20,6 +20,7 @@ import tkinter as tk
 import traceback
 from tkinter import messagebox, simpledialog
 
+import hostos
 import sync_all
 import web_client
 from web_client import Unauthorized, Unreachable, WebClient, client_name
@@ -32,7 +33,7 @@ COLORS = dict(ok='#54d6a0', pending='#ffc16b', error='#ff7b7b', muted='#9aafc4',
 def open_web_sync(database):
     """The manual view: check, upload/download only, publish/pull the zone DB, conflict decisions."""
     subprocess.Popen([sys.executable, str(ROOT / 'inventory_web' / 'app.py'), '--database', str(database)],
-                     start_new_session=True)
+                     **hostos.detached_kwargs())
 
 
 def describe(status):

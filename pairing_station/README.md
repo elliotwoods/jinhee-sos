@@ -1,6 +1,6 @@
 # NCT NFC pairing station
 
-Double-click **Launch.command** to open the Python GUI and connect to the detected USB station. If needed, select the station USB port and click **Connect**. A discovery round runs on connection; click **Discover** to refresh it. The station uses ESP-NOW channel 2 and the PN532 on SDA GPIO4 / SCL GPIO3. The GUI should say `Connected · NFC ready`.
+Double-click **Launch.command** (Windows: **Launch.bat**) to open the Python GUI and connect to the detected USB station. If needed, select the station USB port and click **Connect**. A discovery round runs on connection; click **Discover** to refresh it. The station uses ESP-NOW channel 2 and the PN532 on SDA GPIO4 / SCL GPIO3. The GUI should say `Connected · NFC ready`.
 
 ## Existing devices
 

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -61,7 +62,8 @@ class APITest(unittest.TestCase):
         self.assertEqual(self.request('/execute', {'code': '1'}, origin='https://example.com')[0], 403)
         self.assertEqual(self.request('/execute', {'code': 1})[0], 400)
         self.assertEqual(self.request('/missing')[0], 404)
-        self.assertEqual(self.api.config.stat().st_mode & 0o777, 0o600)
+        if os.name != 'nt':  # Windows has no mode bits: the file takes the ACL of its folder
+            self.assertEqual(self.api.config.stat().st_mode & 0o777, 0o600)
 
     def test_timeout_keeps_one_job_and_shutdown_cancels_queued_work(self):
         status, job = self.request('/execute', {'code': 'app.marker = 1'})
