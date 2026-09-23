@@ -3,74 +3,159 @@
     "id": "3e35e8c80bde81819f1bdf06368f5d60",
     "url": "https://app.notion.com/p/3e35e8c80bde81819f1bdf06368f5d60"
   },
-  "01": {
+  "H1": {
     "id": "3e35e8c80bde8183b34ccc7cdf168e08",
     "url": "https://app.notion.com/p/3e35e8c80bde8183b34ccc7cdf168e08"
   },
-  "02": {
+  "H2": {
     "id": "3e35e8c80bde817bbc33e1e6dc60c291",
     "url": "https://app.notion.com/p/3e35e8c80bde817bbc33e1e6dc60c291"
   },
-  "03": {
+  "H3": {
     "id": "3e35e8c80bde81cfa79dda915a2aff21",
     "url": "https://app.notion.com/p/3e35e8c80bde81cfa79dda915a2aff21"
   },
-  "04": {
-    "id": "3e35e8c80bde813b93f3f60eb4a893e9",
-    "url": "https://app.notion.com/p/3e35e8c80bde813b93f3f60eb4a893e9"
-  },
-  "05": {
-    "id": "3e35e8c80bde81df9dd3c1b7fb1a68a5",
-    "url": "https://app.notion.com/p/3e35e8c80bde81df9dd3c1b7fb1a68a5"
-  },
-  "06": {
+  "H4": {
     "id": "3e35e8c80bde81e7bbb8c9b1ca36a09f",
     "url": "https://app.notion.com/p/3e35e8c80bde81e7bbb8c9b1ca36a09f"
   },
-  "07": {
-    "id": "3e35e8c80bde8127a2eee16cd4db61d3",
-    "url": "https://app.notion.com/p/3e35e8c80bde8127a2eee16cd4db61d3"
+  "H5": {
+    "id": "3e35e8c80bde814598ccd3cdd3a6b0cc",
+    "url": "https://app.notion.com/p/3e35e8c80bde814598ccd3cdd3a6b0cc"
   },
-  "08": {
-    "id": "3e35e8c80bde811686d1fb3eda4a6fcb",
-    "url": "https://app.notion.com/p/3e35e8c80bde811686d1fb3eda4a6fcb"
+  "H6": {
+    "id": "3e45e8c80bde815d9ab3d3e955052be2",
+    "url": "https://app.notion.com/p/3e45e8c80bde815d9ab3d3e955052be2"
   },
-  "09": {
-    "id": "3e35e8c80bde81faa632cd0a554ea18d",
-    "url": "https://app.notion.com/p/3e35e8c80bde81faa632cd0a554ea18d"
+  "XP": {
+    "id": "3e45e8c80bde8194989fd6f9ddd0ffe6",
+    "url": "https://app.notion.com/p/3e45e8c80bde8194989fd6f9ddd0ffe6"
   },
-  "10": {
-    "id": "3e35e8c80bde81e888eadfd751ccb28f",
-    "url": "https://app.notion.com/p/3e35e8c80bde81e888eadfd751ccb28f"
+  "X01": {
+    "id": "3e45e8c80bde81fdbd82dd2ca1287b80",
+    "url": "https://app.notion.com/p/3e45e8c80bde81fdbd82dd2ca1287b80"
   },
-  "11": {
-    "id": "3e35e8c80bde8120b7defca66aec427f",
-    "url": "https://app.notion.com/p/3e35e8c80bde8120b7defca66aec427f"
-  },
-  "12": {
-    "id": "3e35e8c80bde8149829cc707dce480dd",
-    "url": "https://app.notion.com/p/3e35e8c80bde8149829cc707dce480dd"
-  },
-  "13": {
+  "X02": {
     "id": "3e35e8c80bde817388efd085105be5e6",
     "url": "https://app.notion.com/p/3e35e8c80bde817388efd085105be5e6"
   },
-  "14": {
+  "X03": {
+    "id": "3e35e8c80bde813b93f3f60eb4a893e9",
+    "url": "https://app.notion.com/p/3e35e8c80bde813b93f3f60eb4a893e9"
+  },
+  "X04": {
+    "id": "3e35e8c80bde811686d1fb3eda4a6fcb",
+    "url": "https://app.notion.com/p/3e35e8c80bde811686d1fb3eda4a6fcb"
+  },
+  "X05": {
+    "id": "3e35e8c80bde81faa632cd0a554ea18d",
+    "url": "https://app.notion.com/p/3e35e8c80bde81faa632cd0a554ea18d"
+  },
+  "X06": {
+    "id": "3e35e8c80bde81e888eadfd751ccb28f",
+    "url": "https://app.notion.com/p/3e35e8c80bde81e888eadfd751ccb28f"
+  },
+  "X07": {
+    "id": "3e35e8c80bde8120b7defca66aec427f",
+    "url": "https://app.notion.com/p/3e35e8c80bde8120b7defca66aec427f"
+  },
+  "X08": {
+    "id": "3e35e8c80bde81df9dd3c1b7fb1a68a5",
+    "url": "https://app.notion.com/p/3e35e8c80bde81df9dd3c1b7fb1a68a5"
+  },
+  "X09": {
+    "id": "3e35e8c80bde8127a2eee16cd4db61d3",
+    "url": "https://app.notion.com/p/3e35e8c80bde8127a2eee16cd4db61d3"
+  },
+  "X10": {
+    "id": "3e35e8c80bde8149829cc707dce480dd",
+    "url": "https://app.notion.com/p/3e35e8c80bde8149829cc707dce480dd"
+  },
+  "X11": {
+    "id": "3e45e8c80bde8181af50f30200a0015f",
+    "url": "https://app.notion.com/p/3e45e8c80bde8181af50f30200a0015f"
+  },
+  "X12": {
     "id": "3e35e8c80bde81f49bc3fa0a472f9ae0",
     "url": "https://app.notion.com/p/3e35e8c80bde81f49bc3fa0a472f9ae0"
   },
-  "15": {
+  "X13": {
     "id": "3e35e8c80bde81b987e6cd3863a11645",
     "url": "https://app.notion.com/p/3e35e8c80bde81b987e6cd3863a11645"
-  },
-  "16": {
-    "id": "3e35e8c80bde814598ccd3cdd3a6b0cc",
-    "url": "https://app.notion.com/p/3e35e8c80bde814598ccd3cdd3a6b0cc"
   },
   "v1_root": {
     "id": "3e35e8c80bde815a9934fc0055c20160",
     "url": "https://app.notion.com/p/3e35e8c80bde815a9934fc0055c20160"
   },
-  "published": "2026-09-23",
-  "v1_root_last_edited_check": "2026-09-22T15:38:42.573Z (unchanged after publish)"
+  "legacy_NN": {
+    "01": {
+      "id": "3e35e8c80bde8183b34ccc7cdf168e08",
+      "url": "https://app.notion.com/p/3e35e8c80bde8183b34ccc7cdf168e08"
+    },
+    "02": {
+      "id": "3e45e8c80bde81fdbd82dd2ca1287b80",
+      "url": "https://app.notion.com/p/3e45e8c80bde81fdbd82dd2ca1287b80"
+    },
+    "03": {
+      "id": "3e35e8c80bde817bbc33e1e6dc60c291",
+      "url": "https://app.notion.com/p/3e35e8c80bde817bbc33e1e6dc60c291"
+    },
+    "04": {
+      "id": "3e35e8c80bde81cfa79dda915a2aff21",
+      "url": "https://app.notion.com/p/3e35e8c80bde81cfa79dda915a2aff21"
+    },
+    "05": {
+      "id": "3e35e8c80bde813b93f3f60eb4a893e9",
+      "url": "https://app.notion.com/p/3e35e8c80bde813b93f3f60eb4a893e9"
+    },
+    "06": {
+      "id": "3e35e8c80bde81e7bbb8c9b1ca36a09f",
+      "url": "https://app.notion.com/p/3e35e8c80bde81e7bbb8c9b1ca36a09f"
+    },
+    "07": {
+      "id": "3e35e8c80bde811686d1fb3eda4a6fcb",
+      "url": "https://app.notion.com/p/3e35e8c80bde811686d1fb3eda4a6fcb"
+    },
+    "08": {
+      "id": "3e35e8c80bde81faa632cd0a554ea18d",
+      "url": "https://app.notion.com/p/3e35e8c80bde81faa632cd0a554ea18d"
+    },
+    "09": {
+      "id": "3e35e8c80bde81e888eadfd751ccb28f",
+      "url": "https://app.notion.com/p/3e35e8c80bde81e888eadfd751ccb28f"
+    },
+    "10": {
+      "id": "3e35e8c80bde8120b7defca66aec427f",
+      "url": "https://app.notion.com/p/3e35e8c80bde8120b7defca66aec427f"
+    },
+    "11": {
+      "id": "3e35e8c80bde814598ccd3cdd3a6b0cc",
+      "url": "https://app.notion.com/p/3e35e8c80bde814598ccd3cdd3a6b0cc"
+    },
+    "12": {
+      "id": "3e35e8c80bde81df9dd3c1b7fb1a68a5",
+      "url": "https://app.notion.com/p/3e35e8c80bde81df9dd3c1b7fb1a68a5"
+    },
+    "13": {
+      "id": "3e35e8c80bde8127a2eee16cd4db61d3",
+      "url": "https://app.notion.com/p/3e35e8c80bde8127a2eee16cd4db61d3"
+    },
+    "14": {
+      "id": "3e35e8c80bde8149829cc707dce480dd",
+      "url": "https://app.notion.com/p/3e35e8c80bde8149829cc707dce480dd"
+    },
+    "15": {
+      "id": "3e35e8c80bde817388efd085105be5e6",
+      "url": "https://app.notion.com/p/3e35e8c80bde817388efd085105be5e6"
+    },
+    "16": {
+      "id": "3e35e8c80bde81f49bc3fa0a472f9ae0",
+      "url": "https://app.notion.com/p/3e35e8c80bde81f49bc3fa0a472f9ae0"
+    },
+    "17": {
+      "id": "3e35e8c80bde81b987e6cd3863a11645",
+      "url": "https://app.notion.com/p/3e35e8c80bde81b987e6cd3863a11645"
+    }
+  },
+  "restructured": "2026-09-23: handbook H1-H6 + extended X01-X13 (page ids reused from the NN chapters)"
 }

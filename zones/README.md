@@ -203,11 +203,14 @@ The monitor connects by itself to a detected zone on USB (untick *Connect automa
 `zones/dbmanager/app.py` (Finder: `zones/dbmanager/Launch.command`, VS Code: *Zone Database Manager*;
 the pairing app's **Zones → Zone Database Manager…** opens it too).
 
-- **ESP-NOW dongle.** Any ESP32-C3 running the pairing-station firmware **nct-pairing-1.8-zones** (1.7 works without
-  RX gain control, 1.6 also without signal bars) or the general radio **general-radio-1.0.0**
-  (`firmware/GeneralRadio/`, the same relay plus the Mainshow, pool and preshow functions). Its zone
-  relay needs no NFC reader. **Flash dongle…** builds that firmware if it is missing or stale, identifies the board
-  and writes bootloader, partitions, boot selector and app separately, so NVS is kept. It refuses known cubes, known
+- **ESP-NOW dongle.** Any ESP32-C3 running the Workstation firmware **workstation-1.0.0** (`firmware/Workstation/`:
+  the relay plus the Mainshow, pool and preshow functions and the pairing station's NFC reader), or a legacy board:
+  the frozen pairing-station firmware **nct-pairing-1.8-zones** (1.7 works without RX gain control, 1.6 also
+  without signal bars) or a General Radio **general-radio-1.0.0/1.1.0/1.2.0**. The app recognises the board by the
+  capability fields its `hello` reports (`dongle.py`: `relay_capable`, `rx_gain_capable`…), not its firmware name.
+  Its zone relay needs no NFC reader. **Flash dongle…** writes the Workstation firmware (it used to write the pairing
+  relay), builds it if it is missing or stale, identifies the board and writes bootloader, partitions, boot selector
+  and app separately, so NVS is kept. It refuses known cubes, known
   zone boards and the installed station (3C:0F:02:AD:83:24). It then records the dongle MAC as an `excluded` role so
   the cube and zone flashers leave it alone. Afterwards it reconnects and requires the `hello` to report that firmware.
   The real pairing station also works as the dongle when the pairing app is not holding its port.
@@ -228,11 +231,11 @@ the pairing app's **Zones → Zone Database Manager…** opens it too).
 - **Auto update all** (formerly *Walkaround*; `--auto-update-all`) needs auto-refresh. When no update is running, it starts one broadcast run for every in-range zone
   that is out of date. A zone that does not confirm is retried after 30 s. It never touches newer/different zones.
 - **Signal** column: the dongle's RSSI for each zone, smoothed. `▂▄▆` at −67 dBm or better, `▂▄·` down to
-  −80 dBm, `▂··` below that. Requires dongle firmware 1.7.
+  −80 dBm, `▂··` below that. Requires dongle firmware nct-pairing-1.7 or later, a General Radio or a Workstation.
 - **RX gain** column: the NFC reader gain stored on each zone. *(not applied)* means the reader did not accept it
   (absent, failing or disabled); it is applied again when the reader recovers. `—` means it was never reported:
-  zone firmware before desert/tagplate-2.4.0, pool-3.2.0, preshow-3.3.0, or a dongle before 1.8.
-- **Set RX gain…** (selected, in-range, configured zone; dongle 1.8) sends a unicast `ZONE_SET_CONFIG`. The zone
+  zone firmware before desert/tagplate-2.4.0, pool-3.2.0, preshow-3.3.0, or a dongle before nct-pairing-1.8.
+- **Set RX gain…** (selected, in-range, configured zone; dongle nct-pairing-1.8-zones, general-radio-1.x or workstation) sends a unicast `ZONE_SET_CONFIG`. The zone
   rewrites `zcfg` (identity and calibration are kept), applies the gain to the reader at once without a reboot and
   answers with its settings. The column shows `→ N dB …` until that answer arrives; no answer in 10 s is logged as
   not confirmed. A radio delivery alone is never reported as success.
@@ -284,9 +287,10 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 | `firmware/PoolCentral/` | Pool central controller: not a zone board, no zone partitions, its own board profile |
 | `firmware/PreshowBridge/` | TouchDesigner media bridge: not a zone board, no zone partitions, its own board profile |
 | `firmware/MainshowController/` | Main show trigger (SET_ZONE 4 / SHOW_START over ESP-NOW, BOOT button, trigger input): not a zone board |
-| `firmware/GeneralRadio/` | General radio dongle: the pairing-station relay protocol plus the Mainshow verbs, an emulated pool radio and an emulated preshow plate, driven by `tools/general_radio.py`. Its `README.md` has the protocol. Not a zone board |
+| `firmware/Workstation/` | Workstation (`workstation-1.0.0`, formerly the General Radio sketch `GeneralRadio`): the pairing-station relay protocol and PN532 reader plus the Mainshow verbs, the main-show relay, an emulated pool radio and an emulated preshow plate, driven by `tools/workstation.py`. Its `README.md` has the protocol. Not a zone board |
 | `tools/zonedb.py` | Python definition of every image/frame (used by the database manager, flasher and tests) |
-| `tools/general_radio.py` | General radio client (`GeneralRadio`) and bench command line: `hello`, `discover`, `zones`, `set-zone`, `show-start`, `pool`, `preshow`, `listen`, `flash` |
+| `tools/workstation.py` | Workstation client (`Workstation`; also drives a legacy General Radio) and bench command line: `hello`, `status`, `discover`, `zones`, `set-zone`, `show-start`, `pool`, `preshow`, `listen`, `flash` |
+| `tools/general_radio.py` | Alias of `tools/workstation.py`, kept for old scripts and notes |
 | `dbmanager/` | Zone Database Manager (`app.py`) and ESP-NOW dongle flashing (`dongle.py`, also used for the Mainshow controller) |
 | `mainshow/` | Mainshow Controller app (`app.py`): cube mainshow-ready, show trigger, controller flashing |
 | `flasher/` | GUI (`app.py`), pipeline/CLI (`zone_flash.py`), board identification + auto-flash plan (`zone_detect.py`), cube monitor parsing (`zone_monitor.py`), builds (`zone_build.py`: `SKETCHES`, `PROFILES`) |
@@ -298,10 +302,10 @@ Capacity: 1,819 records per slot (0x8000). A full chunk carries 12 records.
 - Zone firmware: `pairing_station/.venv/bin/python zones/flasher/zone_build.py` (all sketches; pass names to build only some)
   - FQBN `esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc,PartitionScheme=no_ota`, Arduino-ESP32 3.3.11.
   - The sketch's own `partitions.csv` replaces the scheme's table.
-- Pairing station firmware: add `--libraries zones/firmware/libraries` to its compile, e.g.
+- Pairing station firmware (legacy, frozen at nct-pairing-1.8-zones; new boards get the Workstation): add `--libraries zones/firmware/libraries` to its compile, e.g.
   `arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --libraries pairing_station/.arduino/libraries --libraries zones/firmware/libraries pairing_station/firmware/pairing_station`
-- General radio: `scripts/build_all_firmware.py` builds it (`zones/build/GeneralRadio/`);
-  `pairing_station/.venv/bin/python zones/tools/general_radio.py --port <port> flash` builds if stale and writes it
+- Workstation: `scripts/build_all_firmware.py` builds it (`zones/build/Workstation/`);
+  `pairing_station/.venv/bin/python zones/tools/workstation.py --port <port> flash` builds if stale and writes it
   to a spare ESP32-C3 through `dbmanager/dongle.py` (full-flash backup first, NVS kept, refuses cubes/zones/the station).
 - Arduino IDE users: copy `zones/firmware/libraries/NctZone` into the sketchbook `libraries` folder.
 

@@ -31,6 +31,8 @@ def run(hub, name, args=None, token=None):
     if not spec:
         raise ValueError(f'Unknown command {name}')
     args = dict(args or {})
+    if not name.startswith('autoupgrade.') and hasattr(hub, 'touch'):
+        hub.touch(args.get('device'), args.get('mac'))   # automatic upgrades keep off boards the operator is using
     if spec['kind'] == 'destructive':
         hub.check_confirmation(token or args.pop('token', None), name, args)
     else:
@@ -50,6 +52,8 @@ def settings(hub, key, value):
     hub.settings[key] = bool(value)
     hub.save_settings()
     hub.apply_auto_modes()
+    if key == 'auto_sync' and value and hub.workers and hub.auto_web:
+        hub.check_sync_status()        # catch up now rather than at the next minute's check
     return hub.settings
 
 
@@ -447,7 +451,8 @@ def zones_stop(hub, device=None):
 @command('zones.walkaround')
 def zones_walkaround(hub, enabled, device=None):
     """Automatic zone database updates over the air (the persisted `auto_zone_db_radio` setting).
-    Only the preferred relay walks (hub.apply_auto_modes); `device` is accepted for older callers."""
+    Every relay walks the zones its own radio hears, one publishing at a time (hub.apply_auto_modes);
+    `device` is accepted for older callers."""
     hub.settings['auto_zone_db_radio'] = bool(enabled)
     hub.save_settings()
     hub.apply_auto_modes()
@@ -646,6 +651,30 @@ def build_dongle(hub, firmware='workstation'):
 @command('tools.check')
 def tools_check(hub):
     return _job(build_jobs.tools_job(hub))
+
+
+@command('autoupgrade.skip')
+def autoupgrade_skip(hub, device):
+    """Leave this board's firmware alone until it is plugged in again."""
+    hub.autoupgrade.skip(device)
+    return True
+
+
+@command('autoupgrade.retry')
+def autoupgrade_retry(hub, device=None, target=None):
+    """Try a skipped or failed board again (`device`), or a failed automatic build (`target`)."""
+    if target:
+        hub.autoupgrade.retry_build(target)
+    if device:
+        hub.autoupgrade.retry(device)
+    return True
+
+
+@command('autoupgrade.pause')
+def autoupgrade_pause(hub, paused=True):
+    """Hold every automatic build and firmware upgrade until resumed (or the console restarts)."""
+    hub.autoupgrade.pause(paused)
+    return hub.autoupgrade.paused
 
 
 @command('builds.refresh')

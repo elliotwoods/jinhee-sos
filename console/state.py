@@ -74,6 +74,8 @@ def build(hub, dirty):
         out['register'] = hub.regflow.snapshot()
     if 'flash' in dirty and getattr(hub, 'flashflow', None):
         out['flash'] = hub.flashflow.snapshot()
+    if 'autoupdate' in dirty and getattr(hub, 'autoupgrade', None):
+        out['autoupdate'] = hub.autoupgrade.snapshot()
     return out
 
 
@@ -197,9 +199,44 @@ def sync(hub):
     s = hub.sync
     status = s['status'] or dict(state='checking')
     text, tone, detail = describe_sync(status)
+    auto = bool(hub.settings.get('auto_sync'))
+    now = hub.clock()
+    autosync = getattr(hub, 'autosync', {}) or {}
+    due = autosync.get('due')
+    retry_at = autosync.get('retry_at') or 0.0
+    next_in = max(0, round(due - now)) if due is not None else None
+    retry_in = max(0, round(retry_at - now)) if retry_at > now else None
+    if auto:
+        text, tone, detail = describe_auto(status, s, next_in, retry_in, text, tone, detail)
     return dict(status=status, text=text, tone=tone, detail=detail, busy=s['busy'], checked_at=s['checked_at'],
                 last_result=s['last_result'], last_error=s['last_error'], summary=s['summary'],
-                password_known=s['password_known'], plan=s.get('plan'))
+                password_known=s['password_known'], plan=s.get('plan'), auto=auto, next_in=next_in, retry_in=retry_in)
+
+
+def describe_auto(status, s, next_in, retry_in, text, tone, detail):
+    """The Sync chip when the console syncs by itself: say what it will do next, never "click Sync"."""
+    state = status.get('state')
+    manual = ' Click to sync now.'
+    if state in ('signin', 'unauthorized') or not s['password_known']:
+        return ('⟳ Sync · sign in', 'pending' if state != 'unauthorized' else 'error',
+                'Automatic sync needs the web inventory password once on this computer. Click to enter it.')
+    if retry_in is not None:
+        why = (s['last_error'] or {}).get('text') or detail
+        return f'Sync · retry in {fmt_wait(retry_in)}', 'error' if state == 'error' else 'muted', \
+            f'The last automatic sync failed ({why}); it retries by itself.' + manual
+    if state == 'offline':
+        return 'Sync · offline', 'muted', detail + '. Syncs by itself when the web is back.'
+    if next_in is not None:
+        return f'⟳ Sync in {fmt_wait(next_in)}', 'pending', 'A local change syncs by itself in a moment.' + manual
+    if state == 'ok' and (status.get('up') or status.get('down')):
+        return text, 'pending', detail + ' · syncs by itself.' + manual
+    if state == 'ok':
+        return '✓ Synced', 'ok', detail + ' · syncs automatically.' + manual
+    return text, tone, detail
+
+
+def fmt_wait(seconds):
+    return f'{seconds} s' if seconds < 60 else f'{round(seconds / 60)} min'
 
 
 def show(hub):

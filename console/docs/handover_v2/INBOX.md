@@ -1,0 +1,296 @@
+# Documentation inbox
+
+This file queues facts that other sessions send to the documentation owner. Each item is written into the handbook
+(`handbook/`) or the extended reference (`extended/`), then marked **applied** here.
+
+## 2026-09-23 · from jinhee-sos-cf · new-computer setup (code reading plus one user report)
+
+1. **The console falls back to a browser without any error message.** `console/app.py:69` opens a browser when
+   `--browser` is passed, or when `native_available()` is False. That happens when `import webview` fails, or on Windows
+   when `hostos.webview2_available()` (`pairing_station/hostos.py:130`) finds no WebView2 runtime.
+   - Usual cause: running `console/app.py` with the system Python instead of `pairing_station/.venv`.
+   - Fix: always launch through `console/Launch.command` or `Launch.bat`, after running `Setup.command` or `Setup.bat`.
+     `scripts/setup.py` installs `console/requirements.txt`, which includes `pywebview==6.2.1`.
+   - Diagnose: `pairing_station/.venv/bin/python -c "import webview"`.
+   - Evidence: code, plus a user report of the console opening in a browser on a new computer.
+   - Goes to: X10, and an H5 section on the console opening in a browser.
+2. **"SSL: certificate verify failed" during setup on another computer.** The step is unknown: pip or
+   `scripts/sync_inventory.py`.
+   - Likely cause: python.org's macOS Python has no certificates until `/Applications/Python 3.x/Install Certificates.command`
+     has been run. Otherwise, a proxy or antivirus intercepting TLS.
+   - Evidence: user report only; cause not confirmed.
+   - Goes to: X10 (Known issues).
+3. **`scripts/setup.py` needs Python 3.11 or newer with Tk.** It exits with an install hint if Tk is missing. The web
+   inventory also needs `pairing_station/data/web_password`, which is not in git.
+   - Evidence: code.
+   - Goes to: X10.
+
+**Applied to extended:** X10 (2026-09-23): Environments (Python ≥3.11 + Tk check, requirements, `web_password`), new
+"Browser fallback" fact, procedures "The console opens in a browser…" and "SSL: certificate verify failed…", two Known
+issues rows. Verified: `console/app.py::native_available`, `hostos.webview2_available`, `scripts/setup.py`, both launchers.
+**Handbook part pending:** H5 needs a short section "The console opens in a web browser" (launch only through
+`console/Launch.command` / `Launch.bat` after Setup; if it persists, run Setup again; Windows: install WebView2; the
+browser page still works). SSL error and Python version stay X10 only.
+**Applied to handbook** (2026-09-23): H5 new §10 "The console opens in a web browser" (launcher, Setup again, Edge WebView2 on Windows, browser page still works; More detail X10) and a symptom-index row.
+
+## 2026-09-23 · from auto-database-sync · automatic updates (unit tests and simulation only)
+
+There are four saved settings, all on by default. They live in the device database metadata `console_settings` and are
+set from Settings › Automatic updates. `auto_zone_db_radio`, `auto_zone_db_usb` and `auto_show` behave as X08
+describes: the walk-around runs on a single relay; a board that is ahead is left alone; the USB update runs once per
+board per publication.
+
+- `auto_pull` checks every 5 minutes for a newer show while a show relay is connected.
+- `auto_pull` logs only a new pull or each distinct error once. "No show published" is silent.
+- The docs bench (`simdocs`, and so `docshots`) turns all four off, so screenshots show them unticked. The real defaults
+  are on.
+- Tests: `console/tests/test_auto_update.py`.
+- Evidence: Simulation-verified.
+- Goes to: check X08 and X11 for these three details and add any that are missing.
+
+**Applied to extended:** X08, X11 (2026-09-23): show pull every 300 s only with `auto_show` also on; logging (new pull or
+each distinct error once, "No show published…" silent); docs bench turns all five switches off; older saved settings
+load missing keys as on. Verified in `console/hub.py`, `console/jobs/show.py`, `console/simdocs.py`. No handbook change.
+
+## 2026-09-23 · from guided-cube-flash-page · Flash page, NVS show, audio (commit c955d9f unless noted)
+
+Most of this is already in X03 and H3. Verify these points:
+
+- **Top bar:** order and shortcuts are Devices, Flash ⌘2, Register ⌘3, Inventory ⌘4, Show ⌘5, Show editor ⌘6, Bench ⌘7
+  (`components/TopBar.js`; the reorder is uncommitted). The handbook and X pages must use these shortcuts.
+- **Show over USB (NVS):**
+  - The console reads NVS at 0x9000, length 0x5000, and replaces only the `show` namespace.
+  - It then reads the write back byte for byte, and after a reset the cube must answer `SHOW: v=N crc=… src=nvs`.
+  - Result "newer" means the cube keeps its newer show. Firmware before v1.5.0 gives "unsupported".
+  - Run folder files: nvs-show-before/-.bin/-after.bin.
+  - New columns in `flash_runs`: `show_result`, `show_version`.
+- **nvs.py:** byte-identical to esp-idf-nvs-partition-gen 0.3.0. All 342 local backups round-trip. The official
+  generator drops `sta.pswd`.
+- **Cube panel › Firmware:** a "Main show" row and **Update show over USB** (`cube.update_show`).
+- **USB intake race fix:** `intake.next_settled_cube`, `hub.apply_probe_results`. Unit tests pass; not re-tested on
+  hardware.
+- **Audio cues:** each cue and the setting Settings › Behaviour › "Audio cues for USB cube flashing" (on by default,
+  **Test sound**). Silent in simulation. Not heard on real speakers.
+- **Show v5 hardware test:**
+  - Entrance neon [18,20,1]→[20,20,1], crc 1213966328: the first real web publish.
+  - It went over the radio through general-radio-1.2.0 to #17, then NVS was read back and matched the published image
+    byte for byte.
+  - #17 was restored to v4, then the USB write was done: the cube reported v5 from NVS. LED appearance was not verified.
+  - general-radio-1.2.0 ignored a `{"cmd":"hello"}` without an id sent right after the no-reset open.
+  - Conflict to check: X07 says v5 changed the first cue "Neon hold (entrance)", not the SET_ZONE 4 colour. Both can be
+    true; make them consistent.
+- **Docs they already edited** (now mine to own and check): flashing_station/README.md, console/README.md, the root
+  README and AGENTS.md rows.
+
+**Applied to extended:** X03, X07, X11 (2026-09-23).
+- Top bar: verified (`TopBar.js` `SECTIONS`, key handler in `app.js`; now committed). ⌘1 is Devices. X03/X07/X11 already
+  used these keys; X11 now also says where they live. New finding: Settings › Keyboard still says "⌘1–⌘4 sections"
+  (X11 Known issues; a code fix, not a doc fix).
+- NVS/nvs.py: X03 (0.3.0 byte-identity, 342 backups, `sta.pswd`, `flash_runs.show_result`/`show_version`). The rest was
+  already in X03.
+- Intake race fix: X03 evidence changed from Code-checked to Simulation-verified (unit tests), not re-tested on hardware.
+- Audio cues: already in X03 (not heard on hardware).
+- Show v5: resolved in X07 once. Checked against the device database (`metadata.show_source`, `show_crc`) and
+  `showfile.pack`: v5 = default show with only the first cue "Neon hold (entrance)" changed (18,20,1) → (20,20,1), CRC
+  1213966328 (recomputed, matches). The `SET_ZONE 4` ready colour is firmware (`MAINSHOW_R/G/B` = 18,20,1) and was never
+  changed. v6 is byte-identical to the compiled-in default (CRC 3716106196), i.e. v6 reverted v5's change. The radio
+  test and the hello-without-id quirk are in X07 Known issues (Bench-verified from serial/NVS read-back; LEDs not verified).
+**Handbook part pending:** none required. (The handbook already uses ⌘2/⌘3/⌘6 correctly.)
+
+## 2026-09-23 · from nct-console-language-selector · EN/KR switch (evidence: simulator, headless Chrome, unit tests)
+
+- The EN | KR switch sits at the far top right of the top bar, and is also in Settings › Appearance › "Language · 언어".
+  The choice is stored in localStorage `nct.lang` (per browser) and defaults to English. Switching needs no reload.
+- `?lang=ko` or `?lang=en` after the route applies that language to one page only (for Korean docshots).
+- In Korean, tooltips also give the English name ("EN: <label>").
+- These stay in English: text generated in Python (cards, job stages, sync status, logs, errors), protocol tokens and
+  product names.
+- Developer rules: `t()`/`hint()`/`tk()`, `web/lib/ko/*.js`, `uitext_ko.py --stamp`, `i18n.test.js`, `test_uitext.py`.
+  One session does all Korean translation.
+- Goes to: H1 (the switch), X11 (settings), X02 (developer rules).
+
+**Applied to extended:** X02, X11 (2026-09-23): X02 corrected "the choice is per computer" → per browser (`nct.lang`),
+added `?lang=`, the one-translator rule; X11 has the switch, the Appearance row and evidence. Verified in
+`console/web/lib/i18n.js`, `TopBar.js`, `sections.js`.
+**Handbook part pending:** H1 line "Each computer remembers its choice" / "선택은 컴퓨터마다 저장됩니다" should say the console
+window remembers it (a browser fallback window keeps its own choice). Optional wording fix.
+**Applied to handbook** (2026-09-23): H1 Language paragraph now says the console remembers the choice on this computer and a console opened in a web browser keeps its own (EN + KR).
+
+## 2026-09-23 · from merge-station-radio-firmware · Workstation merge (c955d9f; simulation and compile only, no hardware)
+
+These facts are already in the drafts. Verify that X02, X08 and X11 carry the detail:
+
+- **Firmware:** workstation-1.0.0 ("NCT WORKSTATION"). Its USB protocol is the union of the General Radio verbs and the
+  pairing station's reader verbs: `nfc_recover`, `nfc_poll` {enabled, once, trace}, `nfc_status`.
+- **Reader events:** `tag`, `tag_state`, `nfc_error`, `nfc_init`, `nfc_bus`, `nfc_i2c`.
+- **hello additions:** `nfc_ok`, `nfc_polling`, `nfc_firmware`, `nfc_i2c_status`, `tag_present`; roles cube, zone, pool,
+  preshow, nfc.
+- **"?" report:** gains an "NFC: ok=… fw=…" line.
+- **Reader polling:** only while a host sends `nfc_poll enabled:true`. The 80 ms read never slows a bare dongle or a
+  show relay.
+- **nfc_i2c trace:** reports failures only unless `trace:1` is set. Always-on tracing was about 9 kB/s and starved the
+  relays.
+- **Hosts:** capability helpers in `zones/dbmanager/dongle.py` (`has_reader`, `relay_capable`, `rx_gain_capable`,
+  `show_capable`, `show_relay`, `label`, `family`, `radio_roles`).
+- **RX gain over the air:** needs nct-pairing-1.8-zones, general-radio-1.x or workstation. nct-pairing-1.6/1.7 relay
+  but cannot set gain.
+- **CLI:** `zones/tools/workstation.py`; `general_radio.py` is an alias.
+- **Console:** one role, "workstation", with one panel. Its title comes from hello: Pairing station / ESP-NOW dongle /
+  General Radio / Workstation.
+- **Panel tabs:** Pairing, Zone relay, Cubes & show, Pool lamp, Preshow cue, Console. A tab is greyed out when the board
+  lacks the capability.
+- **Links:** the primary pairing link is the first link with a reader. The auto-walk uses that link if it relays,
+  otherwise the first relay. The show relay is any link reporting show:1.
+- **Unidentified board menu:** offers Workstation and Mainshow controller only.
+- **Simulation:** adds `/dev/sim.workstation` 02:AA:BB:CC:DD:F0.
+- **Metadata:** the key stays `general_radios`.
+- **Evidence:** real compile 1,031,248 B (78% of the partition); Python suites green. Nothing has been flashed; the bench
+  dongle AC:27:6E:82:68:54 still runs general-radio-1.2.0.
+- **Repo docs outside the handover that still say "General Radio" or "Flash dongle"** (a later README sweep):
+  - AGENTS.md rows (General radio, Zone Database Manager, Show editor);
+  - README.md ~75-78;
+  - zones/README.md ~206-213, 230-235, 287-305;
+  - zones/mainshow/README.md;
+  - pairing_station/README.md:31,82;
+  - flashing_station/README.md:27,42;
+  - zones/firmware/MainshowController/README.md:36-42;
+  - TEST_REPORT;
+  - docscenes.py scenario titles ~787/~799.
+- The test-report table rows that name general-radio-1.1.0 are historical: that pass did run on general-radio-1.1.0.
+
+**Applied to extended:** X02 (2026-09-23): new Workstation detail table (verbs, events, hello, `?` line, polling,
+trace, host helpers, RX gain, title, tabs, links, CLI, metadata key, simulation, evidence). X08 already had the walk
+rule and relay capabilities. Verified in `zones/dbmanager/dongle.py`, `zones/firmware/Workstation/README.md`,
+`Pn532Wire.h`, `WorkstationPanel.js`, `console/simulate.py`.
+**Rejected:** "Unidentified board menu offers Workstation and Mainshow controller only". `console/web/panels/others.js`
+offers three hold buttons (Workstation, Mainshow controller, Neocore cube); X02 keeps three.
+README sweep items are outside the handover; not applied here. No handbook change.
+
+## 2026-09-23 · from updatable-show-timecode · show system (d43eaa4)
+
+Its "no show published / next > v4" line is STALE: v6 is published (see Current facts). The rest is already in X03 and
+X07. Verify that X07 carries the following:
+
+- **Editor layout after the rework:**
+  - Header: "↺ Revert to vN" / "Revert to default", Publish, Pull.
+  - Transport as icons; a big timecode; speed 0.25–2× plus Loop; a go-to field.
+  - "Reference video" drop zone (offset, mute, size; never uploaded).
+- **Cube box:** "Preview cubes", One / 1-8 / 1-24, "＋ Plugged-in" (uncommitted; unit test and simulation only), and
+  "Send to real cubes #…".
+- **Timeline:**
+  - Overview strip (drag the edges to zoom, drag inside to scroll, double-click to fit, ⌘+wheel; no zoom slider).
+  - Colour band of 16 rows.
+  - Cue lane gestures.
+- **Keys:** Space, ←/→ (⇧ = 1 s), Home/End, ⌘Z, ⇧⌘Z / Ctrl+Y.
+- **Cubes card:** Query, Update all, Update selected, Auto update, Send length to controller.
+- **Firmware behaviour:** a timecode snap when a cube drifts by more than 100 ms. Fanning formula: sequential offset =
+  ((n-1) mod groups) × step; scatter is fixed pseudo-random, 0 to the spread.
+- **Live mode:** SET_ZONE, SHOW_START or a timecode join ends it.
+- console/README.md's Show editor UI description is out of date after the layout rework (README sweep).
+
+**Applied to extended:** X07 (2026-09-23): header (chips, **↺ Revert to vN** / **Revert to default**, **Publish**,
+**Pull**), transport (icons, readout, 0.25–2×, **Loop** options, go-to field), timeline (overview strip gestures,
+Ctrl/⌘ + wheel, no zoom slider, 16-row colour band), **＋ Plugged-in** (unit test and simulation only), Cubes card button
+order, live mode ends on `SET_ZONE`/`REGISTER`/`SHOW_START`/timecode join. Fanning formula and 100 ms snap were already
+there. Verified in `ShowEditor.js`, `showtimeline.js`, `neocore_usb.ino`. The stale "no show / next > v4" line was not
+added (v6 is published). **Plugged-in** is committed in c955d9f, not uncommitted.
+**Handbook part pending:** none required by this item (H4 show-editor steps already match the chips).
+
+## 2026-09-23 · from auto-sync-console-inventory · automatic inventory sync (uncommitted; Simulation-verified only)
+
+This affects the **handbook**: operators no longer need to press **Sync**. Update H2, H3 (registration step 4), H4 and
+H5 (sync problems), then X08 and X11.
+
+- **The setting:** `auto_sync` is on by default. It appears as Settings › Automatic updates › "Sync the inventory with
+  the web by itself…" and is stored in metadata `console_settings`. Older saved settings without the key load as on.
+- **When it syncs:**
+  - 5 s after the last local change to devices or roles (checked every 2 s);
+  - when the 60 s web status check finds changes up or down, or mappings to publish;
+  - when downloads that were deferred while the console was busy can apply because it is now idle.
+- **What a sync does:** a full sync, the same as the button (`sync_all.sync`): upload, download, then publish the zone
+  database if the mappings changed. Merge and wire format are unchanged. Automatic syncs are at least 15 s apart.
+- **Failures:**
+  - Offline or error: back off 60 s, doubling up to 10 min.
+  - Sync lock held by another app: retry after 15 s.
+  - Interrupted after the upload: retry once, straight away.
+  - Password rejected: the password is forgotten and automatic sync stops until the operator signs in again.
+  - Zone publish error: treated as a failure for back-off.
+- **Top-bar chip:** "✓ Synced" / "⟳ Sync in 5 s" / "Sync · retry in 2 min" / "Sync · offline" / "⟳ Sync · sign in".
+  Clicking it syncs at once.
+- **Inventory › Web sync:** a new "Automatic" row.
+- **Jobs list:** automatic syncs that succeed are hidden; failures show.
+- **Attention cards:** `sync.publish_pending` and `sync.waiting` are hidden while automatic sync is on and has no
+  errors. Other sync cards say "It retries by itself; Sync now to try at once."
+- **Unchanged:**
+  - `auto_pull` still covers pulling the web zone database.
+  - The password is still entered once per computer.
+  - --simulate never syncs automatically; simdocs has `auto_sync` off.
+  - The old Tk apps still sync by hand.
+- **Side effect** (also true of a manual Sync): each sync sets metadata `auto_number=0` (`web_sync.py:228`). A new USB
+  cube on a synced computer then gets **needs_number** rather than an automatic number. Check how this interacts with
+  the Register page's number allocation.
+- **Files:**
+  - `console/hub.py`: `auto_sync`, `watch_local_changes`, `auto_sync_finished`;
+  - `console/jobs/sync.py`: `needs_sync`, `sync_job auto=`;
+  - `console/state.py`: `describe_auto`;
+  - `console/advisor.py`;
+  - `sections.js`, `InventorySection.js`, `Attention.js`.
+- **Tests:** `console/tests/test_auto_update.py` AutoSyncTests.
+
+**Applied to extended:** X08 (new "Automatic inventory sync" section, switch row, Known issues), X11 (setting row, Sync
+chip states, cards, §12, Known issues), X10 (backup table), X03 (number allocation) (2026-09-23). Evidence kept:
+Simulation-verified, uncommitted. Verified in `console/hub.py`, `console/jobs/sync.py`, `console/state.py`,
+`console/advisor.py`, `sections.js`, `InventorySection.js`, `Attention.js`. Precision: only the **Web sync problem** card
+uses "It retries by itself; Sync now to try at once."
+auto_number check (`database.reserve`, `regflow.step_number`, `controller.choose`; live DB holds `auto_number=0`):
+- The Register page still assigns a number: `step_number` calls `suggested_number()` for a row without one and shows
+  **NEW NUMBER: write #N on the cube's label**. The allocation is local to the computer; two computers numbering at once
+  before syncing can clash, and the merge then drops one to **Needs number**.
+- A new cube seen by USB identification or radio discovery with the Register page off gets **Needs number** (card
+  "‹MAC› has no number", **Assign #N**).
+- **Pair new cubes (auto)** skips cubes without a number, so on any synced computer it no longer numbers brand-new
+  cubes (Code-checked). X03 corrected.
+**Handbook part pending:**
+- H2 lines 30, 71, 89: replace "press **Sync**" with "check the Sync chip shows **✓ Synced** (it syncs by itself; click
+  it to sync now)".
+- H3 line 75 (manual path step 7): same; lines 35/40 (Register step 4/5) can stay (the flow syncs), but "press **Sync**
+  again" → "click the Sync chip".
+- H3: note that a cube plugged in with the Register page off, or found by **Pair new cubes (auto)**, gets no number:
+  use the Register page, or assign the label number first.
+- H4 line 31: "Click **Sync**" → "Check the Sync chip shows **✓ Synced**".
+- H5 lines 24/34/38 and §9 (192–203): Sync chip states (**Sync · retry in …**, **Sync · offline**, **⟳ Sync · sign in**),
+  it retries by itself, successful automatic syncs are not in Jobs.
+**Applied to handbook** (2026-09-23): H2 (start checklist, quick-check table, end checklist), H3 (Register step 5, manual step 7, new two-sentence note that only the Register page numbers a new cube, else **Needs number**), H4 procedure A step 1 (chip **✓ Synced**, **⟳ Sync · sign in** for the password), H5 (index row, §1 text and step 2, §9 symptom, chip-state paragraph with sign-in after a rejected password, password card row). Evidence kept: Simulation-verified.
+
+## 2026-09-23 · from auto-sync-console-inventory · web-allocated cube numbers (NOT YET SHIPPED: simulation and tests only, not deployed or committed)
+
+HOLD: apply only when the sender confirms the change is deployed and committed. The handbook and the X pages currently
+describe the old behaviour, which is still live (a new cube shows Needs number after a sync, and numbers are chosen
+locally).
+
+- The user chose that the web hands out numbers.
+- **Web endpoint:** `POST /api/inventory/claim {dataset, mac, exclude[], min=33, client}` returns `{number, existing}`.
+  - It gives the lowest free number ≥33 that no other MAC holds or has claimed and that is not in `exclude`.
+  - The same MAC always gets the same number back.
+  - Claims are kept in a separate blob, `numbers/<dataset>.json`, written with compare-and-swap. The inventory document
+    is never written.
+  - Code: `web/src/lib/numbers.ts`, `web/src/app/api/inventory/claim/route.ts`.
+- **When the console claims** (only with a stored web password, and never in --simulate):
+  - for new unnumbered cubes (`needs_number`, not excluded) found by USB, radio discovery or pairing. It checks every
+    2 s, renames the cube to the claimed number (status `awaiting_tag`), and automatic sync uploads it;
+  - in the Register page's Number step, which shows "Getting a new number from the web…".
+- **exclude** = every number in the local database plus the reserved numbers 2, 22, 39 and 43.
+- **When the web is unreachable or old (404):** new cubes stay at Needs number (the console never guesses locally) and it
+  retries every 60 s. Registration shows "The web could not hand out a number (…); retrying. Or assign one by hand."
+  Renaming by hand still works.
+- **No web password:** the computer numbers locally as before. The old Tk apps never claim.
+- **After it ships:** two computers can no longer pick the same number. **Pair new cubes (auto)** picks cubes up once
+  they have a number.
+- **Code:**
+  - `console/hub.py`: `web_numbering`, `claim_numbers`, `numbers_claimed`;
+  - `console/jobs/sync.py`: `claim_job`;
+  - `console/regflow.py`: `step_number`;
+  - `pairing_station/web_client.py`: `claim_number`;
+  - `pairing_station/database.py`: `NEW_UNNUMBERED`.
+- **Goes to:** H3 (numbering note and the Register Number step), H5 (Needs number), X03 (number rules), X08 (web
+  endpoint and blob), X11 (messages).

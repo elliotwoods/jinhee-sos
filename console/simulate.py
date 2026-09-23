@@ -659,6 +659,52 @@ def fake_cube_flash(port, manifest, manual, show, emit, show_only=None):
     return dict(record, ui_result=result, ui_detail=detail)
 
 
+def fake_build(hub, target):
+    """An automatic firmware build without arduino-cli (autoupgrade.py): a short job that always succeeds."""
+    from jobs.base import Job
+    job = Job('build.sim', 'build', f'Build {target} (simulated)')
+
+    def work(emit, cancel):
+        for percent in (20, 60, 100):
+            emit('progress', percent)
+            time.sleep(0.02)
+        return target
+
+    def done(job):
+        job.outcome = dict(level='verified', text=f'{target} built (simulated)')
+
+    hub.jobs.start(job, work, done)
+    return job
+
+
+def fake_firmware_flash(hub, device, target, version):
+    """An automatic zone / Workstation / Mainshow firmware upgrade without esptool: the fake board now reports
+    `version` (a pairing station or General Radio becomes a Workstation with a reader), then is re-probed."""
+    from jobs.base import Job
+    job = Job(f'{target.split(":")[0]}.flash', device.key, f'Write {version} on {device.port} (simulated)', hardware=True,
+              device=device.id)
+    hub.hold_port(device, job)
+    board = BOARDS.get(device.port)
+
+    def work(emit, cancel):
+        for stage, percent in (('Back up', 10), ('Write and verify', 70), ('Reboot', 100)):
+            emit('stage', stage)
+            emit('progress', percent)
+            time.sleep(0.02)
+        if board is None:
+            raise RuntimeError('No simulated board on that port')
+        board.firmware = version
+        if isinstance(board, FakeStation) and target == 'workstation':
+            board.nfc_ok = True
+        return board.mac
+
+    def done(job):
+        job.outcome = dict(level='verified', text=f'{version} written (simulated)')
+
+    hub.jobs.start(job, work, done)
+    return job
+
+
 def install(hub, scenario='default'):
     hub.scanner = FakeScanner()
     hub.prober = FakeProber()
@@ -674,6 +720,8 @@ def install(hub, scenario='default'):
     hub.tick = tick
     hub.fake_zone_db = fake_zone_db
     hub.fake_cube_flash = fake_cube_flash
+    hub.fake_build = fake_build
+    hub.fake_firmware_flash = fake_firmware_flash
     if scenario == 'default':
         default_scenario(hub)
     elif scenario == 'empty':

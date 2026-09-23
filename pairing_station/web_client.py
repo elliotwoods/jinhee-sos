@@ -171,6 +171,13 @@ class WebClient:
             'dataset': self.dataset, 'records_b64': records_b64, 'min_version': min_version,
             'inventory_revision': inventory_revision, 'client': name}, timeout=max(self.timeout, SLOW_TIMEOUT))
 
+    def claim_number(self, mac, exclude=(), name='', minimum=33):
+        """The web hands out the next free cube number for `mac` (the same one again if it already has one), so two
+        computers numbering new cubes at once never collide. `exclude`: numbers used or reserved here. Returns
+        {number, existing}. A server from before /api/inventory/claim answers 404 (WebError)."""
+        return self.request('POST', '/api/inventory/claim', {
+            'dataset': self.dataset, 'mac': mac, 'exclude': sorted(set(exclude)), 'min': minimum, 'client': name})
+
     def show_head(self):
         """Public: {version, hash, crc, length, published_at} of the published main show (no password)."""
         return self.request('GET', f'/api/show/head?dataset={quote(self.dataset)}', public=True)

@@ -1,0 +1,16 @@
+{
+  "name": "nct-handover-pdf",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Builds the printable PDF of the NCT Console handover v2 from console/docs/handover_v2/handbook and extended",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "preview": "node preview.mjs"
+  },
+  "dependencies": {
+    "marked": "^16.0.0",
+    "pdf-lib": "^1.17.1",
+    "puppeteer-core": "^24.0.0"
+  }
+}

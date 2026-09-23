@@ -39,6 +39,11 @@ class ShowEditor:
         self.config_sent = {}     # controller device id -> (length, version, crc) last confirmed
         self.relay_error = None
         self.clock = hub.clock
+        # Show relays: which radio heard which cube (session id -> mac -> clock), and the one in use. The show
+        # registry's store is shared, so a cube heard only by a second radio is reached through that radio.
+        self.heard = {}
+        self.active_relay = None
+        self.relay_turn_at = 0.0
         # Mirroring (live): request ids of fire-and-forget SHOW_LIVE frames, newest last.
         self.live_ids = OrderedDict()
         self.live_last = None       # clock of the last sent live call
@@ -93,13 +98,44 @@ class ShowEditor:
                     crc=showfile.crc32(image))
 
     # ---------------------------------------------------------------- relay and controller
+    RELAY_TURN = 10.0   # seconds each show relay queries before the next one takes a turn (several relays only)
+
+    def relays(self):
+        """Sessions that can carry show frames: Workstation links whose hello announced `show` support
+        (capabilities['show_relay']), asked through their `show_relay()`."""
+        return [s for s in self.hub.sessions.values() if getattr(s, 'show_relay', None) and s.show_relay()]
+
     def relay(self):
-        """The session that can carry show frames: a Workstation link whose hello announced `show` support
-        (capabilities['show_relay']), asked through its `show_relay()`."""
-        for session in self.hub.sessions.values():
-            if getattr(session, 'show_relay', None) and session.show_relay():
-                return session
-        return None
+        """The show relay in use (see choose_relay); the first show relay when none was chosen yet."""
+        relays = self.relays()
+        if self.active_relay in relays:
+            return self.active_relay
+        return relays[0] if relays else None
+
+    def choose_relay(self, now):
+        """Keep the relay while a run or a request is in flight. Otherwise use the relay whose radio heard most
+        of the cubes that are behind, and with nothing to send let each relay query in turn, so every radio
+        learns which cubes it reaches."""
+        relays = self.relays()
+        registry = self.registry
+        if self.active_relay in relays and (registry.publication or registry.inflight):
+            return self.active_relay
+        if not relays:
+            self.active_relay = None
+            return None
+        behind = set(registry.walk_candidates()) if registry.walkaround else set()
+        if behind and len(relays) > 1:
+            def reach(session):
+                heard = self.heard.get(getattr(session, 'id', None), {})
+                return sum(1 for mac in behind if now - heard.get(mac, -1e9) <= registry.IN_RANGE)
+            best = max(relays, key=reach)
+            if reach(best) > (reach(self.active_relay) if self.active_relay in relays else -1):
+                self.active_relay, self.relay_turn_at = best, now
+        elif self.active_relay not in relays or (len(relays) > 1 and now - self.relay_turn_at >= self.RELAY_TURN):
+            index = relays.index(self.active_relay) + 1 if self.active_relay in relays else 0
+            self.active_relay, self.relay_turn_at = relays[index % len(relays)], now
+            registry.next_query = 0   # the new relay asks straight away
+        return self.active_relay
 
     def _send(self, message):
         relay = self.relay()
@@ -232,7 +268,9 @@ class ShowEditor:
                     error=self.live_error, sent=self.live_sent)
 
     # ---------------------------------------------------------------- hub hooks
-    def event(self, event):
+    def event(self, event, via=None):
+        if via is not None and event.get('event') == 'show_frame' and event.get('mac'):
+            self.heard.setdefault(getattr(via, 'id', None), {})[event['mac']] = self.clock()
         if self._live_event(event):
             return True
         consumed = self.registry.event(event)
@@ -241,7 +279,7 @@ class ShowEditor:
         return consumed
 
     def tick(self, now):
-        relay = self.relay()
+        relay = self.choose_relay(now)
         try:
             self.registry.tick(bool(relay), show_running=self.controller_show_running())
             self.relay_error = None

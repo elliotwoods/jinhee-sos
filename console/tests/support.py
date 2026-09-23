@@ -16,13 +16,17 @@ def temp_database():
     return Path(tempfile.mkdtemp(prefix='nct-console-test-')) / 'devices.sqlite3'
 
 
-def simulated_hub(scenario='default', seed=True):
+def simulated_hub(scenario='default', seed=True, auto_firmware=False):
+    """`auto_firmware`: leave automatic builds and USB firmware upgrades on (autoupgrade.py). Off by default so
+    other tests are not raced by a simulated upgrade of the station or the General Radio."""
     from hub import Hub
     import simulate
     simulate.BOARDS.clear()
     hub = Hub(temp_database(), api_port=0, simulate=True)
     simulate.install(hub, scenario)
     hub.boot()
+    if not auto_firmware:
+        hub.settings.update(auto_build=False, auto_firmware_usb=False)
     if seed and scenario == 'default':
         hub._sim_seed()
     return hub

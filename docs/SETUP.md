@@ -206,9 +206,11 @@ its own baseline in SQLite metadata (`git_inventory_baseline_v1`,
 `web_inventory_baseline_v1`), and a change arriving through one is simply a local
 change to the other. Run them in any order.
 
-No per-computer setup is needed. All computers use one shared password, which is
-never stored in Git or on disk: Web Sync and `scripts/web_sync.py` ask for it each run,
-and the other apps' status lines compare only against the last sync. The server reads
+No per-computer setup beyond entering the password once is needed. All computers use one
+shared password. It is never stored in Git or in source: the first Sign in (the NCT Console, Web Sync
+or `scripts/web_sync.py`) saves it on that computer in `pairing_station/data/web_password`
+(gitignored, owner-only 0600 on macOS), and every app reuses it from there. A rejected password is
+cleared so the next run asks again. The other apps' status lines compare only against the last sync. The server reads
 it from the `INVENTORY_PASSWORD` Vercel environment variable. The server keeps the
 inventory as a single private Vercel Blob JSON document with conditional writes, so
 two computers pushing at once are re-checked rather than overwritten.

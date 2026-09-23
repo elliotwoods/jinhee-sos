@@ -240,6 +240,18 @@ class RegistrationSyncTests(unittest.TestCase):
         self.assertEqual(crash_logs(hub), [])
 
 
+    def test_the_number_comes_from_the_web_when_this_computer_syncs(self):
+        hub = self.hub
+        hub.auto_web = True                    # timers on, against the loopback fake
+        hub.db.set_metadata('auto_number', '0')
+        commands.run(hub, 'register.enable', {'on': True})
+        hub.scanner.add(simulate.FakeCube('/dev/sim.cube-new', NEW_MAC))
+        c = hub.station_session().controller
+        ok = tick_until(hub, lambda: hub.regflow.mac == NEW_MAC and hub.regflow.armed and c.phase == 'identifying'
+                        and (c.active or {}).get('mac') == NEW_MAC, timeout=15)
+        self.assertTrue(ok, hub.regflow.snapshot())
+        self.assertEqual(self.server.claims.get(hub.regflow.number), NEW_MAC, 'the web handed out this number')
+        self.assertEqual(hub.regflow.number_new, 'assigned')
 
 class SimulationNeverSyncsTests(unittest.TestCase):
     """A simulated console must never reach the real web inventory (it once uploaded fake cubes)."""

@@ -34,6 +34,8 @@ class FakeWebInventory:
         self.zonedb = dict(version=0, hash='', count=0, crc=0, records_b64='', published_at=None, published_by='',
                            inventory_revision=0)
         self.zonedb_missing = False  # simulate a server deployed before /api/zonedb existed
+        self.claims = {}             # number -> mac, like web/src/lib/numbers.ts
+        self.claims_missing = False  # simulate a server deployed before /api/inventory/claim existed
         self.show = dict(version=0, hash='', crc=0, length=0, image_b64='', source=None, published_at=None,
                          published_by='')
         self.lock = threading.Lock()
@@ -136,6 +138,22 @@ class FakeWebInventory:
                             self.close_connection = True
                             return
                     return self.reply(200, {'revision': owner.revision, 'changed': len(changed)})
+                if path == '/api/inventory/claim' and not owner.claims_missing:  # like web/src/lib/numbers.ts
+                    mac = body['mac']
+                    with owner.lock:
+                        own = (owner.records.get(mac) or {}).get('record') or {}
+                        if isinstance(own.get('cube_id'), int):
+                            return self.reply(200, {'number': own['cube_id'], 'existing': True})
+                        for number, holder in owner.claims.items():
+                            if holder == mac:
+                                return self.reply(200, {'number': number, 'existing': True})
+                        taken = set(body.get('exclude') or ()) | set(owner.claims)
+                        taken |= {e['record'].get('cube_id') for m, e in owner.records.items() if m != mac}
+                        number = body.get('min', 33)
+                        while number in taken:
+                            number += 1
+                        owner.claims[number] = mac
+                        return self.reply(200, {'number': number, 'existing': False})
                 if path == '/api/zonedb/publish' and not owner.zonedb_missing:
                     body_bytes = base64.b64decode(body['records_b64'])
                     if not body_bytes or len(body_bytes) % 18:

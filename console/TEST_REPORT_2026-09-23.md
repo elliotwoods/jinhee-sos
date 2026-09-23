@@ -178,4 +178,31 @@ and `zones/firmware/GeneralRadio/README.md`. Evidence class: **hardware, serial 
 - Safety: a simulated console refuses every non-loopback web server (`jobs/sync.client`, `SimulatedWeb`), after a
   simulated run at about 03:48 KST synced fake cubes to the real web inventory and published zone database v38.
 
+## Workstation firmware merge — 2026-09-23 (simulation, host tests and build only)
+
+The General Radio and the pairing-station firmware became one Workstation firmware (`workstation-1.0.0`,
+`zones/firmware/Workstation`); the console has one `workstation` role and panel for every station. Verified by all
+Python suites, the node tests, the firmware host simulations (including the ported reader tests: fresh-tag gating,
+bus recovery, bare-dongle degradation) and a real arduino-cli build (1,031,248 B, 78 % of app0). **Nothing has been
+flashed**: the bench dongle #138 still runs general-radio-1.2.0 and the installed station nct-pairing-1.8-zones, so
+the dongle-pass results above were obtained with those firmwares.
+
+## Flash page and USB show stage on real cubes — 2026-09-23 04:39–04:59 KST (device database record)
+
+Reconstructed from the live device database (`flash_runs` and `show_cubes`, read-only); the operator's own notes
+were not available. Evidence class: **hardware, as recorded by the console** (LEDs not recorded).
+
+- 04:39 KST: #17 (`1C:DB:D4:F0:A8:30`) show-only update over USB: firmware not touched, show v5 written, read back,
+  reported by the cube. At 04:46 a second pass found firmware and show v5 already current (skipped).
+- 04:47–04:49 KST: the Flash page took five cubes in turn, each **firmware v1.7.0-USB.1 verified, boot confirmed,
+  registration preserved, show v5 written, read back and reported by the cube**: #52 (`AC:27:6E:82:6B:28`),
+  #95 (`1C:DB:D4:F0:D1:DC`), #33 (`AC:27:6E:80:03:68`), #58 (`1C:DB:D4:F0:DE:28`), #39 (`1C:DB:D4:EF:6D:60`).
+- Between them, and in five more attempts at 04:50–04:51, runs failed with "USB port is owned by another Neocore
+  application" before identifying a cube (no MAC recorded, nothing written). That is the intake race fixed later
+  that day: auto-flash now waits until the console has finished probing a new port.
+- 04:52 KST: show **v6** was published from the NCT Console on this computer (web-allocated). At 04:59 KST all six
+  cubes (#17, #33, #39, #52, #58, #95) reported show v6 from NVS on v1.7.0-USB.1 in `show_cubes`. No USB run
+  follows 04:51, so v6 reached them **over the air** through the show relay.
+- State after this: six cubes on v1.7.0-USB.1 holding show v6; the rest of the fleet unchanged (v1.4.1-USB.2).
+
 <!-- web/screenshot results to be appended -->

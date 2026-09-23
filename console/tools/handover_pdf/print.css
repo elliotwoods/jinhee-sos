@@ -1,0 +1,223 @@
+/* NCT Console handover v2 — print stylesheet (A4). One accent colour; callouts use soft tints. */
+:root {
+  --ink: #1b1d21;
+  --ink-2: #4a4f57;
+  --muted: #6b7078;
+  --kr: #6d727a;
+  --rule: #d6d9de;
+  --rule-2: #eceef1;
+  --zebra: #f6f7f9;
+  --head: #e9edf2;
+  --accent: #1d5c8f;
+  --accent-tint: #eaf1f7;
+  --tip: #2f7a4b; --tip-tint: #ebf5ee;
+  --note: #5f6368; --note-tint: #f3f4f5;
+  --warn: #a8661a; --warn-tint: #fcf3e6;
+  --danger: #b3261e; --danger-tint: #fbecea;
+  --sans: 'Inter', 'Noto Sans KR', system-ui, sans-serif;
+  --kr-font: 'Noto Sans KR', 'Inter', sans-serif;
+  --mono: 'JetBrains Mono', 'Noto Sans KR', ui-monospace, monospace;
+  color-scheme: light;
+}
+
+/* Running header: small logo + book title left, section right ("H3 · Cube procedures", "Appendix · X06 · …"),
+   hairline under both. Running footer: imprint + date left, page number right. Text lives in build.mjs (per section). */
+@page {
+  size: A4;
+  margin: 21mm 17mm 18mm 17mm;
+  @top-left { font: 500 7.3pt var(--sans); color: #6d6e71; vertical-align: bottom; padding: 0 0 3.2mm 19.5mm;
+    background-repeat: no-repeat; background-position: left bottom 2.4mm; background-size: auto 6.5mm;
+    border-bottom: 0.5pt solid #c9ccd1; white-space: nowrap; }
+  @top-center { content: ""; border-bottom: 0.5pt solid #c9ccd1; vertical-align: bottom; }
+  @top-right { font: 600 7.3pt var(--sans); color: #1b1d21; vertical-align: bottom; padding-bottom: 3.2mm; border-bottom: 0.5pt solid #c9ccd1; white-space: nowrap; }
+  @bottom-left { font: 400 6.6pt var(--sans); color: #8a8f97; vertical-align: top; padding-top: 4mm; white-space: nowrap; }
+  @bottom-right { font: 700 8pt var(--sans); color: #1b1d21; vertical-align: top; padding-top: 3.6mm; }
+}
+@page cover { margin: 0; }
+@page back { margin: 0; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { margin: 0; background: #fff; color: var(--ink); font-family: var(--sans); font-size: 10pt; line-height: 1.5;
+  font-feature-settings: 'cv11', 'ss01'; text-rendering: optimizeLegibility; orphans: 3; widows: 3;
+  word-break: keep-all; overflow-wrap: break-word; }
+
+.sec { page: auto; }
+.toc { page: toc; }
+.part { page: part; }
+.chapter[data-page], .opening, .xpage, .part { break-before: page; }
+.cover + .toc, .toc + .sec { break-before: page; }
+
+/* ---------------------------------------------------------------- title page (black and grey, as the logo) */
+.cover { page: cover; height: 296mm; box-sizing: border-box; padding: 24mm 24mm 22mm; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+.cover-logo { display: block; height: 25mm; width: auto; align-self: flex-start; }
+.cover-main { margin-top: 44mm; border-top: 2.4pt solid #000; padding-top: 7mm; }
+.cover-kicker { font: 700 8pt var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: #6d6e71; margin-bottom: 9mm; }
+.cover-kicker span { font-family: var(--kr-font); letter-spacing: 0.04em; margin-left: 2mm; font-weight: 500; }
+.cover-title { font: 800 38pt/1.02 var(--sans); letter-spacing: -0.035em; color: #000; max-width: 160mm; }
+.cover-sub { font: 800 38pt/1.02 var(--sans); letter-spacing: -0.035em; color: #6d6e71; margin-top: 1mm; }
+.cover-kr { font: 500 15pt var(--kr-font); color: #6d6e71; margin-top: 8mm; }
+.cover-foot { margin-top: auto; border-top: 0.8pt solid #000; padding-top: 5mm; }
+.cover-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm 10mm; }
+.cl { font: 700 6.8pt var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: #6d6e71; margin-bottom: 1.2mm; }
+.cv { font: 700 11pt/1.3 var(--sans); color: #000; }
+.ck { font: 400 8.5pt var(--kr-font); color: #6d6e71; margin-top: 0.6mm; }
+.cover-note { margin-top: 9mm; font-size: 7.4pt; color: #8a8f97; display: flex; flex-direction: column; gap: 0.6mm; }
+
+/* ---------------------------------------------------------------- colophon / back page */
+.colophon { page: back; height: 296mm; box-sizing: border-box; padding: 24mm; display: flex; flex-direction: column; justify-content: flex-end; }
+.colo-inner { border-top: 0.8pt solid #000; padding-top: 7mm; max-width: 130mm; font-size: 8.6pt; line-height: 1.55; color: #3c4046; }
+.colo-logo { height: 13mm; width: auto; display: block; margin-bottom: 7mm; }
+.colo-inner p { margin: 0 0 2.5mm; }
+.colo-kr { font-family: var(--kr-font); color: #6d6e71; }
+.colo-small { font-size: 7.4pt; color: #8a8f97; }
+.colo-small code { font-family: var(--mono); font-size: 0.95em; }
+
+/* ---------------------------------------------------------------- contents */
+.toc-head { font: 800 24pt var(--sans); letter-spacing: -0.02em; margin: 0 0 5mm; color: var(--ink); }
+.toc-head .h-kr { font-size: 14pt; }
+.toc-list { list-style: none; margin: 0; padding: 0; }
+.toc-list a { display: flex; align-items: baseline; gap: 3mm; color: inherit; text-decoration: none; }
+.toc-ch { padding: 0.75mm 0; break-inside: avoid; }
+.toc-part { margin-top: 3.6mm; padding: 1.3mm 0 0.9mm; border-top: 1.2pt solid var(--accent); break-after: avoid; break-inside: avoid; }
+.toc-part .toc-num { color: var(--accent); font-weight: 800; }
+.toc-part .toc-title { font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 9pt; color: var(--accent); }
+.toc-part .toc-kr { text-transform: none; letter-spacing: 0; }
+.toc-num { width: 11mm; flex: none; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.toc-title { font-weight: 600; font-size: 10.5pt; }
+.toc-kr { font: 400 8.5pt var(--kr-font); color: var(--kr); margin-left: 2.5mm; }
+.toc-dots { flex: 1; border-bottom: 1pt dotted #b9bec6; transform: translateY(-1mm); min-width: 6mm; }
+.toc-pg { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 7mm; text-align: right; }
+.toc-about { margin-bottom: 1mm; }
+.toc-x { padding: 0.35mm 0; break-inside: avoid; font-size: 8.8pt; }
+.toc-x .toc-num { font-weight: 600; font-size: 8.4pt; }
+.toc-x .toc-title { font-weight: 500; font-size: 9pt; }
+.toc-x .toc-pg { font-weight: 500; }
+
+/* ---------------------------------------------------------------- part dividers */
+.part { height: 250mm; display: flex; align-items: center; }
+.part-inner { width: 100%; border-left: 3pt solid var(--accent); padding-left: 9mm; }
+.part-roman { font: 700 11pt var(--sans); letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
+.part-name { font: 800 40pt/1.05 var(--sans); letter-spacing: -0.025em; margin: 3mm 0 2mm; color: var(--ink); }
+.part-cont { font-size: 16pt; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+.part-kr { font: 500 16pt var(--kr-font); color: var(--kr); }
+.part-list { list-style: none; padding: 0; margin: 14mm 0 0; }
+.part-list li { display: flex; align-items: baseline; gap: 4mm; padding: 2.2mm 0; border-top: 0.6pt solid var(--rule); }
+.pl-num { font-weight: 800; color: var(--accent); width: 11mm; font-variant-numeric: tabular-nums; }
+.pl-title { flex: 1; font-weight: 600; font-size: 11pt; }
+.pl-title span { font: 400 9pt var(--kr-font); color: var(--kr); margin-left: 3mm; }
+.pl-pg { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* appendix divider: same frame as a Part, a longer list in a smaller size */
+.appendix .part-name { font-size: 30pt; }
+.appendix-note { margin: 6mm 0 0; font-size: 9.4pt; color: var(--ink-2); max-width: 140mm; }
+.appendix-note span { display: block; font-family: var(--kr-font); color: var(--kr); font-size: 8.8pt; margin-top: 0.8mm; }
+.appendix .part-list { margin-top: 8mm; }
+.appendix .part-list li { padding: 1.2mm 0; }
+.appendix .pl-title { font-size: 9.6pt; }
+
+/* ---------------------------------------------------------------- chapter opener */
+.opener { margin: 0 0 7mm; padding-bottom: 5mm; border-bottom: 0.8pt solid var(--rule); }
+.opener-part { font: 700 7.5pt var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+.opener-part span { font-family: var(--kr-font); letter-spacing: 0.02em; color: var(--kr); font-weight: 500; margin-left: 1.5mm; }
+.opener-num { font: 800 58pt/1 var(--sans); color: var(--accent); letter-spacing: -0.04em; margin: 6mm 0 1mm; font-variant-numeric: tabular-nums; }
+.opener-title { font: 800 23pt/1.15 var(--sans); letter-spacing: -0.02em; margin: 0; color: var(--ink); }
+.opener-kr { font: 500 13pt var(--kr-font); color: var(--kr); margin-top: 1.5mm; }
+
+.opener-about .opener-title { margin-top: 5mm; }
+
+/* ---------------------------------------------------------------- appendix pages (extended reference, English only):
+   a small opener instead of the big chapter number, 9 pt body, tighter tables and headings */
+.xopener { margin: 0 0 4.5mm; padding-bottom: 2.6mm; border-bottom: 0.8pt solid var(--rule); }
+.xopener-label { font: 700 7pt var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+.xopener-title { font: 800 16pt/1.2 var(--sans); letter-spacing: -0.015em; margin: 1.5mm 0 0; color: var(--ink); }
+.body.compact { font-size: 9pt; line-height: 1.42; }
+.body.compact h2 { font-size: 11.5pt; margin: 5mm 0 1.8mm; padding-top: 1.4mm; }
+.body.compact h3 { font-size: 10pt; margin: 3.8mm 0 1.4mm; }
+.body.compact h4 { font-size: 9pt; margin: 3mm 0 1.2mm; }
+.body.compact p { margin: 0 0 1.8mm; }
+.body.compact ul, .body.compact ol { margin: 0 0 2.2mm; padding-left: 5mm; }
+.body.compact li { margin: 0 0 0.9mm; }
+.body.compact table.md { font-size: 8.5pt; line-height: 1.32; margin: 1mm 0 3.2mm; }
+.body.compact table.md th { padding: 1mm 1.6mm; }
+.body.compact table.md td { padding: 0.8mm 1.6mm; }
+.body.compact pre.code { font-size: 7.4pt; padding: 2mm 2.6mm; margin-bottom: 2.6mm; }
+.body.compact .callout { font-size: 8.8pt; margin: 1mm 0 3mm; }
+.body.compact .details { margin: 1.5mm 0 3mm; }
+
+/* ---------------------------------------------------------------- body text */
+.body h2 { font: 750 14pt/1.25 var(--sans); font-weight: 800; letter-spacing: -0.01em; margin: 8mm 0 2.5mm; color: var(--ink);
+  padding-top: 2mm; border-top: 0.6pt solid var(--rule-2); break-after: avoid; }
+.body h3 { font: 700 11.2pt/1.3 var(--sans); margin: 5.5mm 0 1.8mm; color: var(--ink); break-after: avoid; }
+.body h4 { font: 700 10pt/1.3 var(--sans); margin: 4mm 0 1.5mm; color: var(--ink-2); break-after: avoid; }
+.body h2:first-child { border-top: 0; margin-top: 0; }
+.h-kr { font-family: var(--kr-font); font-weight: 500; color: var(--kr); font-size: 0.82em; margin-left: 1.5mm; }
+.body p { margin: 0 0 2.6mm; }
+.body ul, .body ol { margin: 0 0 3mm; padding-left: 5.5mm; }
+.body li { margin: 0 0 1.6mm; }
+.body li::marker { color: var(--accent); font-weight: 600; }
+.body li > p { margin-bottom: 1.2mm; }
+.body strong { font-weight: 650; font-weight: 700; }
+.body a { color: var(--accent); text-decoration: none; }
+.kr { display: block; font-family: var(--kr-font); color: var(--kr); font-size: 0.92em; line-height: 1.55; margin-top: 0.8mm; }
+.kr strong { color: #50555c; }
+td .kr, th .kr { font-size: 0.95em; margin-top: 0.4mm; }
+.body blockquote { margin: 0 0 3mm; padding: 1mm 0 1mm 4mm; border-left: 2pt solid var(--rule); color: var(--ink-2); }
+.xref { font-weight: 600; color: var(--accent); }
+.xref.missing { color: var(--muted); }
+.xref-v1 { font-style: normal; font-weight: 600; }
+ul:has(> li > .xref:only-child) { list-style: none; padding-left: 0; }
+.c-red { color: var(--danger); }
+.c-gray { color: var(--kr); }
+
+code, pre { font-family: var(--mono); }
+.body code { font-size: 0.84em; background: #f1f3f5; border: 0.5pt solid #e1e4e8; border-radius: 0.8mm; padding: 0 0.8mm; color: #22303c; overflow-wrap: anywhere; }
+pre.code { font-size: 7.8pt; line-height: 1.45; background: #f6f7f9; border: 0.6pt solid var(--rule); border-radius: 1.2mm; padding: 2.5mm 3mm;
+  white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 3.5mm; break-inside: avoid; }
+pre.code code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* ---------------------------------------------------------------- tables */
+table.md { width: 100%; border-collapse: collapse; margin: 1.5mm 0 4.5mm; font-size: 8.4pt; line-height: 1.4; }
+table.md th { background: var(--head); text-align: left; font-weight: 700; color: var(--ink); padding: 1.6mm 2mm; border-bottom: 0.9pt solid #b8c0ca; vertical-align: bottom; }
+table.md td { padding: 1.4mm 2mm; border-bottom: 0.5pt solid var(--rule); vertical-align: top; }
+table.md tbody tr:nth-child(even) td { background: var(--zebra); }
+table.md tr { break-inside: avoid; }
+table.md thead { display: table-header-group; }
+table.md code { font-size: 0.9em; }
+
+/* ---------------------------------------------------------------- callouts */
+.callout { display: flex; gap: 3mm; margin: 1mm 0 4mm; padding: 2.6mm 3.4mm 1mm; border-left: 2.6pt solid var(--accent); background: var(--accent-tint);
+  border-radius: 0 1.2mm 1.2mm 0; break-inside: avoid; font-size: 9.4pt; }
+.callout-label { flex: none; width: 15mm; font: 800 7pt/1.9 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.callout-body { flex: 1; min-width: 0; }
+.callout-body > p { margin: 0 0 1.6mm; }
+.callout-body > :last-child { margin-bottom: 1.6mm; }
+.callout-tip { border-color: var(--tip); background: var(--tip-tint); } .callout-tip .callout-label { color: var(--tip); }
+.callout-note { border-color: var(--note); background: var(--note-tint); } .callout-note .callout-label { color: var(--note); }
+.callout-warning { border-color: var(--warn); background: var(--warn-tint); } .callout-warning .callout-label { color: var(--warn); }
+.callout-danger { border-color: var(--danger); background: var(--danger-tint); } .callout-danger .callout-label { color: var(--danger); }
+
+/* ---------------------------------------------------------------- toggles (always expanded) */
+.details { margin: 2mm 0 4.5mm; border: 0.7pt solid var(--rule); border-radius: 1.2mm; padding: 0 3.5mm 1mm; }
+.details-title { margin: 0 -3.5mm 2.5mm; padding: 1.8mm 3.5mm; background: #f3f5f7; border-bottom: 0.7pt solid var(--rule); font-weight: 700; font-size: 9.6pt; break-after: avoid; }
+.details-title::before { content: '▸ '; color: var(--accent); }
+.details > :last-child { margin-bottom: 2mm; }
+
+/* ---------------------------------------------------------------- figures and diagrams */
+figure.shot { margin: 2mm 0 5mm; break-inside: avoid; }
+figure.shot img { display: block; max-width: 100%; max-height: 100mm; width: auto; height: auto; margin: 0 auto; border: 0.6pt solid #c3c8cf; border-radius: 0.8mm; }
+figure.shot figcaption { margin-top: 1.6mm; font-size: 8.4pt; line-height: 1.4; color: var(--ink-2); }
+.fig-id { font: 700 7pt var(--sans); color: #fff; background: var(--accent); border-radius: 0.6mm; padding: 0.2mm 1.2mm; margin-right: 2mm; letter-spacing: 0.04em; }
+.fig-kr { display: block; font-family: var(--kr-font); color: var(--kr); margin-top: 0.4mm; }
+.diagram { margin: 2mm 0 5mm; padding: 3mm; border: 0.6pt solid var(--rule); border-radius: 1.2mm; break-inside: avoid; text-align: center; }
+.diagram svg { display: inline-block; height: auto; }
+.diagram.wide { border: 0; padding: 0; margin: 0; }
+.diagram-title { text-align: left; font: 700 11pt var(--sans); margin: 0 0 4mm; color: var(--ink); }
+.diagram-title .h-kr { font-size: 0.85em; }
+.nw { white-space: nowrap; }
+table.md code.nw { white-space: nowrap; overflow-wrap: normal; }
+.callout.may-break { break-inside: auto; }
+pre.mermaid-src { white-space: pre-wrap; font-size: 7pt; }
+
+/* GFM task lists (checklists to tick on paper) */
+.body li:has(> input[type=checkbox]), .body li:has(> p > input[type=checkbox]) { list-style: none; margin-left: -4.5mm; }
+.body input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 3.2mm; height: 3.2mm; border: 0.8pt solid #7c828b; border-radius: 0.6mm; margin: 0 2mm 0 0; vertical-align: -0.5mm; background: #fff; }
+.body input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }

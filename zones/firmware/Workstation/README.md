@@ -4,7 +4,7 @@ One ESP32-C3 USB dongle for every ESP-NOW host function in the installation, *in
 station's NFC reader*. It speaks a strict superset of the pairing-station protocol
 (`pairing_station/firmware/pairing_station`, frozen) and of the General Radio it replaces (its
 protocol lineage is below), so the pairing app, the Zone Database Manager, the Mainshow app and the
-NCT Console drive it unchanged. `zones/tools/general_radio.py` is the Python client and bench command line.
+NCT Console drive it unchanged. `zones/tools/workstation.py` is the Python client and bench command line.
 
 - Board: a spare/ex-cube XIAO ESP32-C3 (native USB, 8 WS2812 status LEDs on GPIO10) with a PN532
   reader on I2C, SDA GPIO4 / SCL GPIO3, as on the station. Without a reader wired the board still
@@ -18,7 +18,7 @@ NCT Console drive it unchanged. `zones/tools/general_radio.py` is the Python cli
       --libraries "live files/libraries" --libraries pairing_station/.arduino/libraries \
       --build-path zones/build/Workstation/cache --output-dir zones/build/Workstation zones/firmware/Workstation
   ```
-- Flash: `pairing_station/.venv/bin/python zones/tools/general_radio.py --port <port> flash` — the
+- Flash: `pairing_station/.venv/bin/python zones/tools/workstation.py --port <port> flash` — the
   `zones/dbmanager/dongle.py` pipeline: full-flash backup first, bootloader/partitions/boot selector/app
   only (NVS kept), refuses cubes, zones, the station and the recorded Mainshow controller, records the
   board as an `excluded` role.

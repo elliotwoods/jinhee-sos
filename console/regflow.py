@@ -228,6 +228,12 @@ class RegistrationFlow:
             raise ValueError('The cube is not in the device database')
         if self.db.excluded(self.mac):
             raise ValueError('This device is excluded as a reader / base station, not a cube')
+        if row['cube_id'] is None and self.hub.web_numbering():
+            # This computer syncs with the web, so the web hands out the number (never two cubes on one number).
+            self.hub.request_number(self.mac)
+            error = self.hub.numbering['error']
+            return self.set_wait(f'The web could not hand out a number ({error}); retrying. Or assign one by hand.' if error
+                                 else 'Getting a new number from the web…')
         if row['cube_id'] is None:
             number = self.db.suggested_number()
             row = self.db.rename(self.mac, number, fresh_scan=True)
@@ -292,7 +298,7 @@ class RegistrationFlow:
             return self.set_wait('Remove the tag from the reader')
         if self.sync_job is None:
             if not self.hub.sync.get('password_known'):
-                return self.set_wait('Sign in to sync (Sync button, top right)')
+                return self.set_wait('Sign in to sync (the Sync chip, top right)')
             if self.hub.sync.get('busy') or any(j.kind == 'sync' and j.state == 'running' for j in self.hub.jobs.jobs.values()):
                 return self.set_wait('Another sync is running; waiting for it to finish')
             from jobs.sync import sync_job

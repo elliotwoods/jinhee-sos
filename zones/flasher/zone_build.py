@@ -103,9 +103,18 @@ def build(name, run):
     before = source_hash(name)
     out = build_dir(name)
     out.mkdir(parents=True, exist_ok=True)
-    args = [cli, 'compile', '--fqbn', fqbn]
+    args = [cli, 'compile', '--fqbn', fqbn, *hostos.arduino_build_args()]
     if name == 'PoolZone':
-        args += ['--build-property', 'compiler.cpp.extra_flags=-DPOOL_BUILD_ID=h' + before]
+        # POOL_BUILD_ID goes in through the core's build_opt.h hook ("@{build.opt.path}" on every
+        # compile line) from a file whose path never changes: a changing --build-property would make
+        # arduino-cli wipe the whole build path on every source change. gcc does not track the
+        # file as a dependency, so drop the compiled sketch whenever the ID changes.
+        options = out / 'pool_build_opt.h'
+        wanted = f'-DPOOL_BUILD_ID=h{before}\n'
+        if not options.is_file() or options.read_text(encoding='utf-8') != wanted:
+            shutil.rmtree(out / 'cache' / 'sketch', ignore_errors=True)
+            options.write_text(wanted, encoding='utf-8', newline='\n')
+        args += ['--build-property', f'build.opt.path={options}']
     for library in LIBRARIES:
         args += ['--libraries', str(library)]
     run(args + ['--build-path', str(out / 'cache'), '--output-dir', str(out), str(ZONES / 'firmware' / name)], timeout=900)
@@ -114,6 +123,8 @@ def build(name, run):
         raise RuntimeError('Build used an unexpected ESP32 core; select version 3.3.11')
     if source_hash(name) != before:
         raise RuntimeError('Source changed during build; rebuild before flashing')
+    if name == 'PoolZone' and ('h' + before).encode() not in (out / f'{name}.ino.bin').read_bytes():
+        raise RuntimeError('Build did not embed the expected POOL_BUILD_ID; delete zones/build/PoolZone/cache and rebuild')
     partitions = parse_partitions(out / 'cache/partitions.csv')
     shutil.copyfile(CORE / 'tools/partitions/boot_app0.bin', out / 'boot_app0.bin')
     sketch = name

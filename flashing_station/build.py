@@ -10,7 +10,7 @@ def build(run):
     if not cli: raise RuntimeError('Install Arduino IDE or arduino-cli and ESP32 core 3.3.11')
     source_hash = source_digest()
     out = ROOT/'build'; out.mkdir(exist_ok=True)
-    run([cli,'compile','--fqbn',FQBN,'--libraries',str(WORKSPACE/'live files/libraries'),'--library',str(SHOW_LIBRARY),
+    run([cli,'compile','--fqbn',FQBN,*hostos.arduino_build_args(),'--libraries',str(WORKSPACE/'live files/libraries'),'--library',str(SHOW_LIBRARY),
          '--build-path',str(out/'cache'),'--output-dir',str(out),str(ROOT/'firmware/neocore_usb')], timeout=600)
     core = hostos.esp32_core('3.3.11')
     options = json.loads((out/'cache/build.options.json').read_text(encoding='utf-8'))

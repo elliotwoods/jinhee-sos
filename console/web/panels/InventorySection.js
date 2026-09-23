@@ -90,7 +90,7 @@ export function WebSync() {
   const jobs = (section('jobs') || []).filter((j) => j.kind.startsWith('sync') || j.kind.startsWith('zone.p')).slice(0, 3);
   return html`<div><${Explainer} id="inventory.websync" />
     <div class="card"><h3>${t('Web inventory')}</h3><div class="row"><span class=${'chip ' + syncTone(sync.tone)}>${sync.text}</span><span class="note">${sync.detail}</span></div>
-      <${KeyValue} items=${[[t('State'), st.state],
+      <${KeyValue} items=${[[t('Automatic'), sync.auto ? t('on · a local change syncs within seconds; the web is checked every minute') : t('off (Settings › Automatic updates)')], [t('State'), st.state],
         [t('To upload'), st.zone_publish ? t('{n} inventory changes + zone database', { n: st.inventory_up ?? 0 }) : t('{n} inventory changes', { n: st.inventory_up ?? 0 })],
         [t('To download'), st.zone_pull ? t('{n} web changes + zone database v{version}', { n: st.inventory_down ?? 0, version: st.web_version }) : t('{n} web changes', { n: st.inventory_down ?? 0 })],
         [t('Waiting'), st.waiting ? t('{n} downloaded changes wait for the apps to be idle', { n: st.waiting }) : t('none')], [t('Lost'), st.lost ? t('{n} local devices would give way to a newer change', { n: st.lost }) : t('none')],

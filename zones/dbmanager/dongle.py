@@ -185,7 +185,7 @@ def build(runner, firmware=PAIRING):
     if not cli:
         raise RuntimeError(f'Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 to build the {firmware.label} firmware')
     firmware.build.mkdir(parents=True, exist_ok=True)
-    args = [cli, 'compile', '--fqbn', BOARD]
+    args = [cli, 'compile', '--fqbn', BOARD, *hostos.arduino_build_args()]
     for library in firmware.libraries:
         args += ['--libraries', str(library)]
     runner(args + ['--build-path', str(firmware.build / 'cache'), '--output-dir', str(firmware.build), str(firmware.sketch)], 900)

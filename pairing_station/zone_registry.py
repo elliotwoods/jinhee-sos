@@ -162,6 +162,8 @@ class ZoneRegistry:
         self.auto_refresh = auto_refresh
         self.walkaround = False
         self.backoff = {}  # mac -> clock time before walkaround retries it
+        self.heard = {}  # mac -> clock time this registry's own radio last heard the zone's status
+        self.walk_error = None  # why the last walk could not start (nothing publishable), logged once
         self.requests = {}
         self.logs = {}
         self.gain_requests = {}  # mac -> (requested dB, clock) until the zone's ZONE_SETTINGS confirms it
@@ -319,6 +321,7 @@ class ZoneRegistry:
                     previous = self.rssi.get(e['mac'])
                     self.rssi[e['mac']] = e['rssi'] if previous is None else 0.7 * previous + 0.3 * e['rssi']
                 if frame == zonedb.ZONE_STATUS:
+                    self.heard[e['mac']] = self.clock()
                     self._status(e['mac'], zonedb.parse_status(data))
                 elif frame == zonedb.ZONE_SETTINGS:
                     self._settings(e['mac'], zonedb.parse_settings(data))
@@ -374,11 +377,16 @@ class ZoneRegistry:
             self.expected.add(mac)  # a zone that came into range and needs this version joins the run
 
     def walk_candidates(self):
+        """Zones behind the published database that this registry's own radio heard recently. The store is
+        shared between radios, so `in_range` alone could name a zone only another radio can reach."""
         now = self.clock()
         return sorted(z['mac'] for z in self.zone_rows()
-                      if z['in_range'] and z['state'] == 'behind' and self.backoff.get(z['mac'], 0) <= now)
+                      if z['in_range'] and z['state'] == 'behind' and self.backoff.get(z['mac'], 0) <= now
+                      and now - self.heard.get(z['mac'], -1e9) <= self.IN_RANGE)
 
-    def tick(self, connected, station, busy=False):
+    def tick(self, connected, station, busy=False, may_start=True):
+        """`may_start`: False while another radio on this computer is publishing (two radios never
+        broadcast chunks over each other); a walk then waits."""
         if not connected or station.get('zones') != zonedb.PROTO:
             if self.publication:
                 self.stop('Publishing paused: station disconnected')
@@ -416,12 +424,22 @@ class ZoneRegistry:
                         self.next_cycle = now + self.CYCLE_PAUSE
                 pending = len(self.expected - self._updated())
                 self.message = f'Publishing v{p.version}: cycle {self.cycles + 1}, {pending} zone(s) pending'
-        elif self.walkaround and not self.inflight:
+        elif self.walkaround and not self.inflight and may_start:
             candidates = self.walk_candidates()
             if candidates:
                 # One broadcast run updates every out-of-date zone in range at once.
-                self.publish(expected=candidates, timeout=self.WALK_TIMEOUT)
-                self.walk_run = True
-                self.message = f'Auto update all: updating {len(candidates)} zone(s) to v{self.publication.version}'
+                try:
+                    self.publish(expected=candidates, timeout=self.WALK_TIMEOUT)
+                except ValueError as exc:
+                    # Nothing publishable (an inconsistent cache): say so once and wait, never fail the tick.
+                    for mac in candidates:
+                        self.backoff[mac] = now + self.WALK_BACKOFF
+                    if self.walk_error != str(exc):
+                        self.log(f'Auto update all could not start: {exc}')
+                    self.walk_error = self.message = str(exc)
+                else:
+                    self.walk_error = None
+                    self.walk_run = True
+                    self.message = f'Auto update all: updating {len(candidates)} zone(s) to v{self.publication.version}'
         if now >= self.next_query and not self.inflight:
             self.query()

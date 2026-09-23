@@ -34,7 +34,7 @@ the default is 298 s. The console's Show editor sends it after a publish. `show_
 It does not stop the cubes; `SET_ZONE 0` does.
 
 Hardware check, 2026-09-23: mainshow-1.3.0 was flashed onto a spare board (#138, then restored to
-general-radio-1.1.0) and tested against cube #17 on v1.6.0, reading the cube's serial log.
+general-radio-1.1.0; it now runs general-radio-1.2.0, not yet the Workstation) and tested against cube #17 on v1.6.0, reading the cube's serial log.
 - Normal start: ready then start; the cube started and ignored the repeats.
 - Timecode: the cube logged no resync over the next 4 s.
 - Fallback: a start while the cube was idle was ignored. Made ready 2.4 s later, the cube joined from
@@ -100,8 +100,8 @@ the show; only its LEDs show that. A broadcast is never acknowledged.
 ## Build, flash, test
 
 - Built by `scripts/build_all_firmware.py` (`esp32:esp32:esp32c3:CDCOnBoot=cdc`, the same board recipe as the
-  pairing-station dongles), into `zones/build/MainshowController`.
+  Workstation and the legacy pairing-station dongles), into `zones/build/MainshowController`.
 - Flash it from the Mainshow app (**Flash controller firmware…**). That reuses the dongle pipeline in
   `zones/dbmanager/dongle.py`: it refuses cubes, zone boards and the pairing station, takes a first-time full backup, preserves NVS and ends with a watchdog reset.
-- The board is then recorded as the controller (metadata `mainshow_controllers`), and the dongle flasher refuses to turn it back into a relay.
+- The board is then recorded as the controller (metadata `mainshow_controllers`), and the dongle flasher refuses to turn it back into a relay (Workstation).
 - Host test: `zones/tests/test_MainshowController.cpp`, run by `zones/tests/run_firmware_tests.py`.

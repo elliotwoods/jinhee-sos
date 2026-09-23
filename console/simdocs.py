@@ -366,7 +366,8 @@ def install(hub):
     simulate.install(hub, 'empty')
     hub._sim = {}
     # Scenes stage zones and cubes that are behind on purpose; automatic updates would settle them first.
-    hub.settings.update(auto_zone_db_radio=False, auto_zone_db_usb=False, auto_show=False, auto_pull=False)
+    hub.settings.update(auto_zone_db_radio=False, auto_zone_db_usb=False, auto_show=False, auto_pull=False, auto_sync=False,
+                        auto_build=False, auto_firmware_usb=False)
     docs_boards(hub)
     inner = hub.tick
 

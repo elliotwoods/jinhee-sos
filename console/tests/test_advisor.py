@@ -260,6 +260,90 @@ class StationTests(unittest.TestCase):
         for current in ('workstation-1.0.0', 'general-radio-1.0.0', 'general-radio-1.2.0'):
             self.assertFalse(by_rule(run(sections(station=station_section(firmware=current))), 'dongle.old'), current)
 
+    def test_old_dongle_on_usb_upgraded_automatically(self):
+        board = usb_device(port='/dev/cu.usbmodem2101', role='workstation', mac=STATION_MAC, state='session', firmware='nct-pairing-1.6-zones')
+        sec = sections(station=station_section(firmware='nct-pairing-1.6-zones'), devices=[board], settings=dict(auto_firmware_usb=True))
+        [s] = by_rule(run(sec), 'dongle.old')
+        self.assertIn('upgraded automatically', s['check'])
+        self.assertEqual(s['actions'], [])
+        # Off, or not on USB: the manual flash action as before.
+        sec['settings']['auto_firmware_usb'] = False
+        self.assertIn('flash', actions(by_rule(run(sec), 'dongle.old')[0]))
+        sec = sections(station=station_section(firmware='nct-pairing-1.6-zones'), settings=dict(auto_firmware_usb=True))
+        self.assertIn('flash', actions(by_rule(run(sec), 'dongle.old')[0]))
+
+    def test_old_protected_station_never_flashed(self):
+        mac = '3C:0F:02:AD:83:24'
+        board = usb_device(port='/dev/cu.usbmodem2101', role='workstation', mac=mac, state='protected', firmware='nct-pairing-1.6-zones')
+        for auto in (True, False):
+            sec = sections(station=station_section(firmware='nct-pairing-1.6-zones', device=mac), devices=[board],
+                           settings=dict(auto_firmware_usb=auto))
+            [s] = by_rule(run(sec), 'dongle.old')
+            self.assertEqual(s['actions'], [])
+            self.assertNotIn('automatically', s['check'])
+
+
+class AutoUpgradeTests(unittest.TestCase):
+    def stale(self, state, reason='Source changed since the last build', auto_build=True):
+        sec = sections(settings=dict(auto_build=auto_build))
+        sec['builds']['workstation'] = dict(state='stale', version='workstation-1.0.0')
+        sec['autoupdate'] = dict(builds=[dict(target='workstation', label='Workstation', version='workstation-1.0.0',
+                                              current=False, state=state, reason=reason)], devices=[], air={})
+        return [s for s in by_rule(run(sec), 'build.stale') if s['id'] == 'build.stale:global:workstation']
+
+    def test_queued_or_building_builds_have_no_card(self):
+        self.assertEqual(self.stale('queued'), [])
+        self.assertEqual(self.stale('building', None), [])
+
+    def test_failed_build_raises_card_with_reason(self):
+        [s] = self.stale('failed', 'arduino-cli exited 1')
+        self.assertIn('arduino-cli exited 1', s['know'])
+        self.assertEqual(actions(s)['build']['command'], 'build.dongle')
+
+    def test_auto_build_off_keeps_card(self):
+        self.assertEqual(len(self.stale('queued', auto_build=False)), 1)
+
+    def test_no_build_tools_keeps_card(self):
+        sec = sections(settings=dict(auto_build=True))
+        sec['builds']['tools']['arduino_cli'] = None
+        sec['builds']['zones'] = {'DesertZone': dict(error='source changed since build')}
+        sec['autoupdate'] = dict(builds=[dict(target='zone:DesertZone', state='no_tools', reason='Install Arduino IDE')])
+        [s] = [s for s in by_rule(run(sec), 'build.stale') if s['id'].endswith(':DesertZone')]
+        self.assertIn('Install Arduino IDE', s['know'])
+
+    def test_cube_fw_different_mentions_automatic_upgrade(self):
+        d = usb_device(port='/dev/cu.usbmodem9', role='cube', mac=CUBE_MAC, session_kind='cube', firmware='v1.4.0',
+                       fw_status=dict(version='v1.4.0', expected='v1.4.1-USB.2', status='different'))
+        [s] = by_rule(run(sections(devices=[d], settings=dict(auto_firmware_usb=True))), 'cube.fw_different')
+        self.assertIn('upgraded automatically once Register and Flash are off', s['check'])
+        self.assertIn('flash', actions(s))
+        [s] = by_rule(run(sections(devices=[d])), 'cube.fw_different')
+        self.assertNotIn('automatically', s['check'])
+
+    def air(self, auto, *rows, devices=()):
+        sec = sections(settings=dict(auto_firmware_usb=auto), devices=list(devices))
+        sec['autoupdate'] = dict(air=dict(firmware=list(rows)))
+        return by_rule(run(sec), 'zone.fw_behind')
+
+    def test_zone_fw_behind_grouped(self):
+        plate = dict(kind='zone', mac=PLATE_MAC, label='Preshow 1', current='preshow-3.3.0', version='preshow-3.4.0')
+        desert = dict(kind='zone', mac='30:ED:A0:5B:0C:E8', label='Desert 15', current='desert-2.3.0', version='desert-2.4.0')
+        pool = dict(kind='zone', mac=POOL_MAC, label='Pool 2', current='pool-3.1.0', version='pool-3.2.0')
+        cube = dict(kind='cube', mac=CUBE_MAC, label='Cube #44', current='v1.4.0', version='v1.7.0')
+        cards = {s['id']: s for s in self.air(True, plate, desert, pool, cube)}
+        self.assertEqual(set(cards), {'zone.fw_behind:global:plates', 'zone.fw_behind:global:pool'})
+        plates = cards['zone.fw_behind:global:plates']
+        self.assertIn('2 zone(s)', plates['title'])
+        self.assertIn('(automatically)', plates['check'])
+        self.assertEqual(plates['actions'], [])
+        self.assertIn('together by hand', cards['zone.fw_behind:global:pool']['check'])
+        [off] = [s for s in self.air(False, plate) if s['id'].endswith(':plates')]
+        self.assertNotIn('automatically', off['check'])
+        self.assertIn('USB', off['check'])
+        # A plate already on USB is the automatic-upgrade panel's, not this card's.
+        self.assertEqual(self.air(True, plate, devices=[usb_device()]), [])
+        self.assertEqual(self.air(True), [])
+
 
 class ZoneDatabaseTests(unittest.TestCase):
     def test_unpublished_global(self):

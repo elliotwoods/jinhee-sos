@@ -91,7 +91,9 @@ export function Attention() {
 
 export function Jobs() {
   useSections(['jobs']);
-  const jobs = (section('jobs') || []).filter((j) => !['sync.status', 'tools.check'].includes(j.kind) || j.state === 'failed');
+  // Status checks and automatic syncs show only when they fail (the Sync chip in the top bar shows them otherwise);
+  // automatic builds and firmware upgrades likewise (the Automatic updates block above shows them).
+  const jobs = (section('jobs') || []).filter((j) => !(['sync.status', 'tools.check'].includes(j.kind) || (j.kind === 'sync' && j.quiet) || j.origin === 'auto') || j.state === 'failed');
   const running = jobs.filter((j) => j.state === 'running');
   const recent = jobs.filter((j) => j.state !== 'running').slice(0, 4);
   return html`<section aria-label=${t('jobs')} data-doc="jobs"><h4><span>${t('Jobs')}</span><span>${running.length ? t('{n} running', { n: running.length }) : ''}</span></h4>

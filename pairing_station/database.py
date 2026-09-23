@@ -26,6 +26,10 @@ def released_status(cube_id, uid, pending_uid):
     return ('needs_number' if cube_id is None else
             'unconfirmed' if pending_uid else 'not_transmitted' if uid else 'awaiting_tag')
 
+# The detail of a brand-new device added without a number (the NCT Console asks the web for one: it matches this).
+NEW_UNNUMBERED = 'Choose Rename device to assign its label number'
+
+
 class Database:
     def __init__(self, path, recover_pending=True):
         self.path = Path(path)
@@ -123,7 +127,7 @@ class Database:
             automatic = self.conn.execute("SELECT value FROM metadata WHERE key='auto_number'").fetchone()
             cube_id = self.suggested_number() if automatic is None or automatic[0]=='1' else None
             self.conn.execute('INSERT INTO devices VALUES (?,?,NULL,NULL,?,?,?,?)',
-                              (mac, cube_id, source, 'awaiting_tag' if cube_id else 'needs_number', timestamp(), 'ID reserved' if cube_id else 'Choose Rename device to assign its label number'))
+                              (mac, cube_id, source, 'awaiting_tag' if cube_id else 'needs_number', timestamp(), 'ID reserved' if cube_id else NEW_UNNUMBERED))
         self.export_default()
         return self.get(mac)
 

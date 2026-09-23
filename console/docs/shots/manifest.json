@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-23T04:16:48",
-  "git": "de08bb0",
+  "generated": "2026-09-23T04:59:33",
+  "git": "c955d9f",
   "size": [
     1440,
     1000
@@ -122,6 +122,34 @@
       "hl": [
         "cube.tag",
         "cube.ladder"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-F1",
+      "file": "04-F1.png",
+      "chapter": 4,
+      "step": 1,
+      "en": "Flash cubes: switch on \"Flash cubes as they are plugged in\"",
+      "kr": "Flash cubes: \"Flash cubes as they are plugged in\" 켜기",
+      "route": "#/flash?hl=flash.enable&still=1",
+      "hl": [
+        "flash.enable"
+      ],
+      "open": [],
+      "settled": true
+    },
+    {
+      "id": "04-F2",
+      "file": "04-F2.png",
+      "chapter": 4,
+      "step": 2,
+      "en": "A cube plugged in: firmware written and verified, show written and confirmed",
+      "kr": "큐브 연결: 펌웨어 쓰기·검증, 쇼 쓰기·확인 완료",
+      "route": "#/flash?hl=flash.flow&dock=1&still=1",
+      "hl": [
+        "flash.flow"
       ],
       "open": [],
       "settled": true

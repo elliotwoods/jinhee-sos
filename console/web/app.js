@@ -10,6 +10,7 @@ import { Toasts } from './components/basics.js';
 import { TopBar } from './components/TopBar.js';
 import { Rail } from './components/Rail.js';
 import { Attention, Jobs } from './components/Attention.js';
+import { AutoUpdates } from './components/AutoUpdates.js';
 import { Timeline } from './components/Timeline.js';
 import { StatusBar } from './components/StatusBar.js';
 import { applyTheme, storedTheme } from './lib/theme.js';
@@ -76,7 +77,7 @@ function App() {
   return html`<div class=${'layout' + (dock ? ' dock-open' : '') + (side ? ' side-open' : '')}>
     <${TopBar} onToggleDock=${() => setDock(!dock)} dockOpen=${dock} onToggleSide=${() => setSide(!side)} sideOpen=${side} /><${Rail} />
     <main class="main"><${Main} /></main>
-    <aside class="side"><${Attention} /><${Jobs} /></aside>
+    <aside class="side"><${AutoUpdates} /><${Attention} /><${Jobs} /></aside>
     <${Timeline} open=${dock} onToggle=${() => setDock(!dock)} />
     <${StatusBar} />
     <${Toasts} items=${toasts} /><${RegisterNotices} /><${FlashNotices} /></div>`;

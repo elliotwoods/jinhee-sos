@@ -43,20 +43,34 @@ def status_job(hub):
             hub.sync['status'] = dict(state='error', message=job.error)
         hub.sync['password_known'] = bool(web_client.load_password())
         hub.mark_dirty('sync')
-        if job.state == 'done' and isinstance(job.result, dict) and job.result.get('zone_pull'):
-            hub.auto_zone_pull(job.result.get('web_version'))
+        if job.state == 'done' and isinstance(job.result, dict):
+            if needs_sync(job.result, hub.idle_flag.is_set()):
+                hub.auto_sync('status')
+            if job.result.get('zone_pull'):
+                hub.auto_zone_pull(job.result.get('web_version'))
 
     job.quiet = True
     hub.jobs.start(job, work, done)
     return job
 
 
-def sync_job(hub, upload=True, download=True):
+def needs_sync(status, idle=True):
+    """A status check found something a Sync would move: inventory either way or zone mappings to publish.
+    (A newer web zone database alone is hub.auto_zone_pull's job; waiting downloads only apply when idle.)"""
+    if status.get('state') != 'ok':
+        return False
+    return bool(status.get('inventory_up') or status.get('inventory_down') or status.get('zone_publish')
+                or (status.get('waiting') and idle))
+
+
+def sync_job(hub, upload=True, download=True, auto=False):
+    """`auto`: started by the console itself (hub.auto_sync); quiet unless it fails."""
     if hub.sync['busy']:
         raise ValueError('A sync is already running')
     if not web_client.load_password():
         raise ValueError('Enter the web inventory password first (Sync › sign in)')
-    job = Job('sync', 'web', 'Sync inventory and zone database')
+    job = Job('sync', 'web', 'Automatic sync of inventory and zone database' if auto else 'Sync inventory and zone database')
+    job.quiet = auto
     database, held = hub.database, SUFFIXES
     apply_ok = hub.idle_flag.is_set
     seen_versions = (hub.store.highest_seen(),)
@@ -79,7 +93,12 @@ def sync_job(hub, upload=True, download=True):
             hub.sync['summary'] = sync_summary(job.result or {})
             hub.sync['last_error'] = None
             job.outcome = dict(level='verified', text=hub.sync['summary'] or 'Synced')
-            hub.log('Sync finished' + (': ' + hub.sync['summary'] if hub.sync['summary'] else ''), 'ok', source='sync')
+            if not auto or hub.sync['summary']:
+                hub.log(('Automatic sync' if auto else 'Sync finished') + (': ' + hub.sync['summary'] if hub.sync['summary'] else ''),
+                        'ok', source='sync')
+            result = job.result or {}
+            hub.auto_sync_finished(not result.get('zone_error'), 'zone', result.get('zone_error'),
+                                   waiting=(result.get('sync') or {}).get('unapplied', 0))
         else:
             error = job.error or ''
             kind = 'other'
@@ -93,9 +112,33 @@ def sync_job(hub, upload=True, download=True):
             elif 'interrupted' in error.lower():
                 kind = 'after_push'
             hub.sync['last_error'] = dict(kind=kind, text=error)
+            hub.auto_sync_finished(False, kind, error)
         hub.sync['password_known'] = bool(web_client.load_password())
         hub.mark_dirty('sync', 'inventory', 'registry')
         status_job(hub)
+
+    hub.jobs.start(job, work, done)
+    return job
+
+
+def claim_job(hub, macs, exclude):
+    """Ask the web for the next free cube number for each MAC (web/src/lib/numbers.ts). The result maps MAC ->
+    number; hub.numbers_claimed() writes them on the owner thread. Any failure (offline, a web from before
+    /api/inventory/claim) leaves the cubes at Needs number: two computers can never pick the same number."""
+    job = Job('number.claim', 'web', 'Get new cube numbers from the web')
+    job.quiet = True
+    macs, exclude = list(macs), set(exclude)
+
+    def work(emit, cancel):
+        web, got = client(hub), {}
+        for mac in macs:
+            answer = web.claim_number(mac, exclude, client_name('NCT Console'))
+            got[mac] = int(answer['number'])
+            exclude.add(got[mac])
+        return got
+
+    def done(job):
+        hub.numbers_claimed(job.result if job.state == 'done' else {}, None if job.state == 'done' else job.error)
 
     hub.jobs.start(job, work, done)
     return job

@@ -300,7 +300,7 @@ class WorkstationSession(Session):
             showedit = self.hub.showedit
             if showedit and (kind in ('show_sent', 'show_frame') or
                              (kind == 'error' and event.get('id') in showedit.registry.requests)):
-                showedit.event(event)
+                showedit.event(event, via=self)
                 continue
             if kind in OWN_EVENTS or (kind == 'zone_sent' and 'zone' in event) or \
                     (kind == 'error' and event.get('id') in self.sends):
@@ -441,7 +441,7 @@ class WorkstationSession(Session):
         c.tick()
         if c.phase in ('identifying', 'registering', 'stopping'):
             self.zones.next_query = max(self.zones.next_query, now + 1.0)
-        self.zones.tick(c.connected, c.station, busy=bool(c.mode))
+        self.zones.tick(c.connected, c.station, busy=bool(c.mode), may_start=self.hub.zone_walk_allowed(self))
         if not self.transport.port or not c.connected:
             return
         if self.pool_held and now - self.last_pool_touch > self.TOUCH:

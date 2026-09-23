@@ -11,8 +11,8 @@ two never share a database at the same time (each refuses to start and names the
 pairing_station/.venv/bin/python console/app.py [--database PATH] [--api-port N] [--browser] [--debug] [--simulate] [--scenario default|docs|empty]
 ```
 
-`--simulate` runs against fake boards (a station, a preshow plate holding an older database, a pool
-radio, a cube, a legacy General Radio and a Workstation) on a temporary copy of the database, so every panel and the suggestion cards can
+`--simulate` runs against fake boards (a legacy pairing station, a preshow plate holding an older database, a pool
+radio, a cube, a legacy General Radio and a Workstation, `/dev/sim.workstation` = 02:AA:BB:CC:DD:F0) on a temporary copy of the database, so every panel and the suggestion cards can
 be exercised without hardware. `--browser` serves the same page to the default browser (also used
 automatically when the native webview is unavailable, e.g. no WebView2 runtime on Windows).
 
@@ -57,20 +57,20 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 
 | Old app | Now |
 |---|---|
-| Pairing station | Register page (plug-in-to-register workflow, ⌘3), Cube panel (Register, Send saved mapping, Flash, number, role), Pairing station panel (connection, NFC health, Discover, Pair new, Retry/Skip/Stop), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
+| Pairing station | Register page (plug-in-to-register workflow, ⌘3), Cube panel (Register, Send saved mapping, Flash, number, role), Stations › Workstation panel › Pairing (connection, NFC health, Discover, Pair new, Retry/Skip/Stop; titled "Pairing station" for the legacy station), Inventory › Cubes (grid/table, filters, bulk Transmit original 32 / Retry unconfirmed / Flash all shown, exports) |
 | Cube flasher | Flash page (plug-in-to-flash workflow with the published show, ⌘2, off at launch), Cube panel › Firmware (Flash, Update show over USB, Check boot, history); This computer › Firmware builds |
 | Zone flasher + cube monitor | Zone panel › Monitor (card, LED ring, history, actions, console) and › Firmware & database (identity form, Flash, Force, Update database over USB, Automatic database update, Check report, RX gain); USB intake (Auto-flash zones); database-only USB updates run without Auto-flash (Settings › Automatic updates) |
-| Zone Database Manager | Zone panel (Update over the air, Identify, Request log, Reboot, RX gain), Pairing station / dongle panel (Query zones, auto-refresh, Update all, Auto-update all = Settings › Automatic updates), Inventory › Zone database |
+| Zone Database Manager | Zone panel (Update over the air, Identify, Request log, Reboot, RX gain), Stations › Workstation panel › Zone relay (Query zones, auto-refresh, Update all, Auto-update all = Settings › Automatic updates), Inventory › Zone database |
 | Mainshow controller | Show section and the Mainshow controller panel (① ready, ② trigger, Stop → idle, clock); "Make this a Mainshow controller" on a spare board |
 | Pool calibration | PoolZone panel › Calibration (override lease, control points, guided recording, tuning), › Diagnostics, › Firmware & database (firmware, database, radio id) |
 | Pool light test | PoolRadioTest bridge panel; pool central telemetry on the PoolCentral panel |
 | Preshow test | PreshowZone panel › Cue test |
 | Range test | RangeTest panel |
-| General Radio (`zones/firmware/GeneralRadio`, superseded by the Workstation) | Workstation panel (one panel for a pairing station, a dongle, a General Radio or a Workstation; tabs light up per what hello reports): cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); without a station it is the pairing link. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: workstation`) |
+| General Radio (legacy general-radio-1.x boards; the sketch became `zones/firmware/Workstation`) | Workstation panel in the rail group Stations (one role, `workstation`, and one panel for a legacy pairing station, a legacy ESP-NOW dongle, a legacy General Radio or a Workstation, titled from hello: "Pairing station" / "ESP-NOW dongle" / "General Radio" / "Workstation"). Tabs Pairing, Zone relay, Cubes & show, Pool lamp, Preshow cue, Console; a tab is greyed when hello lacks the capability (legacy station: Pairing and Zone relay only; legacy General Radio: everything but the reader; Workstation: all): cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); the primary pairing link is the first connected link with a reader (else the first connected), the zone-DB walk-around runs on that link if it relays zones, else on the first relay, and the show relay is any link reporting `show:1`. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: workstation`; built with `build.dongle which=workstation`). Legacy boards keep working but are no longer a flash target |
 | Web sync | Top-bar Sync button; Inventory › Web sync (check, sync, upload only, download only, publish, pull, plan) |
 
 Port pickers are gone: boards are identified when plugged in. Manual choice survives on the
-Unidentified board panel (probe again, open console, make this a dongle / controller / zone).
+Unidentified board panel (probe again, open console, make this a Workstation / Mainshow controller / cube, or open the zone form). The only dongle flash targets are the Workstation and the Mainshow controller (`dongle.flash firmware=workstation|mainshow`, `build.dongle which=workstation|mainshow`).
 
 ## Language (EN | KR)
 
@@ -172,7 +172,7 @@ Layout, top to bottom:
   (`show.live`, hardware; "■ Stop sending" while on, the box glows with "● Live on #…"). While on, the page
   sends the colour of each previewed cube number every 60 ms; `showedit.live()` broadcasts SHOW_LIVE frames
   (`showfile.live`, lease 0.6 s) through the relay, drops calls closer than 40 ms, holds during a show update or
-  a running show, and swallows the relay's replies (fire-and-forget). Needs general-radio-1.2.0 and cubes on
+  a running show, and swallows the relay's replies (fire-and-forget). Needs a Workstation or general-radio-1.2.0 and cubes on
   v1.7.0-USB.1; a cube playing a real show ignores it. Off when toggled or when leaving the page.
 - **Overview strip**: the whole show; drag its window's edges to zoom, drag inside to scroll, double-click to
   fit. Ctrl/⌘ + wheel or pinch zooms around the pointer.
@@ -195,11 +195,11 @@ Behind it:
 - The working copy lives in the device database (metadata `show_draft`), so `--simulate` never touches it.
   It is validated by `showfile.py` on every save.
 - **Publish** sends it to the web, which allocates the next show version (`jobs/show.py`, `show_publish.py`).
-- **Query / Update all / Auto update** drive `pairing_station/show_registry.py` through a General Radio
-  (general-radio-1.1.0+; `sessions/general_radio.py` routes `show_sent`/`show_frame` to `showedit.py`). Auto
+- **Query / Update all / Auto update** drive `pairing_station/show_registry.py` through any link reporting
+  `show:1` (a Workstation or general-radio-1.1.0+; `sessions/workstation.py` routes `show_sent`/`show_frame` to `showedit.py`). Auto
   update is the saved Settings › Automatic updates › main show switch. Updates hold while the show controller
   reports a running show.
-- A timecode-capable controller (mainshow-1.3.0, general-radio-1.1.0+) is sent the published show's length
+- A timecode-capable controller (mainshow-1.3.0, a Workstation or general-radio-1.1.0+) is sent the published show's length
   once per publication (or with Send length to controller). Older controllers are left alone and keep working.
 - Back end: `showedit.py` (owned by the hub, section `showedit`) and `commands_show.py` (`show.*`).
   Tests: `tests/test_show_editor.py`, `web/tests/showengine.test.js`, `web/tests/showtimeline.test.js`.

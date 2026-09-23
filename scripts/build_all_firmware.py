@@ -43,7 +43,7 @@ def main():
 
     def compile_sketch(sketch, out, board, libraries=()):
         out.mkdir(parents=True, exist_ok=True)
-        args = [cli, 'compile', '--fqbn', board]
+        args = [cli, 'compile', '--fqbn', board, *hostos.arduino_build_args()]
         for library in libraries:
             args += ['--libraries', str(ROOT/library)]
         run(args + ['--build-path', str(out/'cache'), '--output-dir', str(out), str(ROOT/sketch)], 900)

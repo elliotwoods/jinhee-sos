@@ -65,6 +65,8 @@ export default {
   '{n} local devices would give way to a newer change': '로컬 장치 {n}개가 더 최신 변경에 밀림',
   'Web zone DB': '웹 존 DB',
   'Checked': '확인 시각',
+  'Automatic': '자동',
+  'on · a local change syncs within seconds; the web is checked every minute': '켜짐 · 로컬 변경은 몇 초 안에 Sync되고, 웹은 1분마다 확인합니다',
   'not yet': '아직 없음',
   'Password': '비밀번호',
   'stored on this computer': '이 컴퓨터에 저장됨',

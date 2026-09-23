@@ -13,6 +13,9 @@ no clock: `now` is injected, so evaluation is deterministic and testable from fi
 """
 import re
 
+import paths  # noqa: F401  (puts zones/dbmanager on the path)
+import dongle
+
 SEVERITY_RANK = {'bad': 0, 'warn': 1, 'info': 2}
 WINDOW = dict(tag=15 * 60, nack=10 * 60, show_start=5 * 60, port=2 * 60, job=30 * 60, flag=30 * 60, resolved=60)
 ZONE_TYPES = {1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow', 5: 'reset'}
@@ -20,8 +23,8 @@ ZONE_ERRORS = {0: '', 1: 'zone config invalid', 2: 'database empty', 3: 'NFC rea
                5: 'update: out of memory', 6: 'update: CRC mismatch', 7: 'update: invalid data',
                8: 'update: flash commit failed', 9: 'update: timed out', 10: 'zone parameters missing/invalid',
                11: 'sensor not found'}
-DONGLE_FIRMWARE = 'nct-pairing-1.8-zones'      # the last relay-dongle build; the installed station runs it
-WORKSTATION_FIRMWARE = 'workstation-1.0.0'    # what "Write the Workstation firmware" puts on a spare board
+DONGLE_FIRMWARE = dongle.PAIRING.version          # the last relay-dongle build; the installed station runs it
+WORKSTATION_FIRMWARE = dongle.WORKSTATION.version  # what "Write the Workstation firmware" puts on a spare board
 RX_GAIN_FLOOR = 'desert-2.4.0 / tagplate-2.4.0 / pool-3.2.0 / preshow-3.3.0'
 LOCK_APPS = {'.lock': 'the Pairing station app', '.flasher.lock': 'the Cube USB flasher',
              '.zonedb.lock': 'the Zone Database Manager', '.mainshow.lock': 'the Mainshow controller app'}
@@ -129,6 +132,9 @@ class Ctx:
         self.locks = self.s.get('locks') or {}
         self.jobs = list(self.s.get('jobs') or [])
         self.show = self.s.get('show') or {}
+        self.settings = self.s.get('settings') or {}
+        self.autoupdate = self.s.get('autoupdate') or {}
+        self.auto_firmware_usb = bool(self.settings.get('auto_firmware_usb'))
         self.fired = set()
         self.devices_by_mac = {d['mac']: d for d in self.devices if d.get('mac')}
         self.usb_zone_devices = [d for d in self.devices if d.get('role') == 'zone' and d.get('mac')]
@@ -202,27 +208,40 @@ def rule_tools(ctx):
 
 
 def rule_builds(ctx):
+    """Stale builds the automatic builder has queued or is building are its business; a failed (or tool-less)
+    automatic build, or auto_build off, raises the card as before."""
+    tools = ctx.builds.get('tools') or {}
+    builder = bool(ctx.settings.get('auto_build') and tools.get('arduino_cli') and tools.get('core_ok') is not False)
+    auto = {b['target']: (b.get('state'), b.get('reason')) for b in ctx.autoupdate.get('builds') or [] if b.get('target')}
+
+    def handled(target):
+        return builder and auto.get(target, (None,))[0] in ('queued', 'building')
+
+    def failed(target, know):
+        state, reason = auto.get(target, (None, None))
+        return f'{know} Automatic build: {reason}' if state in ('failed', 'no_tools') and reason else know
+
     cube = ctx.builds.get('cube') or {}
-    if cube.get('error'):
+    if cube.get('error') and not handled('cube'):
         yield make('build.stale', 'global', 'warn', f'Cube firmware build needs attention: {cube["error"]}',
-                   f'flashing_station/build/manifest.json: {cube["error"]} (expected {cube.get("version")}).',
+                   failed('cube', f'flashing_station/build/manifest.json: {cube["error"]} (expected {cube.get("version")}).'),
                    'The cube flasher refuses to write until the manifest, binaries and source agree. Never hand-edit hashes.',
                    'Rebuild (needs Arduino tools) or restore the verified build files from git.',
                    [action('build', 'Rebuild the cube firmware', 'build.cube', long=True)],
                    [evidence('manifest', cube['error'])], key='cube')
     for sketch, info in (ctx.builds.get('zones') or {}).items():
-        if info.get('error'):
+        if info.get('error') and not handled(f'zone:{sketch}'):
             yield make('build.stale', 'global', 'info', f'{sketch} firmware: {info["error"]}',
-                       f'zones/build/{sketch}/manifest.json: {info["error"]}.',
+                       failed(f'zone:{sketch}', f'zones/build/{sketch}/manifest.json: {info["error"]}.'),
                        'Flashing that zone type needs a verified build.',
                        'Rebuild it (needs Arduino tools).',
                        [action('build', f'Build {sketch}', 'build.zone', dict(sketch=sketch), long=True)],
                        [evidence('manifest', info['error'])], key=sketch)
     for name, label in (('workstation', 'Workstation'), ('mainshow', 'Mainshow controller')):
         info = ctx.builds.get(name) or {}
-        if info.get('state') in ('missing', 'stale'):
+        if info.get('state') in ('missing', 'stale') and not handled(name):
             yield make('build.stale', 'global', 'info', f'{label} firmware build is {info["state"]}',
-                       f'The {label} build ({info.get("version")}) is {info["state"]}: a source is newer than the build, or nothing was built.',
+                       failed(name, f'The {label} build ({info.get("version")}) is {info["state"]}: a source is newer than the build, or nothing was built.'),
                        'Flashing a dongle or controller builds it first, which takes a few minutes.',
                        'Build it now to have it ready.',
                        [action('build', f'Build the {label} firmware', 'build.dongle', dict(firmware=name), long=True)],
@@ -298,18 +317,21 @@ def rule_station(ctx):
                    if hello.get('mac') != '3C:0F:02:AD:83:24' else
                    [action('docs', 'Open the zones guide', 'docs.open', dict(path='zones/README.md'))],
                    [evidence('hello', f'firmware={hello.get("firmware")} zones={hello.get("zones")}')], device=device)
-    elif (firmware.startswith('nct-pairing') and firmware != DONGLE_FIRMWARE) or \
-            (firmware.startswith('workstation-') and firmware != WORKSTATION_FIRMWARE):
+    elif dongle.family(hello) in ('pairing', 'workstation') and not dongle.current(hello):
         # A legacy General Radio is left alone: it is superseded, not out of date within its family.
-        current = WORKSTATION_FIRMWARE if firmware.startswith('workstation-') else DONGLE_FIRMWARE
+        current = dongle.CURRENT[dongle.family(hello)]
+        protected = hello.get('mac') == '3C:0F:02:AD:83:24'
+        on_usb = any(d.get('id') == device and d.get('state') != 'protected' for d in ctx.devices)
+        auto = ctx.auto_firmware_usb and on_usb and not protected
         yield make('dongle.old', 'station', 'warn', f'Relay firmware {firmware} is older than {current}',
                    f'hello reports {firmware}. ' + ('1.7 adds signal strength, 1.8 RX gain control.' if current == DONGLE_FIRMWARE
                                                     else 'The Workstation build on this computer is newer.'),
                    'Set RX gain over the air needs 1.8; the signal column needs 1.7.' if current == DONGLE_FIRMWARE
                    else 'Newer Workstation builds carry protocol fixes the console expects.',
-                   'Reflash the board with the current Workstation firmware.',
-                   [action('flash', 'Write the Workstation firmware', 'dongle.flash', dict(device=device, firmware='workstation'), 'hardware')]
-                   if hello.get('mac') != '3C:0F:02:AD:83:24' else [],
+                   f'It will be upgraded automatically to {WORKSTATION_FIRMWARE} over USB once the console is idle '
+                   '(Settings › Automatic updates).' if auto else 'Reflash the board with the current Workstation firmware.',
+                   [] if auto or protected else
+                   [action('flash', 'Write the Workstation firmware', 'dongle.flash', dict(device=device, firmware='workstation'), 'hardware')],
                    [evidence('hello', firmware)], device=device)
     feedback = st.get('feedback') or {}
     nfc_ok = hello.get('nfc_ok', True) and st.get('reader_ok', True)
@@ -394,6 +416,10 @@ def rule_sync(ctx):
     status = sync.get('status') or {}
     state = status.get('state')
     err = sync.get('last_error') or {}
+    # Automatic sync (Settings › Automatic updates): pending uploads, publishes and waiting downloads resolve by
+    # themselves, so those cards only show while it is off or after it failed.
+    auto = bool(sync.get('auto')) and not err
+    retry = 'It retries by itself; Sync now to try at once.' if sync.get('auto') else 'Click Sync to try again.'
     if state == 'signin' or not sync.get('password_known', True):
         yield make('sync.signin', 'sync', 'info', 'Web sync needs the inventory password',
                    'No web inventory password is stored on this computer.',
@@ -411,7 +437,7 @@ def rule_sync(ctx):
                    'Retry when the network is back.', [action('retry', 'Check again', 'sync.status')], [evidence('sync', 'offline')])
     elif state == 'error':
         yield make('sync.error', 'sync', 'warn', 'Web sync problem', status.get('message') or 'The web could not answer usefully.',
-                   'Sync is not confirmed.', 'Click Sync to try again.', [action('retry', 'Sync now', 'sync.run')],
+                   'Sync is not confirmed.', retry, [action('retry', 'Sync now', 'sync.run')],
                    [evidence('sync', status.get('message') or 'error')])
     if err.get('kind') == 'busy':
         yield make('sync.busy', 'sync', 'info', 'Another app is syncing right now', err.get('text') or '', '', 'Wait and retry.', [],
@@ -420,7 +446,7 @@ def rule_sync(ctx):
         yield make('sync.interrupted', 'sync', 'warn', 'Sync was interrupted while uploading',
                    err.get('text') or '', 'Nothing is lost: the next Sync checks what the web received.',
                    'Sync again.', [action('retry', 'Sync now', 'sync.run')], [evidence('sync', err.get('text') or '')])
-    if status.get('zone_publish') and state == 'ok':
+    if status.get('zone_publish') and state == 'ok' and not auto:
         n = status.get('inventory_up') or 0
         yield make('sync.publish_pending', 'sync', 'warn', 'Cube mappings changed but the zone database was not published',
                    f'{n} inventory change(s) to upload; the published database ({ctx.published_text()}) does not contain them.',
@@ -433,7 +459,7 @@ def rule_sync(ctx):
                    'Flashing from the older local copy would put an outdated database on a zone.',
                    'Pull it with Sync.', [action('sync', 'Sync (pulls the database)', 'sync.run')],
                    [evidence('sync', f'web v{status.get("web_version")} local v{status.get("local_version")}')])
-    if status.get('waiting') and not status.get('inventory_down'):
+    if status.get('waiting') and not status.get('inventory_down') and not auto:
         held = [LOCK_APPS[s] for s, h in ctx.locks.items() if h and s in LOCK_APPS] or ['another app']
         yield make('sync.waiting', 'sync', 'info', f'{status["waiting"]} downloaded change(s) are waiting to be applied',
                    f'They wait for {", ".join(held)} to be idle.', 'The local inventory is behind the web until then.',
@@ -455,7 +481,7 @@ def rule_sync(ctx):
                    [evidence('sync', entry.get('text') or str(entry))], key='lost')
     if last.get('zone_error'):
         yield make('sync.zone_error', 'sync', 'warn', 'The inventory synced but the zone database was not published',
-                   str(last['zone_error']), 'Zones cannot receive the new mappings yet.', 'Click Sync to try again.',
+                   str(last['zone_error']), 'Zones cannot receive the new mappings yet.', retry,
                    [action('sync', 'Sync again', 'sync.run')], [evidence('sync', str(last['zone_error']))])
 
 
@@ -533,6 +559,32 @@ def rule_zone_db_each(ctx):
                        'Delivered is not acknowledged: the zone may have lost chunks or left range.',
                        'Retry over the air closer to it, or update it over USB.',
                        ctx.zone_update_actions(mac), [evidence('registry', message)])
+
+
+def rule_zone_firmware(ctx):
+    """Zones heard over the air with firmware older than the build (autoupdate.air.firmware): only USB fixes that.
+    Grouped like zone.db_behind_many; boards already on USB are the automatic-upgrade panel's."""
+    air = (ctx.autoupdate.get('air') or {}).get('firmware') or []
+    behind = [f for f in air if f.get('kind') == 'zone' and f.get('mac') and not ctx.usb_device(f['mac'])]
+    pool = [f for f in behind if str(f.get('current') or '').startswith('pool-')]
+    plates = [f for f in behind if f not in pool]
+
+    def names(rows):
+        return ', '.join(f'{f.get("label") or f["mac"]} ({f.get("current")} → {f.get("version")})' for f in rows[:6]) + \
+            (' …' if len(rows) > 6 else '')
+    if plates:
+        auto = ' (automatically)' if ctx.auto_firmware_usb else ''
+        yield make('zone.fw_behind', 'global', 'info', f'{len(plates)} zone(s) run firmware older than the build',
+                   f'Zone firmware older than the build: {names(plates)}.',
+                   'Firmware is only upgraded over USB; the zone database still updates over the air.',
+                   f'Plug it in over USB to upgrade it{auto}; it keeps its identity.', [],
+                   [evidence('radio', names(plates))], key='plates')
+    if pool:
+        yield make('zone.fw_behind', 'global', 'info', f'{len(pool)} pool radio(s) run firmware older than the build',
+                   f'Zone firmware older than the build: {names(pool)}.',
+                   'The pool radios and the pool central are a matched set: a partial upgrade can leave the lights unanswered.',
+                   'Upgrade the pool radios and the pool central together by hand (they are never upgraded automatically).', [],
+                   [evidence('radio', names(pool))], key='pool')
 
 
 # ---------------------------------------------------------------------- tier 3: device events
@@ -861,6 +913,8 @@ def rule_cubes(ctx):
             yield make('cube.fw_different', f'mac:{mac}', 'warn', f'{label} runs {fw.get("version")}; the local build is {fw.get("expected")}',
                        f'USB "?" reported FW: {fw.get("version")} on {d["port"]}. Local manifest: {fw.get("expected")}.',
                        'A matching version is not a hash verification; a differing one means the cube missed an update.',
+                       ('It will be upgraded automatically once Register and Flash are off (Settings › Automatic updates); '
+                        'or flash it now (NVS registration preserved; boot is re-checked).') if ctx.auto_firmware_usb else
                        'Flash it (NVS registration preserved; boot is re-checked).',
                        [action('flash', 'Flash cube firmware', 'cube.flash_firmware', dict(device=d['id']), 'hardware')],
                        [evidence('USB', f'FW: {fw.get("version")}')])
@@ -1053,7 +1107,7 @@ def rule_jobs(ctx):
 RULES = [
     (0, rule_tools), (0, rule_builds), (0, rule_locks), (0, rule_ports),
     (1, rule_station), (1, rule_radio), (1, rule_mainshow), (1, rule_sync),
-    (2, rule_zone_db_global), (2, rule_zone_db_each),
+    (2, rule_zone_db_global), (2, rule_zone_db_each), (2, rule_zone_firmware),
     (3, rule_tags), (3, rule_nack), (3, rule_zone_health), (3, rule_pool_ids), (3, rule_preshow_points), (3, rule_cubes),
     (3, rule_registration), (3, rule_devices),
     (4, rule_jobs),

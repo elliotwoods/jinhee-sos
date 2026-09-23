@@ -39,3 +39,6 @@ flashing_station/build/*
 !flashing_station/build/neocore_usb.ino.partitions.bin
 !flashing_station/build/boot_app0.bin
 console/data/
+
+# Built handover PDF: rebuild with console/tools/handover_pdf
+console/docs/*.pdf

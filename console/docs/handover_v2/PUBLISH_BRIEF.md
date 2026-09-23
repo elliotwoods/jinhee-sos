@@ -1,24 +1,52 @@
 # Publishing brief (Handover v2 → Notion)
 
-Repository: `/Users/elliotwoods/Downloads/jinhee SOS` (quote the path). Drafts: `console/docs/handover_v2/NN-*.md`,
-page ids: `PAGES.json`, screenshots: `console/docs/shots/<ID>.png` (+ `manifest.json` with EN/KR titles).
-Renderer: `python3 console/tools/handover_render.py NN --uploads <your uploads json> --out <tmp>/NN.md`
-(resolves `{{shot:ID}}` → `![caption](markdown_source)`, `{{page:NN}}` → `<mention-page url=…/>`, `{{v1-root}}`,
-`{{v1-14}}`, `{{test-report-table}}`; exits 1 on any unresolved placeholder).
+Repository: `/Users/elliotwoods/Downloads/jinhee SOS` (quote the path). The documentation owner is the designated docs
+session (see AGENTS.md "Handoff and hygiene").
 
-Per chapter you own:
-1. For every shot id in the chapter's `shots` list (INDEX.json; or grep `{{shot:` in the draft): load the Notion tools
-   (`ToolSearch select:mcp__claude_ai_Notion__notion-create-file-upload,mcp__claude_ai_Notion__notion-update-page,mcp__claude_ai_Notion__notion-fetch`),
-   call `notion-create-file-upload` with `filename: "<ID>.png"`, then upload with exactly one request:
-   `curl -sS -X POST "<upload_url>" <every header from upload_headers as -H "Name: value"> -F "file=@console/docs/shots/<ID>.png"`
-   and record `{"<ID>": "<markdown_source from the response>"}` into `console/docs/handover_v2/uploads-<yourname>.json`
-   (merge, never overwrite other ids). Never print the upload headers/tokens into the report.
-2. Render the chapter with your uploads json; read the rendered file once for sanity (no `{{`, images present).
-3. `notion-update-page` `command: replace_content` with `page_id` from PAGES.json and `new_str` = the rendered markdown
-   (`allow_async: false`). If the tool rejects the size, split: `replace_content` with the first half and `insert_content`
-   (`position: end`) with the rest.
-4. `notion-fetch` the page back: confirm the title is unchanged, no raw `{{` remains, every image renders (image blocks
-   present, count equals the number of shots), every `<mention-page>` resolved. Fix and re-update if not.
-5. Do not touch any v1 page (ids listed in INDEX.json), do not create new pages, do not edit code, do not commit.
+## Sources
 
-Report per chapter: page URL, number of images, fetch-back verification result, and anything you had to change.
+- **Drafts:** `console/docs/handover_v2/handbook/H0..H6-*.md` (bilingual) and `extended/X01..X13-*.md` (English).
+  Files starting with `_` are coverage notes and are never published.
+- **Page ids:** `PAGES.json`, with keys root (= H0), H1–H6, XP (the Extended reference parent), X01–X13.
+- **Titles:** the tables in `STYLE_GUIDE.md` "Two sections". A Notion title is `KEY · EN title | KR title` for handbook
+  pages (e.g. `H3 · Cube procedures | 큐브 작업`) and `KEY · EN title` for extended pages (e.g.
+  `X06 · Pool / forest — detail`).
+- **Screenshots:** `console/docs/shots/<ID>.png`, with captions in `shots/manifest.json`. Only handbook pages use them.
+
+## Render
+
+```
+python3 console/tools/handover_render.py KEY --uploads <uploads json> --out <tmp>/KEY.md
+```
+
+The render exits 1 on any unresolved placeholder. `--all --outdir DIR` renders every page.
+
+## Per page
+
+1. **Upload screenshots.** For every shot id in the draft (`grep '{{shot:'`):
+   - load the Notion tools (`ToolSearch select:mcp__claude_ai_Notion__notion-create-file-upload,mcp__claude_ai_Notion__notion-update-page,mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-move-pages`);
+   - call `notion-create-file-upload` with `filename: "<ID>.png"`;
+   - upload with exactly one request:
+     `curl -sS -X POST "<upload_url>" <each upload_header as -H> -F "file=@console/docs/shots/<ID>.png"`;
+   - record `{"<ID>": "<markdown_source>"}` in your own uploads json.
+
+   Uploads expire if they are not attached within about an hour, so upload right before you publish. Never print the
+   upload headers or tokens. Use a private scratch sub-folder; other publishers share the scratchpad.
+2. **Set the title.** Use `notion-update-page` `update_properties` with the title rule above.
+3. **Replace the content.** Use `replace_content` with `allow_async: false`. If the page is too big, split it at a `## `
+   boundary: `replace_content` for the first part, then `insert_content` with `position: end` for the rest. If the tool
+   says child pages would be deleted, stop and report; never pass `allow_deleting_content`.
+4. **Fetch the page back and check it.** Confirm:
+   - the title and the parent are right;
+   - there is no `{{`;
+   - the image count equals the shot count;
+   - tables, callouts, toggles and mermaid blocks are present;
+   - mentions resolve;
+   - numbered lists continue after images.
+
+## Structure rules
+
+- X pages live under the XP page; H pages and XP live directly under the root.
+- The root is published last. Its content ends with `<page url="…">` blocks for H1–H6 and XP, in that order, so every
+  child stays attached.
+- Never touch the v1 pages.

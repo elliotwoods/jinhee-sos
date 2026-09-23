@@ -45,7 +45,7 @@ class Job:
                     device=self.device, cancellable=self.cancellable, origin=self.origin, state=self.state,
                     stage=self.stage, outcome=self.outcome, progress=self.progress, log_tail=list(self.log)[-40:],
                     result=self.result, error=self.error, identity=self.identity, started_at=self.started_at,
-                    finished_at=self.finished_at, writing=self.writing)
+                    finished_at=self.finished_at, writing=self.writing, quiet=self.quiet)
 
 
 class JobRunner:

@@ -645,6 +645,18 @@ table.data td.note { text-align: center; padding: var(--space-4); }
 .sugg .evidence { font: var(--text-xs)/1.5 var(--mono); color: var(--text-muted); white-space: pre-wrap; background: var(--surface-sunken); border-radius: 4px; padding: 6px var(--space-2); margin-top: var(--space-2); }
 .sugg .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; margin-top: 10px; }
 .sugg.flash { animation: pulse 1.2s ease-out; }
+/* Automatic updates (components/AutoUpdates.js): compact rows in the job card's idiom. */
+.auto-row { border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: var(--space-2); background: var(--surface-raised); }
+.auto-row > * + * { margin-top: 4px; }
+.auto-row .head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.auto-row .head strong { min-width: 0; overflow-wrap: anywhere; }
+.auto-row .stage { color: var(--text-muted); font-size: var(--text-sm); }
+.auto-row .note { overflow-wrap: anywhere; }
+.auto-row .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.auto-air { font-size: var(--text-sm); padding: 4px 2px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px var(--space-2); }
+.auto-air > .note, details.auto-air > .note { flex-basis: 100%; }
+details.auto-air { display: block; }
+.auto-history { margin-top: var(--space-2); }
 @keyframes pulse { from { box-shadow: 0 0 0 4px var(--warn-edge); } to { box-shadow: none; } }
 
 /* ---------- Menus, popovers, toasts ---------- */

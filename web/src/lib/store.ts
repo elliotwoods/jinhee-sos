@@ -18,6 +18,10 @@ export type ShowDoc = {
   published_at: string | null; published_by: string;
 };
 
+/** Cube numbers the web handed out (see numbers.ts): number -> which MAC claimed it. Separate from the inventory
+ * so old clients never see it, and a claim never contends with an inventory push. */
+export type NumbersDoc = { claims: Record<string, { mac: string; client: string; at: string }> };
+
 /** Last contact from one computer/app. Stored per client so it never contends with the inventory. */
 export type Presence = { client: string; action: string; at: string; ip: string };
 
@@ -44,6 +48,9 @@ export interface Store {
   readShow(dataset: string): Promise<{ doc: ShowDoc; etag: string | null }>;
   /** Same compare-and-swap contract as write(). */
   writeShow(dataset: string, doc: ShowDoc, etag: string | null): Promise<void>;
+  readNumbers(dataset: string): Promise<{ doc: NumbersDoc; etag: string | null }>;
+  /** Same compare-and-swap contract as write(). */
+  writeNumbers(dataset: string, doc: NumbersDoc, etag: string | null): Promise<void>;
   touch(dataset: string, presence: Presence): Promise<void>;
   presence(dataset: string): Promise<Presence[]>;
   /** Replace one computer's sightings report (one blob per computer: no contention). */
@@ -58,9 +65,11 @@ export const emptyZoneDb = (): ZoneDbDoc => ({
 export const emptyShow = (): ShowDoc => ({
   version: 0, hash: "", crc: 0, length: 0, image_b64: "", source: null, published_at: null, published_by: "",
 });
+export const emptyNumbers = (): NumbersDoc => ({ claims: {} });
 const pathFor = (dataset: string) => `inventory/${dataset}.json`;
 const showPath = (dataset: string) => `show/${dataset}.json`;
 const zoneDbPath = (dataset: string) => `zonedb/${dataset}.json`;
+const numbersPath = (dataset: string) => `numbers/${dataset}.json`;
 const presencePrefix = (dataset: string) => `presence/${dataset}/`;
 const sightingsPrefix = (dataset: string) => `sightings/${dataset}/`;
 const slug = (client: string) => client.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "unknown";
@@ -112,6 +121,14 @@ export class BlobStore implements Store {
 
   writeShow(dataset: string, doc: ShowDoc, etag: string | null) {
     return this.writePath(showPath(dataset), doc, etag);
+  }
+
+  async readNumbers(dataset: string) {
+    return this.readPath(numbersPath(dataset), emptyNumbers);
+  }
+
+  writeNumbers(dataset: string, doc: NumbersDoc, etag: string | null) {
+    return this.writePath(numbersPath(dataset), doc, etag);
   }
 
   async touch(dataset: string, presence: Presence) {
@@ -189,6 +206,14 @@ export class MemoryStore implements Store {
 
   writeShow(dataset: string, doc: ShowDoc, etag: string | null) {
     return this.writePath(showPath(dataset), doc, etag);
+  }
+
+  async readNumbers(dataset: string) {
+    return this.readPath(numbersPath(dataset), emptyNumbers);
+  }
+
+  writeNumbers(dataset: string, doc: NumbersDoc, etag: string | null) {
+    return this.writePath(numbersPath(dataset), doc, etag);
   }
 
   private seen = new Map<string, Presence>();

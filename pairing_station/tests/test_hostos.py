@@ -56,6 +56,16 @@ class RealHostTests(unittest.TestCase):
         self.assertTrue(hostos.same_folder(self.tmp.name, Path(self.tmp.name) / '.'))
         self.assertFalse(hostos.same_folder(self.tmp.name, Path(self.tmp.name) / 'missing'))
 
+    def test_build_args_on_this_host(self):
+        env = Path(self.tmp.name) / '.venv'
+        self.assertEqual(hostos.arduino_build_args(env), [])
+        tool = hostos.venv_esptool(env)
+        tool.parent.mkdir(parents=True)
+        tool.write_text('not a program', encoding='utf-8')
+        self.assertEqual(hostos.arduino_build_args(env), [], 'an esptool that does not run is not used')
+        args = hostos.arduino_build_args()  # the checkout's own venv, when set up
+        self.assertIn(args, ([], ['--build-property', f'tools.esptool_py.path={hostos.venv_esptool(Path(hostos.__file__).parent / ".venv").parent}']))
+
     def test_private_file_accepts_path_and_descriptor(self):
         self.path.write_text('secret', encoding='utf-8')
         hostos.private_file(self.path)
@@ -109,6 +119,31 @@ class WindowsBranchTests(unittest.TestCase):
                 bundled.parent.mkdir(parents=True)
                 bundled.touch()
                 self.assertEqual(hostos.arduino_cli(), str(bundled))
+
+    def test_build_args_use_the_venv_esptool_exe_of_the_pinned_version(self):
+        env = Path(self.tmp.name) / '.venv'
+        tool = env / 'Scripts' / 'esptool.exe'
+        self.assertEqual(hostos.venv_esptool(env), tool)
+        self.assertEqual(hostos.arduino_build_args(env), [], 'no venv esptool: keep the core tool')
+        tool.parent.mkdir(parents=True)
+        tool.touch()
+        calls = []
+        def run(args, **kwargs):
+            calls.append((args, kwargs))
+            return SimpleNamespace(returncode=0, stdout='esptool v5.3.1\n' + reported + '\n')
+        hostos._esptool_version.cache_clear()
+        self.addCleanup(hostos._esptool_version.cache_clear)
+        with patch.object(hostos.subprocess, 'run', run), \
+                patch.object(hostos.subprocess, 'CREATE_NO_WINDOW', 0x08000000, create=True):
+            reported = '5.3.1'
+            self.assertEqual(hostos.arduino_build_args(env), ['--build-property', f'tools.esptool_py.path={tool.parent}'])
+            self.assertEqual(hostos.arduino_build_args(env), ['--build-property', f'tools.esptool_py.path={tool.parent}'])
+            self.assertEqual(len(calls), 1, 'the version is asked once per process')
+            self.assertEqual(calls[0][0], [str(tool), 'version'])
+            self.assertEqual(calls[0][1]['creationflags'], 0x08000000)
+            hostos._esptool_version.cache_clear()
+            reported = '5.4.0'
+            self.assertEqual(hostos.arduino_build_args(env), [], 'another esptool release: keep the core tool')
 
     def test_process_flags_wheel_and_permissions(self):
         flags = dict(DETACHED_PROCESS=0x8, CREATE_NEW_PROCESS_GROUP=0x200, CREATE_NO_WINDOW=0x08000000)

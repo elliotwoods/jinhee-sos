@@ -6,6 +6,7 @@ Nothing in a command or a tick may sleep, read serial synchronously or talk to t
 """
 import paths  # noqa: F401
 import concurrent.futures
+import hashlib
 import json
 import queue
 import threading
@@ -13,7 +14,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from database import timestamp
+from database import NEW_UNNUMBERED, timestamp
 from http_api import AppAPI
 from zone_registry import ZoneStore
 import dongle
@@ -24,6 +25,7 @@ from usb_identify import firmware_result
 import advisor
 import state as state_builders
 from devices import Device, presumed_role
+from autoupgrade import AutoUpgrade
 from intake import Intake
 from jobs.base import JobRunner
 from locks import instance_locks
@@ -46,7 +48,7 @@ from flashflow import FlashFlow
 from sounds import Sounds
 
 SECTIONS = ('meta', 'ports', 'devices', 'inventory', 'station', 'registry', 'sessions', 'jobs', 'sync', 'advisor',
-            'locks', 'builds', 'show', 'settings', 'showedit', 'register', 'flash')
+            'locks', 'builds', 'show', 'settings', 'showedit', 'register', 'flash', 'autoupdate')
 DATA = paths.CONSOLE / 'data'
 
 
@@ -105,6 +107,8 @@ class Hub:
         self.probing = None        # key being probed
         self.jobs = JobRunner(self)
         self.intake = Intake(self)
+        self.autoupgrade = AutoUpgrade(self)
+        self.touched = {}          # device id / port / key / MAC -> clock of the operator's last command naming it
         self.events = deque(maxlen=4000)
         self.notable = deque(maxlen=1500)   # everything but console lines: what a fresh page should see first
         self.seq = 0
@@ -122,9 +126,19 @@ class Hub:
         self.locks_held = {}
         self.own_locks = ()            # lock suffixes this process holds (set by app.py from InstanceLocks.held)
         # Persisted in metadata `console_settings`. The auto_* keys keep every database current everywhere:
-        # zone databases over the air (one relay walks) and over USB, the main show over the air, web pulls.
+        # zone databases over the air (one relay walks) and over USB, the main show over the air, web pulls,
+        # and the inventory itself (auto_sync: upload, download and publish without pressing Sync).
+        # auto_build / auto_firmware_usb keep firmware current too: out-of-date builds are rebuilt and USB boards
+        # with old firmware are upgraded (autoupgrade.py).
         self.settings = dict(auto_sessions=True, preview_flash=True, audio=True, auto_zone_db_radio=True,
-                             auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_register=False)
+                             auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_sync=True, auto_register=False,
+                             auto_build=True, auto_firmware_usb=True)
+        # Automatic sync bookkeeping (auto_sync()): the local-data fingerprint at the last sync, when a debounced
+        # sync is due, the back-off after failures, and whether the web last rejected the password.
+        self.autosync = dict(fingerprint=None, due=None, failures=0, retry_at=0.0, last_at=None, waiting=False)
+        self.auto_web = not simulate   # the timers reach the web (the tests switch it on against a loopback fake)
+        # Cube numbers handed out by the web (claim_numbers()): MACs asked for explicitly, the last failure, back-off.
+        self.numbering = dict(wanted=set(), error=None, retry_at=0.0)
         self.auto_errors = {}      # auto-mode name -> last error text (logged once per change)
         self.auto_pulled = set()   # web zone database versions already pulled automatically
         self.pinned_mac = None
@@ -151,6 +165,7 @@ class Hub:
         self.store = ZoneStore(self.db, self.wall)
         self.showedit = ShowEditor(self)  # main show editor + wireless show updater (showedit.py)
         self.refresh_inventory_cache()
+        self.autosync['fingerprint'] = self.local_fingerprint()
         self.sync['password_known'] = bool(web_client.load_password())
         self.dismissed = set(json.loads(self.db.metadata('console_dismissed') or '[]'))
         try:
@@ -257,7 +272,10 @@ class Hub:
             session.pump()
         for session in list(self.sessions.values()):
             if session.device.id in self.sessions:
-                session.tick(now)
+                try:
+                    session.tick(now)
+                except Exception as exc:   # one board's failure must not stop every other board's tick
+                    self.auto_error(f'session {session.device.port}', f'tick failed: {exc}')
         self.open_sessions()
         self.jobs.pump()
         try:
@@ -273,6 +291,10 @@ class Hub:
             self.intake.tick()
         except Exception as exc:
             self.log(f'Auto intake failed: {exc}', 'bad', source='intake')
+        try:
+            self.autoupgrade.tick()
+        except Exception as exc:
+            self.auto_error('firmware upgrade', f'failed: {exc}')
         if self.api:
             self.api.drain()
         self.expire_confirmations(now)
@@ -289,6 +311,9 @@ class Hub:
     def periodic(self, now):
         if self.every('inventory', 2.0, now):
             self.dirty.update(('inventory', 'registry'))
+            if self.workers and self.auto_web:
+                self.claim_numbers(now)
+                self.watch_local_changes(now)
         if self.every('locks', 5.0, now):
             # The console holds the old apps' locks itself (app.py); flock would report its own handles as
             # "held by another process", so those are skipped: only locks it does not own are probed.
@@ -299,11 +324,11 @@ class Hub:
                 self.dirty.add('locks')
         if self.every('builds', 60.0, now):
             self.refresh_builds()
-        if self.every('sync_status', 60.0, now) and self.workers and not self.simulate:
+        if self.every('sync_status', 60.0, now) and self.workers and self.auto_web:
             self.check_sync_status()
         if self.every('auto_modes', 1.0, now):
             self.apply_auto_modes()
-        if self.every('show_pull', 300.0, now) and self.workers and not self.simulate:
+        if self.every('show_pull', 300.0, now) and self.workers and self.auto_web:
             self.auto_show_pull()
         if self.every('dismissed', 30.0, now):
             self.db.set_metadata('console_dismissed', json.dumps(sorted(self.dismissed)))
@@ -319,18 +344,17 @@ class Hub:
     def apply_auto_modes(self):
         """Keep the automatic database updates switched as the settings say, whatever sessions come and go.
 
-        Zones over the air: only one link walks the zone database (relay_session(): the reader link when it
-        relays, else the first relay-capable Workstation), so two radios never broadcast chunks over each
-        other; every other relay stops walking. The main show: the show registry walks through whichever
-        Workstation carries show frames.
+        Zones over the air: every relay-capable link walks the zones its own radio hears
+        (ZoneRegistry.walk_candidates), so a zone only a second Workstation can reach is still updated.
+        zone_walk_allowed() lets one radio publish at a time, so two never broadcast chunks over each other.
+        The main show: the show registry walks through the show relay that hears the cubes (showedit.relay).
         """
-        relay = self.relay_session()
         want = bool(self.settings['auto_zone_db_radio'])
         for session in self.sessions.values():
             zones = getattr(session, 'zones', None)
             if not isinstance(session, WorkstationSession) or zones is None:
                 continue
-            walk = want and session is relay
+            walk = want and bool(session.relay_capable)
             if zones.walkaround != walk:
                 zones.set_walkaround(walk)
                 if walk:
@@ -339,6 +363,19 @@ class Hub:
         if self.showedit and self.showedit.registry.walkaround != bool(self.settings['auto_show']):
             self.showedit.registry.set_walkaround(bool(self.settings['auto_show']))
             self.dirty.add('showedit')
+
+    def zone_walk_allowed(self, session):
+        """A radio may start a zone database walk only while no other radio on this computer is publishing."""
+        return not any(other is not session and getattr(other, 'zones', None) is not None and other.zones.publication
+                       for other in self.sessions.values() if isinstance(other, WorkstationSession))
+
+    def touch(self, *names):
+        """The operator just sent a command naming these boards: automatic upgrades leave them alone a while."""
+        now = self.clock()
+        for name in names:
+            if isinstance(name, str) and name:
+                self.touched[name] = now
+                self.touched[name.upper()] = now
 
     def auto_error(self, name, text):
         """Log an automatic-update failure once per distinct text (None clears it)."""
@@ -357,6 +394,112 @@ class Hub:
         self.auto_pulled.add(web_version)
         from jobs.sync import zone_pull_job
         return zone_pull_job(self, auto=True)
+
+    # ---------------------------------------------------------------- automatic sync
+    SYNC_DEBOUNCE = 5.0        # seconds of quiet after a local change before it is uploaded
+    SYNC_MIN_GAP = 15.0        # never two automatic syncs closer than this
+    SYNC_BACKOFF = (60.0, 600.0)
+
+    def local_fingerprint(self):
+        """A hash of everything a sync uploads from here (devices and roles), cheap enough for every 2 s."""
+        digest = hashlib.sha1()
+        for table in ('devices', 'device_roles'):
+            for row in self.db.conn.execute(f'SELECT * FROM {table} ORDER BY mac'):
+                digest.update(repr(tuple(row)).encode())
+        return digest.hexdigest()
+
+    def watch_local_changes(self, now):
+        """Any local write (register, renumber, rename, role, intake, a download applied) moves the fingerprint:
+        schedule a sync SYNC_DEBOUNCE after the last change. Downloads left waiting retry once the console is idle."""
+        auto = self.autosync
+        fingerprint = self.local_fingerprint()
+        if fingerprint != auto['fingerprint']:
+            auto['fingerprint'] = fingerprint
+            auto['due'] = now + self.SYNC_DEBOUNCE
+            self.mark_dirty('sync')
+        elif auto['waiting'] and self.idle_flag.is_set() and auto['due'] is None:
+            auto['due'] = now
+        if auto['due'] is not None and now >= auto['due'] and self.auto_sync('local change') is not None:
+            auto['due'] = None
+        if auto['due'] is not None or auto['retry_at'] > now:
+            self.mark_dirty('sync')      # the Sync chip counts down
+
+    def auto_sync(self, reason=''):
+        """Start an automatic sync when allowed: auto_sync on, a password known, no sync running, not backing off.
+        Returns the job or None. The merge never asks anything (newest wins, audited), so running it unattended
+        is the same as the operator pressing Sync."""
+        auto, now = self.autosync, self.clock()
+        if not (self.settings['auto_sync'] and self.sync['password_known']) or self.sync['busy'] or \
+                now < auto['retry_at'] or (auto['last_at'] is not None and now - auto['last_at'] < self.SYNC_MIN_GAP) or \
+                any(j.kind == 'sync' and j.state == 'running' for j in self.jobs.jobs.values()):
+            return None
+        auto['last_at'] = now
+        from jobs.sync import sync_job
+        return sync_job(self, auto=True)
+
+    def auto_sync_finished(self, ok, kind=None, text=None, waiting=0):
+        """Called when any sync ends (manual or automatic): remember the synced state, or back off after a failure."""
+        auto = self.autosync
+        auto['waiting'] = bool(waiting)
+        if ok or kind == 'zone':          # the inventory synced (downloads may have changed the local data)
+            auto['fingerprint'] = self.local_fingerprint()
+        if ok:
+            auto.update(failures=0, retry_at=0.0, fingerprint=self.local_fingerprint(), due=None)
+            self.auto_error('sync', None)
+            return
+        if kind == 'after_push' and auto['failures'] == 0:
+            auto.update(failures=1, retry_at=0.0, last_at=None, due=self.clock())   # retry once, straight away
+        elif kind == 'busy':
+            auto['retry_at'] = self.clock() + self.SYNC_MIN_GAP
+        elif kind != 'unauthorized':           # unauthorized: the password is forgotten; sign-in resumes
+            auto['failures'] += 1
+            first, cap = self.SYNC_BACKOFF
+            auto['retry_at'] = self.clock() + min(cap, first * 2 ** (auto['failures'] - 1))
+        self.auto_error('sync', text)
+
+    # ---------------------------------------------------------------- cube numbers from the web
+    def web_numbering(self):
+        """New cube numbers come from the web whenever this computer syncs with it: every synced computer has
+        auto_number=0 (web_sync), and a locally chosen number could collide with another computer's."""
+        return bool(self.auto_web and self.sync['password_known'])
+
+    def request_number(self, mac):
+        """The guided registration needs a number for `mac` now (claimed on the next 2 s tick)."""
+        self.numbering['wanted'].add(mac)
+
+    def claim_numbers(self, now):
+        """Brand-new unnumbered cubes (and any MAC asked for) get the next free number from the web."""
+        state = self.numbering
+        if not self.web_numbering() or now < state['retry_at'] or \
+                any(j.kind == 'number.claim' and j.state == 'running' for j in self.jobs.jobs.values()):
+            return None
+        roles = self.db.roles()
+        macs = {r['mac'] for r in self.db.rows() if r['cube_id'] is None and r['status'] == 'needs_number'
+                and r['detail'] == NEW_UNNUMBERED and roles.get(r['mac']) != 'excluded'}
+        macs |= {mac for mac in state['wanted'] if (self.db.get(mac) or {}).get('cube_id') is None}
+        state['wanted'] &= macs
+        if not macs:
+            return None
+        exclude = {r['cube_id'] for r in self.db.rows() if r['cube_id'] is not None} | set(self.db.reserved_numbers())
+        from jobs.sync import claim_job
+        return claim_job(self, sorted(macs), exclude)
+
+    def numbers_claimed(self, numbers, error=None):
+        state = self.numbering
+        for mac, number in (numbers or {}).items():
+            row = self.db.get(mac)
+            if not row or row['cube_id'] is not None:
+                continue
+            try:
+                self.db.rename(mac, number, fresh_scan=True)
+                self.log(f'New number #{number} for {mac} (handed out by the web)', 'ok', source='sync')
+            except ValueError as exc:     # taken here meanwhile: the next claim excludes it
+                self.log(f'Web number #{number} for {mac} not applied: {exc}', 'warn', source='sync')
+            state['wanted'].discard(mac)
+        state['error'] = error
+        state['retry_at'] = self.clock() + 60.0 if error else 0.0
+        self.auto_error('numbering', f'new cubes stay at Needs number: {error}' if error else None)
+        self.mark_dirty('inventory', 'register')
 
     def auto_show_pull(self):
         """Pull a newer published show while a show relay is connected ("no show yet" is silent)."""
@@ -734,7 +877,8 @@ class Hub:
                 self.serialized[name] = text
                 self.versions[name] += 1
                 self.sections[name] = data
-        if any(self.versions[n] for n in ('devices', 'sessions', 'inventory', 'station', 'registry', 'jobs', 'sync', 'locks', 'builds')):
+        if any(self.versions[n] for n in ('devices', 'sessions', 'inventory', 'station', 'registry', 'jobs', 'sync', 'locks', 'builds',
+                                          'autoupdate')):
             self.evaluate_advisor()
 
     def evaluate_advisor(self):
