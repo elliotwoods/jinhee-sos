@@ -206,6 +206,8 @@ ACTIONS = {
     'radio.show_start_all': dict(label='Start show on ALL ready cubes', what='Broadcast MSG_SHOW_START to every mainshow-ready cube in range.',
                                  hazard='Broadcast, no acknowledgment; cannot be undone. Hold to confirm.'),
     'radio.identify': dict(label='Identify', what='Makes the chosen cube blink blue/red so you can find it.', hazard='Visible on the cube; it returns to idle afterwards.', needs='Workstation connected and a cube chosen.'),
+    'radio.reader_flash': dict(label='Flash the cube when its tag is read', what='Each tag placed on this board\'s reader makes the cube that owns it flash blue/red for 2 s over the radio, so you can see the tag, the inventory and the radio all agree.',
+                               hazard='Visible on the cube; it returns to idle afterwards. Only while the board is idle, never during pairing or registration.', needs='A Workstation (or pairing station) with its NFC reader working.'),
     'radio.transmit': dict(label='Send saved mapping', what='Registers the saved number and tag on the chosen cube over the air (three attempts, then the cube\'s acknowledgment).',
                            hazard='The cube stores the mapping in NVS.', needs='Workstation connected; the cube has a saved tag.'),
     'radio.pool': dict(label='Hold pool lamp', what='Holds one pool member through the pool central as an emulated slider radio.',

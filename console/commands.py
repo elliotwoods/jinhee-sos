@@ -856,6 +856,12 @@ def radio_identify(hub, device, macs, sequential=False):
     return True
 
 
+@command('radio.reader_flash', 'hardware')
+def radio_reader_flash(hub, device, on):
+    """Flash the cube that owns each tag placed on this board's reader (two seconds, only when idle; off at every launch)."""
+    return _radio(hub, device).set_reader_flash(bool(on))
+
+
 @command('radio.transmit', 'hardware')
 def radio_transmit(hub, device, macs):
     """Send the saved mapping(s) to cubes through this radio (no scan needed)."""

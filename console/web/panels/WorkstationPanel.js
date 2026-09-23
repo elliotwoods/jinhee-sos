@@ -6,7 +6,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { useSections, useRouteTab } from '../lib/hooks.js';
 import { ledToken } from '../lib/theme.js';
 import { section, stationEvents } from '../store.js';
-import { Pill, KeyValue, Explainer, Banner, ProgressBar, Tabs, Ladder } from '../components/basics.js';
+import { Pill, KeyValue, Explainer, Banner, ProgressBar, Tabs, Ladder, ActivateSwitch } from '../components/basics.js';
 import { ActionButton, HoldButton } from '../components/actions.js';
 import { DataTable, LogPane } from '../components/data.js';
 import { LedRing, MemberGrid } from '../components/canvas.js';
@@ -212,7 +212,8 @@ function StationPairing({ st, caps }) {
 
 // The cube lying on this board's reader, as a zone plate's Monitor shows the cube on the plate. The hub reads the tag's
 // UID back from the reader (s.reader_tag, s.reader_history); the inventory says whose tag it is (committed first, then
-// pending); the actions go out over this board's own radio. Nothing here writes the inventory.
+// pending); the actions go out over this board's own radio. Nothing here writes the inventory. The switch on top
+// (s.reader_flash, off at every launch) makes the hub flash the owning cube for 2 s on each tag placed.
 function ownerOf(uid) {
   const rows = (section('inventory') || {}).rows || [];
   const row = uid ? rows.find((r) => r.uid === uid) || rows.find((r) => r.pending_uid === uid) || null : null;
@@ -238,6 +239,9 @@ function ReaderCube({ device, s, caps }) {
   const off = !live || !mac || busy;
   const readout = tag.present ? (!tag.uid ? t('Reading the tag…') : number || (row ? t('no number') : t('Unknown tag'))) : picked ? number || (row ? t('no number') : t('Unknown tag')) : t('No cube on the reader');
   const held = (h) => (h.held_ms == null ? t('on the reader') : `${(h.held_ms / 1000).toFixed(1)} s`);
+  const autoFlash = (on) => run('radio.reader_flash', { device: device.id, on }).catch((x) => notify(x.message, 'bad'));
+  const last = s.reader_flash_last;
+  const RESULTS = { flashed: tk('flashed'), 'flashed (pending tag)': tk('flashed (pending tag)'), 'unknown tag': tk('not flashed: unknown tag'), busy: tk('not flashed: the board was busy'), excluded: tk('not flashed: excluded device') };
   const columns = [
     { key: 'time', label: t('Time'), render: (h) => hhmmss(h.time) },
     { key: 'cube_id', label: t('Cube'), render: (h) => { const o = ownerOf(h.uid).row; return o && o.cube_id != null ? `#${o.cube_id}` : o ? t('no number') : t('unknown'); } },
@@ -247,6 +251,10 @@ function ReaderCube({ device, s, caps }) {
   ];
   const zoneButton = (z, label, hazard) => html`<${ActionButton} name="radio.set_zone" args=${{ device: device.id, mac, zone: z }} label=${label} className="btn small" disabled=${off || !caps.show_verbs} hazard=${hazard} />`;
   return html`<div class="card" data-doc="workstation.reader"><h3>${t('On the reader')}</h3>
+    <${ActivateSwitch} on=${!!s.reader_flash} onChange=${autoFlash} doc="workstation.reader_flash" label=${t('Flash the cube when its tag is read')}
+      detail=${s.reader_flash ? t('Each tag placed on the reader makes its cube flash blue/red for 2 s over this radio: the cube is registered and reachable. Nothing is sent while the board is busy.')
+        : t('Off: a tag on the reader is only shown here. It is off every time the console starts.')} />
+    ${s.reader_flash && last && html`<div class="row"><span class="lbl">${t('Last automatic flash')}</span><span class=${last.result.startsWith('flashed') ? 'ok-text' : 'warn-text'}>${last.cube_id != null ? `#${last.cube_id}` : last.uid} · ${t(RESULTS[last.result] || last.result)} · ${hhmmss(last.at)}</span></div>`}
     ${!s.reader_ok && html`<div class="row"><${Pill} status="nfc.bad" /></div>`}
     <div class="grid2"><div>
       <${LedRing} colour=${ring.colour} label=${number || '—'} sub=${ring.sub} size=${140} blink=${row && row.telemetry && row.telemetry.command === 'identify'} /></div>

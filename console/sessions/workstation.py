@@ -36,6 +36,12 @@ once the link is idle the UID is read back with `nfc_poll enabled:true` (it answ
 last UID; polling stays on, as the Controller already asked). An identify's `tag` event carries it too.
 Observation only: nothing is written to the database (not an `nfc_seen` scan) and the Controller still
 sees every one of these events.
+
+Flash on tag read (`reader_flash`, off whenever the link opens): each tag placed on the reader makes the cube that
+owns it do the Controller's two-second identify flash, so the operator sees the tag -> inventory -> MAC -> radio path
+work. Only when the Controller is idle (never over pairing, registration or another flash). A UID flashed this way is
+not flashed again until it is seen leaving while the Controller is idle: the identify's own synthetic `tag_state`
+must not look like a fresh placement and flash the cube in a loop.
 """
 import paths  # noqa: F401
 import re
@@ -103,6 +109,9 @@ class WorkstationSession(Session):
         self.reader_history = []      # newest first: dict(time, uid, mac, cube_id, held_ms)
         self.reader_query = None      # the outstanding nfc_poll request id
         self.last_reader_query = 0.0
+        self.reader_flash = False     # flash the owning cube when a tag is placed (see the module docstring)
+        self.reader_flash_uid = None  # the UID last flashed that way, until it leaves the reader while idle
+        self.reader_flash_last = None # dict(uid, mac, cube_id, at, result) for the page
 
     # ---- what the board is, from its hello ----
     @property
@@ -492,11 +501,45 @@ class WorkstationSession(Session):
         del self.reader_history[READER_HISTORY:]
         who = f'cube #{cube_id}' if cube_id is not None else mac or 'a tag the inventory does not know'
         self.hub.log(f'Tag {uid} on the {self.label} reader: {who}', 'info', self.device.id, source='reader')
+        if self.reader_flash:
+            self._auto_flash(uid, mac, cube_id)
+
+    def set_reader_flash(self, on):
+        if on and not self.has_reader:
+            raise ValueError(f'{self.label} has no NFC reader')
+        if bool(on) != self.reader_flash:
+            self.hub.log(f'Flash on tag read turned {"ON" if on else "OFF"}', 'info', self.device.id, source='reader')
+        self.reader_flash, self.reader_flash_uid = bool(on), None
+        return dict(reader_flash=self.reader_flash)
+
+    def _auto_flash(self, uid, mac, cube_id):
+        """Flash the cube owning a tag just placed on the reader (two seconds, then idle), when the Controller is idle."""
+        if uid == self.reader_flash_uid:
+            return  # already flashed for this placement (see the module docstring)
+        c = self.controller
+        row = self.hub.db.get(mac) if mac else None
+        who = f'cube #{cube_id}' if cube_id is not None else mac
+        if not row:
+            result, text = 'unknown tag', f'Not flashed: no device in the inventory owns tag {uid}'
+        elif self.hub.db.excluded(mac):
+            result, text = 'excluded', f'Not flashed: {mac} is an excluded device'
+        elif c.mode or not c.connected:
+            result, text = 'busy', f'Not flashed: the {self.label} is busy ({c.mode or "not connected"})'
+        else:
+            pending = row.get('uid') != uid
+            c.flash([row], sequential=True)
+            self.reader_flash_uid = uid
+            result = 'flashed (pending tag)' if pending else 'flashed'
+            text = f'Flashing {who} for 2 s: its tag {uid} is on the reader' + (' (pending tag, not yet acknowledged)' if pending else '')
+        self.reader_flash_last = dict(uid=uid, mac=mac, cube_id=cube_id, at=self.hub.wall(), result=result)
+        self.hub.log(text, 'info' if result.startswith('flashed') else 'warn', self.device.id, source='reader')
 
     def _tag_left(self):
         r, history = self.reader, self.reader_history
         if r['present'] and r['uid'] and history and history[0]['uid'] == r['uid'] and history[0]['held_ms'] is None:
             history[0]['held_ms'] = int(max(0.0, self.hub.wall() - (r['since'] or self.hub.wall())) * 1000)
+        if not self.controller.mode:
+            self.reader_flash_uid = None  # lifted while idle: the next placement flashes again
         self.reader = self._no_tag()
 
     def cube_for_uid(self, uid):
@@ -577,6 +620,7 @@ class WorkstationSession(Session):
                               **{k: v for k, v in self.show.items() if k != 'started'}) if show else None,
                     timeline=mainshow_app.TIMELINE, usable=self.usable(), info=st, problem=self.problem(),
                     reader_tag=dict(self.reader) if self.has_reader else None, reader_history=self.reader_history,
+                    reader_flash=self.reader_flash, reader_flash_last=self.reader_flash_last,
                     zone_colors=zonedb.ZONE_COLORS)
 
     def registry_snapshot(self):

@@ -182,4 +182,14 @@ export default {
   'No device in the inventory owns this tag. Register the cube to give it this tag.': '인벤토리에 이 태그를 가진 장치가 없습니다. 큐브를 등록하면 이 태그가 지정됩니다.',
   'Actions apply to the cube on the reader, or to a selected history row': '동작 대상: 리더 위의 큐브 또는 선택한 이력 행',
   'Open cube page': '큐브 페이지 열기',
+  // ReaderCube: automatic identify blink when a tag is read ("flash" = LED blink, 점멸; not a firmware write)
+  'Flash the cube when its tag is read': '태그를 읽으면 큐브 점멸',
+  'Each tag placed on the reader makes its cube flash blue/red for 2 s over this radio: the cube is registered and reachable. Nothing is sent while the board is busy.': '리더에 태그를 올릴 때마다 그 큐브가 이 무선을 통해 2초간 파랑/빨강으로 점멸합니다: 큐브가 등록되어 있고 연결 가능하다는 뜻입니다. 보드가 작업 중일 때는 아무것도 보내지 않습니다.',
+  'Off: a tag on the reader is only shown here. It is off every time the console starts.': '꺼짐: 리더의 태그는 여기에만 표시됩니다. 콘솔을 시작할 때마다 꺼진 상태입니다.',
+  'Last automatic flash': '마지막 자동 점멸',
+  'flashed': '점멸함',
+  'flashed (pending tag)': '점멸함 (대기 태그)',
+  'not flashed: unknown tag': '점멸 안 함: 알 수 없는 태그',
+  'not flashed: the board was busy': '점멸 안 함: 보드가 작업 중',
+  'not flashed: excluded device': '점멸 안 함: 제외된 장치',
 };

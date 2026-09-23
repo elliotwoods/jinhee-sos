@@ -350,6 +350,57 @@ class WorkstationBesideLegacyTests(unittest.TestCase):
         self.assertTrue(tick_until(self.hub, lambda: station.reader['uid'] == uid))
         self.assertEqual(station.snapshot()['reader_history'][0]['cube_id'], 44)
 
+    def test_flash_on_tag_read(self):
+        session = self.session(self.workstation)
+        uid = '04:A2:2B:1C:53:80:01'
+        self.hub.db.reserve(CUBE, source='test')
+        self.hub.db.rename(CUBE, 44)
+        self.hub.db.prepare(CUBE, uid, take_over=True)
+        received, handle = [], self.workstation.handle_json
+        self.workstation.handle_json = lambda m: (received.append(m), handle(m))[1]
+        identifies = lambda: [m for m in received if m.get('cmd') == 'identify']
+        # Off by default: a tag on the reader is only shown.
+        self.assertFalse(session.snapshot()['reader_flash'])
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == uid))
+        run_ticks(self.hub, 5)
+        self.assertEqual(identifies(), [])
+        self.workstation.lift_tag()
+        run_ticks(self.hub, 2)
+        # On: each placement flashes the owning cube once, for two seconds.
+        commands.run(self.hub, 'radio.reader_flash', dict(device=self.workstation.mac, on=True))
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: len(identifies()) == 1))
+        self.assertEqual((identifies()[0]['mac'], identifies()[0]['duration_ms']), (CUBE, 2000))
+        self.assertEqual(session.snapshot()['reader_flash_last']['result'], 'flashed (pending tag)')
+        self.assertTrue(logs(self.hub, 'Flashing cube #44 for 2 s'))
+        # The identify's synthetic tag_state and a flicker while it runs do not flash the cube again.
+        self.workstation.emit(dict(event='tag_state', id='', present=False))
+        self.workstation.emit(dict(event='tag_state', id='', present=True))
+        run_ticks(self.hub, 5)
+        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
+        run_ticks(self.hub, 20, dt=0.1)
+        self.assertEqual(len(identifies()), 1)
+        # Lifted while idle and placed again: a second flash.
+        self.workstation.lift_tag()
+        run_ticks(self.hub, 2)
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: len(identifies()) == 2))
+        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
+        run_ticks(self.hub, 2)
+        self.workstation.lift_tag()
+        run_ticks(self.hub, 2)
+        # An unknown tag sends nothing.
+        self.workstation.place_tag('04:11:22:33')
+        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == '04:11:22:33'))
+        self.assertEqual((len(identifies()), session.reader_flash_last['result']), (2, 'unknown tag'))
+        self.assertNotIn('nfc_seen', [r[0] for r in self.hub.db.conn.execute('SELECT action FROM events')])
+        # Off again; a board without a reader refuses it.
+        commands.run(self.hub, 'radio.reader_flash', dict(device=self.workstation.mac, on=False))
+        self.assertFalse(session.reader_flash)
+        with self.assertRaises(Exception):
+            commands.run(self.hub, 'radio.reader_flash', dict(device=self.radio.mac, on=True))
+
     def test_identify_does_not_invent_a_tag(self):
         session = self.session(self.workstation)
         self.hub.db.reserve(CUBE, source='test')
