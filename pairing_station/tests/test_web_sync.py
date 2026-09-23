@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from database import Database
 import hostos
 from fake_web_inventory import FakeWebInventory
-from inventory_sync import sync as git_sync
 from unittest.mock import patch
 from web_client import Transient, Unauthorized, Unreachable, WebClient, WebError
 import web_status
@@ -230,23 +229,6 @@ class WebSyncTests(unittest.TestCase):
             self.client().head()
         self.assertNotIsInstance(caught.exception, Unauthorized)
         self.assertEqual(caught.exception.code, 401)
-
-    def test_git_and_web_interoperate(self):
-        folder = self.root / 'inventory'
-        for name in 'ab':
-            self.edit(name, lambda db: git_sync(db, folder))
-        self.sync('a'); self.sync('b')
-        self.edit('a', lambda db: (db.reserve(MAC), db.rename(MAC, 100)))
-        self.sync('a')                                   # a -> web
-        self.sync('b')                                   # web -> b
-        self.edit('b', lambda db: git_sync(db, folder))  # b -> git
-        self.edit('a', lambda db: git_sync(db, folder))  # git -> a: identical, no conflict
-        self.edit('b', lambda db: db.rename(MAC, 105))
-        self.edit('b', lambda db: git_sync(db, folder))  # b -> git only
-        self.edit('a', lambda db: git_sync(db, folder))  # git -> a
-        self.assertEqual(self.sync('a')['upload'], [MAC])  # a forwards the Git change to web
-        result = self.sync('b')                          # b already has it: no conflict
-        self.assertEqual((result['conflicts'], result['download']), ([], []))
 
     def test_status_never_raises(self):
         self.assertIn('never synced', web_status.summarize(self.paths['a'], self.client())[1])

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from database import Database
-from inventory_sync import (KEY, LocalChanged, apply, merge, merge_records, reconcile, snapshot, sync,
-                            validate)
+from inventory_sync import (LocalChanged, apply, load_baseline, merge, merge_records, reconcile, record_decisions,
+                            save_baseline, snapshot, validate, validate_record)
 
 M1, M2 = '02:00:00:00:00:01', '02:00:00:00:00:02'
 EARLY, LATE = '2026-09-21T09:00:00+00:00', '2026-09-21T10:00:00+00:00'
@@ -15,6 +15,24 @@ EARLY, LATE = '2026-09-21T09:00:00+00:00', '2026-09-21T10:00:00+00:00'
 def stamp(db, mac, when):
     with db.conn:
         db.conn.execute('UPDATE devices SET updated_at=? WHERE mac=?', (when, mac))
+
+
+KEY = 'test_inventory_baseline'
+
+
+def sync(db, shared):
+    """Stand-in for the web copy: the same three-way path as web_sync, over an in-memory dict."""
+    for mac, row in shared.items():
+        validate_record(mac, row)
+    baseline, saved = load_baseline(db, KEY)
+    local = snapshot(db)
+    merged, notes = merge_records(local, json.loads(json.dumps(shared)), baseline, saved)
+    apply(db, merged, expected=local)
+    with db.conn:
+        record_decisions(db, notes)
+    shared.clear(); shared.update(json.loads(json.dumps(merged)))
+    save_baseline(db, KEY, merged)
+    return len(merged)
 
 
 def record(mac, **fields):
@@ -28,31 +46,31 @@ class InventoryTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.a = Database(self.root/'a/db.sqlite')
         self.b = Database(self.root/'b/db.sqlite')
-        self.folder = self.root/'inventory'
-        sync(self.a, self.folder)
-        sync(self.b, self.folder)
+        self.shared = {}
+        sync(self.a, self.shared)
+        sync(self.b, self.shared)
     def tearDown(self):
         self.a.close(); self.b.close(); self.tmp.cleanup()
     def test_independent_computers_and_idempotence(self):
         self.a.reserve('02:00:00:00:00:01')
         self.b.reserve('02:00:00:00:00:02')
-        sync(self.a, self.folder)
-        sync(self.b, self.folder)
-        sync(self.a, self.folder)
+        sync(self.a, self.shared)
+        sync(self.b, self.shared)
+        sync(self.a, self.shared)
         self.assertIsNone(self.a.get('02:00:00:00:00:02')['cube_id'])
-        before = {p.name:p.read_bytes() for p in self.folder.glob('*.json')}
-        sync(self.a, self.folder)
-        self.assertEqual(before, {p.name:p.read_bytes() for p in self.folder.glob('*.json')})
+        before = json.dumps(self.shared, sort_keys=True)
+        sync(self.a, self.shared)
+        self.assertEqual(before, json.dumps(self.shared, sort_keys=True))
     def test_same_device_changed_twice_keeps_the_newest(self):
         mac = self.a.rows()[0]['mac']
         self.a.rename(mac, 100); stamp(self.a, mac, EARLY)
         self.b.rename(mac, 101); stamp(self.b, mac, LATE)
-        sync(self.a, self.folder)
-        sync(self.b, self.folder)  # no decision needed: b's change is newer
+        sync(self.a, self.shared)
+        sync(self.b, self.shared)  # no decision needed: b's change is newer
         self.assertEqual(self.b.get(mac)['cube_id'], 101)
         events = [r['detail'] for r in self.b.conn.execute("SELECT detail FROM events WHERE action='sync_resolved'")]
         self.assertEqual(len(events), 1); self.assertIn('#101', events[0]); self.assertIn('#100', events[0])
-        sync(self.a, self.folder)
+        sync(self.a, self.shared)
         self.assertEqual(self.a.get(mac)['cube_id'], 101)
         applied = [r['detail'] for r in self.a.conn.execute("SELECT detail FROM events WHERE action='sync_applied' AND mac=?", (mac,))]
         self.assertRegex(applied[-1], r'^#100, .* -> #101, ')
@@ -62,8 +80,8 @@ class InventoryTests(unittest.TestCase):
                                  (self.b, '2026-09-21T09:00:00+00:00', 'unconfirmed')):
             with db.conn:
                 db.conn.execute('UPDATE devices SET status=?, updated_at=? WHERE mac=?', (status, when, mac))
-        sync(self.a, self.folder)
-        sync(self.b, self.folder)  # no conflict: same number and tag
+        sync(self.a, self.shared)
+        sync(self.b, self.shared)  # no conflict: same number and tag
         self.assertEqual(self.b.get(mac)['status'], 'acknowledged')
     def test_merge_is_symmetric_on_equal_timestamps(self):
         base = {'mac': '02:00:00:00:00:01', 'cube_id': 5, 'uid': None, 'pending_uid': None, 'role': 'auto',
@@ -82,46 +100,42 @@ class InventoryTests(unittest.TestCase):
     def test_duplicate_numbers_across_computers(self):
         self.a.reserve(M1); self.a.rename(M1, 100); stamp(self.a, M1, EARLY)
         self.b.reserve(M2); self.b.rename(M2, 100); stamp(self.b, M2, LATE)
-        sync(self.a, self.folder)
-        sync(self.b, self.folder)  # the newest assignment keeps the number
+        sync(self.a, self.shared)
+        sync(self.b, self.shared)  # the newest assignment keeps the number
         self.assertEqual((self.b.get(M2)['cube_id'], self.b.get(M1)['cube_id'], self.b.get(M1)['status']),
                          (100, None, 'needs_number'))
         self.assertIn(M2, self.b.get(M1)['detail'])
         self.assertEqual(self.b.get(M1)['updated_at'], EARLY)  # a repair never outranks a later human edit
-        sync(self.a, self.folder)
+        sync(self.a, self.shared)
         self.assertEqual(snapshot(self.a), snapshot(self.b))
         self.a.rename(M1, 102)  # the operator reads the label again
-        sync(self.a, self.folder); sync(self.b, self.folder)
+        sync(self.a, self.shared); sync(self.b, self.shared)
         self.assertEqual(self.b.get(M1)['cube_id'], 102)
 
-    def test_git_merged_duplicate_in_the_folder_is_repaired(self):
+    def test_duplicate_in_the_shared_copy_is_repaired(self):
         self.a.reserve(M1); self.a.rename(M1, 100); stamp(self.a, M1, LATE)
-        sync(self.a, self.folder)
-        path = self.folder / '020000000002.json'
-        path.write_text(json.dumps(record(M2, cube_id=100)), encoding='utf-8')
-        sync(self.b, self.folder)
+        sync(self.a, self.shared)
+        self.shared[M2] = record(M2, cube_id=100)
+        sync(self.b, self.shared)
         self.assertEqual((self.b.get(M1)['cube_id'], self.b.get(M2)['cube_id']), (100, None))
-        self.assertIsNone(json.loads(path.read_text(encoding='utf-8'))['cube_id'])
+        self.assertIsNone(self.shared[M2]['cube_id'])
 
-    def test_deleted_record_and_conflict_markers(self):
-        path = next(self.folder.glob('*.json'))
-        content = path.read_text(encoding='utf-8'); path.unlink()
-        sync(self.b, self.folder)  # nothing is ever deleted: the record is restored
-        self.assertEqual(path.read_text(encoding='utf-8'), content)
-        path.write_text('<<<<<<< HEAD\n'+content, encoding='utf-8')
-        with self.assertRaises(ValueError):
-            sync(self.b, self.folder)
+    def test_deleted_record_is_restored(self):
+        mac = next(iter(self.shared))
+        content = self.shared.pop(mac)
+        sync(self.b, self.shared)  # nothing is ever deleted: the record is restored
+        self.assertEqual(self.shared[mac], content)
 
     def test_roles_and_cleared_numbers(self):
         self.a.clear_unseen_numbers()
         self.a.set_role('02:00:00:00:00:03', 'excluded')
-        sync(self.a, self.folder); sync(self.b, self.folder)
+        sync(self.a, self.shared); sync(self.b, self.shared)
         self.assertTrue(self.b.excluded('02:00:00:00:00:03'))
         self.assertTrue(all(row['cube_id'] is None for row in self.b.rows()))
 
     def test_corrupt_baseline_counts_as_none(self):
         self.a.set_metadata(KEY, '{"truncated": ')
-        sync(self.a, self.folder)
+        sync(self.a, self.shared)
         self.assertEqual(snapshot(self.a), snapshot(self.b))
 
     def test_apply_refuses_to_overwrite_a_change_made_since_the_plan(self):

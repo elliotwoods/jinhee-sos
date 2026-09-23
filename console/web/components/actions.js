@@ -100,9 +100,15 @@ export function HoldButton({ name, args, label, className = 'btn danger', disabl
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
   const isKey = (e) => e.key === ' ' || e.key === 'Enter';
   return html`<${Tip} name=${doc || key} label=${label} what=${what} hazard=${hazard} needs=${needs} reason=${reason} disabled=${disabled} initialOpen=${docOpen}>
-    <button class=${className + (fill ? ' holding' : '')} data-doc=${doc || key} style=${`--fill:${fill * 100}%`} disabled=${disabled || busy} aria-busy=${busy ? 'true' : 'false'}
+    <button class=${'hold ' + className + (fill ? ' holding' : '')} data-doc=${doc || key} style=${`--fill:${fill}`} disabled=${disabled || busy} aria-busy=${busy ? 'true' : 'false'} aria-label=${t('Hold: {label}', { label })}
     onMouseDown=${begin} onMouseUp=${stop} onMouseLeave=${stop} onTouchStart=${begin} onTouchEnd=${stop}
-    onKeyDown=${(e) => { if (isKey(e)) begin(e); }} onKeyUp=${(e) => { if (isKey(e)) stop(); }}>${busy ? `${label}…` : t('Hold: {label}', { label })}</button></${Tip}>`;
+    onKeyDown=${(e) => { if (isKey(e)) begin(e); }} onKeyUp=${(e) => { if (isKey(e)) stop(); }}><${Lock} open=${busy} />${busy ? `${label}…` : label}</button></${Tip}>`;
+}
+
+// The hold button's padlock: the shackle lifts with the hold (--fill) and stays open while the command runs.
+function Lock({ open }) {
+  return html`<svg class=${'hold-lock' + (open ? ' open' : '')} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+    <path class="hold-shackle" d="M5 7V5a3 3 0 0 1 6 0v2" /><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" stroke="none" /></svg>`;
 }
 
 // A leased toggle: turning it on starts the device's host override, then pings `touch` until it is turned off.

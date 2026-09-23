@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Prepare the portable Python environment, the firmware toolchain and every firmware build.
 
-Steps: Python venv and pinned packages, bundled cube firmware check, inventory sync, then (unless
---no-firmware) Arduino CLI, ESP32 core 3.3.11, the pinned Arduino libraries (docs/SETUP.md §6) and a
-build of every firmware target that is missing or older than its source. Nothing is uploaded.
+Steps: Python venv and pinned packages, bundled cube firmware check, web inventory sync (only when
+the web password is already stored here), then (unless --no-firmware) Arduino CLI, ESP32 core
+3.3.11, the pinned Arduino libraries (docs/SETUP.md §6) and a build of every firmware target that is missing or older than its source. Nothing is uploaded.
 A toolchain or build failure is reported but does not fail setup: flashing the bundled cube
 firmware needs none of it.
 """
@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV = ROOT/'pairing_station/.venv'
 sys.path.insert(0, str(ROOT/'pairing_station'))
 import hostos  # noqa: E402  (stdlib only)
+import web_client  # noqa: E402  (stdlib only)
 
 CORE = '3.3.11'
 ESP32_INDEX = 'https://espressif.github.io/arduino-esp32/package_esp32_index.json'
@@ -44,8 +45,18 @@ def python_env():
     subprocess.run([str(python),'-m','pip','install','-r',str(ROOT/'flashing_station/requirements.txt')],check=True)
     subprocess.run([str(python),'-m','pip','install','-r',str(ROOT/'console/requirements.txt')],check=True)
     subprocess.run([str(python),'-c',"import sys; sys.path.insert(0, 'flashing_station'); from core import load_manifest; m=load_manifest(); print('Firmware ready:',m['version'],m['build_hash'][:12])"],cwd=ROOT,check=True)
-    subprocess.run([str(python), str(ROOT/'scripts/sync_inventory.py')], check=True)
+    inventory(python)
     return python
+
+
+def inventory(python):
+    """The web inventory is the only shared copy. Setup never asks for the password and never fails on sync."""
+    if not web_client.load_password():
+        print('Inventory: run scripts/web_sync.py sync (or open the console and enter the web password) '
+              'to fetch the shared device inventory.', flush=True)
+        return
+    if subprocess.run([str(python), str(ROOT/'scripts/web_sync.py'), 'sync'], cwd=ROOT).returncode:
+        print('WARNING: web inventory sync did not finish; run scripts/web_sync.py sync to retry.', file=sys.stderr)
 
 
 def install_cli():

@@ -768,6 +768,10 @@ class Hub:
 
     def record_workstation(self, mac):
         """Remember a board that reported `roles` (the metadata key predates the Workstation name)."""
+        # A board that is now a Workstation is no longer a zone: forget its old zone row (and its warnings).
+        if self.store.forget(mac, 'now runs the Workstation firmware'):
+            self.log(f'{mac} is now a Workstation; removed its old zone record', 'ok', source='zones')
+            self.mark_dirty('inventory')
         macs = set(self.inventory_cache.get('workstations', ()))
         if mac not in macs:
             macs.add(mac)

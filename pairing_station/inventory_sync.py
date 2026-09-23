@@ -1,8 +1,7 @@
 """Explicit, three-way synchronization between local SQLite and shared device records.
 
-The Git folder (`sync`) and the web database (`web_sync.py`) exchange identical records and
-keep separate baselines, so either can run in any order without seeing the other's changes
-as conflicts.
+The web inventory (`web_sync.py`) is the only shared copy; this module holds the record
+validation, the merge and the guarded apply it uses.
 
 The merge always resolves by itself and every computer reaches the same answer (`merge_records`):
 the newest change to a device wins, and a number or NFC tag claimed by two devices stays with the
@@ -12,12 +11,10 @@ decision is returned as a note, audited as an event and shown to the operator.
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import hostos
 from database import Database, hex_bytes, released_status
 
-KEY = 'git_inventory_baseline_v1'
 FIELDS = {'mac', 'cube_id', 'uid', 'pending_uid', 'source', 'status', 'updated_at', 'detail'}
 # A record means its number, tags (`_identity`) and role. The other fields (status, updated_at, detail,
 # source) are bookkeeping that describes these and the latest event (seen, acknowledged, unconfirmed).
@@ -358,32 +355,3 @@ def record_decisions(db, notes):
     for note in notes:
         db.event(note['mac'], 'sync_resolved', note['text'])
 
-
-def sync(db, folder):
-    """Caller must close desktop apps. The merge resolves by itself; its decisions are audited as events."""
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    remote = {}
-    for path in sorted(folder.glob('*.json')):
-        row = json.loads(path.read_text(encoding='utf-8'))  # also rejects unresolved Git markers
-        mac = row.get('mac', '') if isinstance(row, dict) else ''
-        if path.stem != mac.replace(':', '').lower() or mac in remote:
-            raise ValueError('Invalid inventory filename: ' + path.name)
-        validate_record(mac, row)  # Git can merge two people's files into a shared number/tag: repaired below
-        remote[mac] = row
-    baseline, saved = load_baseline(db, KEY)
-    local = snapshot(db)
-    merged, notes = merge_records(local, remote, baseline, saved)
-    apply(db, merged, expected=local)
-    with db.conn:
-        record_decisions(db, notes)
-    for mac, row in merged.items():
-        path = folder / (mac.replace(':', '').lower() + '.json')
-        content = json.dumps(row, indent=2, sort_keys=True) + '\n'
-        if not path.exists() or path.read_text(encoding='utf-8') != content:
-            temporary = path.with_suffix('.tmp')
-            temporary.write_text(content, encoding='utf-8', newline='\n')  # committed: LF on every OS
-            os.replace(temporary, path)
-    # If file writing fails, the old baseline allows a safe retry.
-    save_baseline(db, KEY, merged)
-    return len(merged)

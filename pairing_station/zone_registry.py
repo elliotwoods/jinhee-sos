@@ -143,6 +143,14 @@ class ZoneStore:
     def zones(self):
         return [dict(r) for r in self.conn.execute('SELECT * FROM zones ORDER BY zone_type, point_id, name, mac')]
 
+    def forget(self, mac, why):
+        """Drop a board that is no longer a zone (e.g. reflashed as a Workstation). True when a row was removed."""
+        with self.conn:
+            if not self.conn.execute('DELETE FROM zones WHERE mac=?', (mac,)).rowcount:
+                return False
+            self.db.event(mac, 'zone_forgotten', why)
+        return True
+
 
 class ZoneRegistry:
     QUERY_INTERVAL = 30

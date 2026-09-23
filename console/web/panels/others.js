@@ -12,8 +12,6 @@ import { ShowControl } from './ShowSection.js';
 import { hhmmss, ago, mmss } from '../lib/format.js';
 import { run } from '../api.js';
 import { notify } from '../lib/notify.js';
-import { run } from '../api.js';
-import { notify } from '../lib/notify.js';
 import { goDevice } from '../router.js';
 import { t } from '../lib/i18n.js';
 
@@ -121,8 +119,8 @@ export function UnknownBoardPanel({ device }) {
       <${HoldButton} name="cube.flash_firmware" args=${{ device: device.id, manual: true }} label=${t('Neocore cube')} hazard=${copy.actions['cube.flash_firmware']?.hazard} disabled=${!device.candidate || device.state === 'job'} /></div>
       <div class="note">${t('For a zone plate, open the zone identity form: Read zone report first, then the Firmware & database tab appears once the board is identified as a zone. Unidentified boards can also be flashed from the zone form after "Identify via bootloader".')}</div>
       <div class="row"><button class="btn" disabled=${!device.candidate || device.state === 'job'} onClick=${() => setOverride({ firmware: 'workstation', reason: '' })}>${t('Override inventory protection…')}</button></div></div>
-    ${override && html`<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px" onClick=${(e) => { if (e.target === e.currentTarget) setOverride(null); }}>
-      <div class="card" style="max-width:560px;width:100%"><h3>${t('Override inventory protection?')}</h3>
+    ${override && html`<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1000" onClick=${(e) => { if (e.target === e.currentTarget) setOverride(null); }}>
+      <div class="card" style="max-width:560px;width:calc(100% - 32px)"><h3>${t('Override inventory protection?')}</h3>
         ${override.reason && html`<div class="warn-text">${override.reason}</div>`}
         <p>${t('Force writing replaces whatever this board runs now. A zone board leaves the show until it is reflashed as a zone; a cube loses its LED firmware. A full backup of the board is taken the first time.')}</p>
         <div class="row"><label class="lbl">${t('Firmware')}</label><select class="field" value=${override.firmware} onChange=${(e) => setOverride({ ...override, firmware: e.target.value })}>

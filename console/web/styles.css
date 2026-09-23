@@ -360,7 +360,17 @@ kbd { font: var(--text-xs) var(--mono); background: var(--surface-control); bord
 .btn.physical::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .btn.physical.on::before { background: currentColor; }
 .btn.on, .btn.on:hover:not(:disabled) { background: var(--ok); border-color: var(--ok); color: var(--on-tone); font-weight: 700; }
-.btn.holding { background: linear-gradient(90deg, var(--bad-soft) var(--fill, 0%), transparent var(--fill, 0%)); }
+/* Hold buttons: a fill sweeps left to right while held; the padlock's shackle lifts as it goes. */
+.btn.hold { position: relative; isolation: isolate; overflow: hidden; }
+.btn.hold::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: currentColor; opacity: .28;
+  transform: scaleX(var(--fill, 0)); transform-origin: left;
+}
+.btn.hold.holding { box-shadow: inset 0 -2px 0 currentColor; }
+.hold-lock { flex: none; }
+.hold-shackle { transform: translateY(calc(var(--fill, 0) * -2.5px)); }
+.hold-lock.open .hold-shackle { transform: translate(3px, -2.5px); }
 .btn.quiet { background: none; border-color: transparent; color: var(--text-muted); }
 .btn.quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); border-color: transparent; }
 .btn-group { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }

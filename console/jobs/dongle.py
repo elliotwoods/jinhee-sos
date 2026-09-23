@@ -34,6 +34,7 @@ def flash_job(hub, device, which='workstation', force_build=False, force=False):
             mac = str(job.result).upper()
             hub.db.set_role(mac, 'excluded')
             dongle.set_controller(hub.db, mac, firmware is dongle.MAINSHOW)
+            hub.store.forget(mac, f'now runs the {firmware.label} firmware')
             if which == 'workstation':
                 hub.record_workstation(mac)
             job.outcome = dict(level='verified', text=f'{firmware.label} written to {mac}; recorded as excluded from cube service')

@@ -23,6 +23,9 @@ pairing_station/data/
 flashing_station/data/
 zones/flasher/data/
 
+# Retired Git inventory (web sync is the only shared copy); an old checkout may leave it behind
+/inventory/
+
 # Scratch / generated intermediates
 /tmp/
 

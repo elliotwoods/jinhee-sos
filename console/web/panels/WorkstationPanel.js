@@ -100,8 +100,8 @@ function CubeColours({ device, s }) {
       <${ActionButton} name="radio.show_start" args=${{ device: device.id, cube: mac }} label=${t('Start show on this cube')} disabled=${!live || !mac} hazard=${t('MSG_SHOW_START with a fresh showId ×5; only a mainshow-ready cube starts.')} />
     </div>
     <div class="row">
-      <${HoldButton} name="radio.set_zone_all" args=${{ device: device.id, zone }} label=${t('ALL cubes in range → {zone} (hold)', { zone: t(ZONES[zone][1]) })} disabled=${!live} hazard=${t('Broadcast SET_ZONE: recolours every cube that hears it, with no acknowledgment.')} />
-      <${HoldButton} name="radio.show_start_all" args=${{ device: device.id }} label=${t('Start show on ALL ready cubes (hold)')} disabled=${!live} hazard=${t('Broadcast SHOW_START, no acknowledgment; cannot be undone.')} />
+      <${HoldButton} name="radio.set_zone_all" args=${{ device: device.id, zone }} label=${t('ALL cubes in range → {zone}', { zone: t(ZONES[zone][1]) })} disabled=${!live} hazard=${t('Broadcast SET_ZONE: recolours every cube that hears it, with no acknowledgment.')} />
+      <${HoldButton} name="radio.show_start_all" args=${{ device: device.id }} label=${t('Start show on ALL ready cubes')} disabled=${!live} hazard=${t('Broadcast SHOW_START, no acknowledgment; cannot be undone.')} />
     </div>
     <div class="row">
       <${ActionButton} name="radio.identify" args=${{ device: device.id, macs: [mac] }} label=${t('Identify (flash until Stop)')} disabled=${!live || !mac} hazard=${t('The cube blinks blue/red until Stop; it is returned to idle afterwards.')} />
