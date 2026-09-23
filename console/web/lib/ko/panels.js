@@ -219,4 +219,8 @@ export default {
   'Other apps on this database': '이 데이터베이스의 다른 앱',
   'Held by another process: {apps} — web downloads wait while those apps run.': '다른 프로세스가 보유 중: {apps} — 해당 앱이 실행되는 동안 웹 다운로드는 대기합니다.',
   'No old app holds a lock; the console holds them all while it runs.': '잠금을 가진 이전 앱이 없습니다. 콘솔이 실행 중에는 모든 잠금을 보유합니다.',
+  'Override inventory protection…': '인벤토리 보호 무시…',
+  'Override inventory protection?': '인벤토리 보호를 무시할까요?',
+  'Force writing replaces whatever this board runs now. A zone board leaves the show until it is reflashed as a zone; a cube loses its LED firmware. A full backup of the board is taken the first time.': '강제 쓰기는 이 보드가 지금 실행 중인 것을 교체합니다. 존 보드는 존으로 다시 플래시할 때까지 쇼에서 빠지고, 큐브는 LED 펌웨어를 잃습니다. 처음에는 보드 전체 백업을 만듭니다.',
+  'Force write': '강제 쓰기',
 };

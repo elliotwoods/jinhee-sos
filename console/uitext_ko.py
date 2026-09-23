@@ -140,6 +140,8 @@ ACTIONS = {
     'cube.flash_firmware': dict(label='큐브 펌웨어 플래시', what='번들 큐브 펌웨어를 쓰고 검증한 뒤 부팅 메시지를 확인하고, 저장소의 쇼를 게시된 쇼로 맞춥니다.',
                                 hazard='앱 파티션에 쓰고 큐브를 재부팅합니다. NVS(번호와 태그 등록)는 보존되며, 그 안의 쇼만 더 오래된 경우 교체됩니다.',
                                 needs='USB에 연결된 큐브와 최신 큐브 빌드.', disabled='이 보드에서 작업이 진행 중입니다.'),
+    'dongle.flash_force': dict(label='Workstation / 컨트롤러 펌웨어 강제 쓰기', what='인벤토리가 보호하는 보드(존, 큐브, 컨트롤러 또는 스테이션)에 Workstation 또는 Mainshow controller 펌웨어를 씁니다.',
+                               hazard='보드의 기존 역할을 덮어씁니다: 존은 쇼에서 빠지고, 큐브는 LED 펌웨어를 잃습니다. 처음에는 전체 백업을 만듭니다. 길게 눌러 확인하세요.'),
     'dongle.flash': dict(label='Workstation / 컨트롤러 펌웨어 쓰기', what='여분의 ESP32-C3를 Workstation 또는 Mainshow controller로 만듭니다.',
                          hazard='보드의 기존 펌웨어를 교체합니다. 처음에는 전체 백업을 만듭니다.', needs='사용 중인 큐브가 아닌 여분 보드가 USB에 연결되어 있어야 합니다.'),
     'pairing.register': dict(label='등록 (태그 스캔)', what='이 큐브를 빨강/파랑으로 점멸시키고 스테이션에서 새 NFC 스캔을 기다린 뒤 번호와 태그를 보냅니다.',
