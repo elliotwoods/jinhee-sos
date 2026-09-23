@@ -40,7 +40,8 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
   hardware commands carry a warning dot and a tooltip (what it does, ▲ hazard, needs, why unavailable)
   from `uitext.ACTIONS`, which must cover every hardware/destructive command. Destructive commands
   (broadcasts to every cube, force flash, unregister) are press-and-hold and need a confirmation token
-  (`confirm` then `call`), so the hold is enforced by the backend, not the page. Nothing ever runs on its own.
+  (`confirm` then `call`), so the hold is enforced by the backend, not the page. A card's action never runs on
+  its own (the automatic updates below are settings, not cards).
 - `api.py` is what the page calls (`pull`, `call`, `confirm`, `get_copy`, `get_lines`); `window.py`
   hosts it in pywebview, `httpbridge.py` in a browser. `web/` is the front end (vendored Preact +
   htm, no build step, no network).
@@ -66,7 +67,7 @@ automatically when the native webview is unavailable, e.g. no WebView2 runtime o
 | Pool light test | PoolRadioTest bridge panel; pool central telemetry on the PoolCentral panel |
 | Preshow test | PreshowZone panel › Cue test |
 | Range test | RangeTest panel |
-| General Radio (legacy general-radio-1.x boards; the sketch became `zones/firmware/Workstation`) | Workstation panel in the rail group Stations (one role, `workstation`, and one panel for a legacy pairing station, a legacy ESP-NOW dongle, a legacy General Radio or a Workstation, titled from hello: "Pairing station" / "ESP-NOW dongle" / "General Radio" / "Workstation"). Tabs Pairing, Zone relay, Cubes & show, Pool lamp, Preshow cue, Console; a tab is greyed when hello lacks the capability (legacy station: Pairing and Zone relay only; legacy General Radio: everything but the reader; Workstation: all): cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); the primary pairing link is the first connected link with a reader (else the first connected), the zone-DB walk-around runs on that link if it relays zones, else on the first relay, and the show relay is any link reporting `show:1`. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: workstation`; built with `build.dongle which=workstation`). Legacy boards keep working but are no longer a flash target |
+| General Radio (legacy general-radio-1.x boards; the sketch became `zones/firmware/Workstation`) | Workstation panel in the rail group Stations (one role, `workstation`, and one panel for a legacy pairing station, a legacy ESP-NOW dongle, a legacy General Radio or a Workstation, titled from hello: "Pairing station" / "ESP-NOW dongle" / "General Radio" / "Workstation"). Tabs Pairing, Zone relay, Cubes & show, Pool lamp, Preshow cue, Console; a tab is greyed when hello lacks the capability (legacy station: Pairing and Zone relay only; legacy General Radio: everything but the reader; Workstation: all): cube colours (one cube with the plate-style ×3 result, or every cube in range by hold), identify flash, show start, the zone relay, a leased pool lamp through the central, a leased TouchDesigner cue through the bridge (acknowledgements shown), LED test. With a reader, an **On the reader** card above the tabs shows the tag lying on it: UID, owning cube (committed `uid`, then `pending_uid`), inventory state and the last colour sent, with a history of up to 20 recent tags and their held time; **Flash 2 s**, **SET_ZONE** buttons, **Stop** and **Open cube page** act on the cube on the reader or on the selected history row. It only observes (no database write, not an `nfc_seen` scan); an idle link asks for the UID with `nfc_poll` at most once a second. Its Pairing tab (`radio.discover` / `radio.identify` / `radio.transmit` / `radio.stop`) and the relay buttons address this board even while a pairing station is also connected (`pairing.*` / `zones.*` take an optional `device`); the primary pairing link is the first connected link with a reader (else the first connected), every relay-capable link walks the zones its own radio hears (one radio publishes at a time), and the show relay is the `show:1` link whose radio heard most of the cubes that are behind. A `fatal` from the board (radio driver dead) shows as a banner and an advisor card until the board is power-cycled. Written onto a spare board from the Unidentified board panel or with `dongle.flash` (`firmware: workstation`; built with `build.dongle which=workstation`). Legacy boards keep working but are no longer a flash target |
 | Web sync | Top-bar Sync button; Inventory › Web sync (check, sync, upload only, download only, publish, pull, plan) |
 
 Port pickers are gone: boards are identified when plugged in. Manual choice survives on the
@@ -96,27 +97,68 @@ Every database is kept current without a click, by default and across relaunches
 the device database, metadata `console_settings`; `console.settings` / Settings page):
 
 - **Zone databases over the air** (`auto_zone_db_radio`): `hub.apply_auto_modes()` switches the
-  `ZoneRegistry` walk-around on for the preferred relay only (`relay_session()`: the primary pairing link when
-  it relays, else the first relay-capable Workstation) and off on every other relay, so two radios never broadcast chunks over each other. Reopened
-  sessions and newly plugged dongles pick it up within a second. The relay panel's "auto-update all" box is
-  this setting.
+  `ZoneRegistry` walk-around on for every relay-capable Workstation link, and each one walks the out-of-date
+  zones its own radio heard in the last 20 s (`walk_candidates`), so a zone only a second Workstation reaches is
+  still updated. `hub.zone_walk_allowed()` lets one radio publish at a time, so two never broadcast chunks over
+  each other. A walk that cannot publish logs once and backs off (30 s). Reopened sessions and newly plugged
+  boards pick it up within a second. The relay panel's "auto-update all" box is this setting.
 - **Zone databases over USB** (`auto_zone_db_usb`): `Intake.database_step()` gives any configured NctZone board
   on USB whose database is behind the published one a database-only update (`jobs/zone.update_db_job`,
   identity and firmware untouched), once per board and publication, independent of Auto-flash zones. The zone's
   Firmware & database tab shows the result.
-- **Main show over the air** (`auto_show`): the show registry's walk-around (Show editor › Auto update).
-- **Firmware builds** (`auto_build`): `hub.auto_build_step()` (every 60 s with the build check) starts one build
-  job for the first cube, zone, Workstation or Mainshow build that is missing or older than its source, only when
-  the Arduino tools are present and no build or hardware job is running. A failed target is not retried by itself
-  during that run (the `build.stale` card still offers it). Builds never upload.
+- **Main show over the air** (`auto_show`): the show registry's walk-around (Show editor › Auto update),
+  through the show relay whose radio heard most of the cubes that are behind (`showedit.choose_relay`); with
+  nothing to send, several relays take turns querying every 10 s.
+- **Firmware builds** (`auto_build`, "Build firmware when its source changes (cube, zone plates, Workstation,
+  Mainshow controller), one build at a time, before anything is flashed from it") and **USB firmware upgrades**
+  (`auto_firmware_usb`, "Upgrade the firmware of USB boards that are out of date: zone plates keep their
+  identity, a pairing station or General Radio becomes a Workstation, cubes only while Register and Flash are
+  off. Never while you are using the board; pool radios, the pool central and the preshow bridge are only
+  listed"): both in `autoupgrade.py` (`AutoUpgrade.tick`, which the hub ticks every 1 s). See below.
 - **Web pulls** (`auto_pull`, needs the web password): a status check that reports a newer zone database pulls
   it (each web version once per run); a newer published show is pulled every 5 min while a show relay is
   connected (silent while none is published; a new one logs "Pulled show vN"). Failures are logged once per
   distinct error.
 
 `--simulate` writes databases to the fake zones instead of running esptool (`simulate.fake_zone_db`); the
-documentation bench (`simdocs`) switches automatic updates off so its staged scenes stay put.
+documentation bench (`simdocs`) switches automatic updates off (firmware too) so its staged scenes stay put.
 Tests: `tests/test_auto_update.py`.
+
+### Automatic firmware (`autoupgrade.py`)
+
+Builds (`auto_build`):
+- Targets: the cube, the five zone sketches, the Workstation and the Mainshow controller. A target is out of
+  date when its manifest check fails (cube, zones) or `dongle.build_state` says stale or missing (Workstation,
+  Mainshow controller); the hub refreshes that check every 60 s.
+- One build at a time, targets a waiting board needs first, and never while any hardware job or another
+  automatic job runs (checked directly, not only through the idle flag). Builds never upload.
+- A failed build is remembered by its source fingerprint and not retried until the source changes or the
+  operator presses **Retry** on its row in the **Automatic updates** panel. Without arduino-cli and ESP32 core
+  3.3.11 the row says "no build tools".
+- The `build.stale` card stays silent while the builder has a target queued or building; it shows when the
+  automatic build failed, the tools are missing, or `auto_build` is off.
+
+USB upgrades (`auto_firmware_usb`):
+- Upgraded: a zone plate whose FW differs from its sketch's `FIRMWARE_VERSION` (through the zone flasher
+  pipeline, keeping the profile, point, name, params and RX gain from its own `?` report; needs a configured
+  board and a published zone database); a legacy pairing station or General Radio, an old Workstation (all to
+  the current Workstation firmware) and an old Mainshow controller; a cube whose `?` FW differs from
+  `core.VERSION` (the Flash-page pipeline, firmware plus the published show).
+- Listed only, never flashed: pool radios (a matched set with the pool central), the pool central and the
+  preshow bridge (no flash pipeline), unconfigured zones.
+- Never touched: the protected station 3C:0F:02:AD:83:24; every flasher refusal still applies.
+- Held back while: the console is busy (pairing, a zone publication, any hardware job, Register not idle, an
+  armed Flash intake); for a cube, while Register or the Flash page is on; for 20 s after the board was
+  identified ("Starts in N s"); for 60 s after the operator sent that board a command; while it is relaying or
+  sending the show; for a Workstation or Mainshow controller, while the show runs.
+- One automatic job at a time. Each board is tried once per plug-in and target version; after a failure use
+  **Retry** or replug. **Skip** holds until a replug; **Pause** lasts until relaunch.
+
+The **Automatic updates** panel (`web/components/AutoUpdates.js`, top of the right sidebar above Attention)
+shows "✓ Everything up to date" when idle, otherwise one row per build or USB board (port, current → target,
+state pill, reason, progress, **Skip** / **Retry**), **Pause** / **Resume**, the over-the-air zone database and
+main show counts, and a short history. Automatic jobs appear in Jobs only when they fail. Simulation-verified
+only: no automatic firmware flash has run on hardware yet.
 
 ## Register cubes (#/register, ⌘3)
 
@@ -125,7 +167,7 @@ Tests: `tests/test_auto_update.py`.
 (`suggested_number()`: lowest free above 32, never 2/22/39/43; the page and a toast say NEW NUMBER so it goes on
 the label; "Label says" overrides it before the scan) → `Controller.repair` on the pairing station (the cube
 flashes; scan its tag; every registration rule stays in the controller) → one Sync once the tag is lifted
-(inventory both ways, then the zone database publish). The registration reaches zones only once the published database is on them: automatic zone updates (on by default) do that for zones in range of the relay and zones plugged in over USB, or use Update all.
+(inventory both ways, then the zone database publish). The registration reaches zones only once the published database is on them: automatic zone updates (on by default) do that for zones in range of any relay and zones plugged in over USB, or use Update all.
 A failure never retries by itself (Retry / Start again). Plugging in another cube mid-flow interrupts the
 first, which keeps its retryable saved mapping. A simulated console refuses every non-loopback web server
 (`jobs/sync.client`), so `--simulate` can never sync with the real web inventory.

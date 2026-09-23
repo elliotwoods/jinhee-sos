@@ -1,7 +1,7 @@
 <span color="red">*This document was written by Kimchi and Chips*</span>
 
-> [!INFO] **Who:** the duty technician and floor operators · **When:** every opening day · **You need:** the console Mac, the Workstation, one known-good registered cube, charged spare cubes
-> **누가:** 당일 담당 기술자와 현장 운영자 · **언제:** 매 운영일 · **준비물:** 콘솔 Mac, 워크스테이션, 정상 등록 큐브 1개, 충전된 예비 큐브
+> [!INFO] **Who:** the duty technician and floor operators · **When:** every opening day · **You need:** the console computer, the Workstation, one known-good registered cube, charged spare cubes
+> **누가:** 당일 담당 기술자와 현장 운영자 · **언제:** 매 운영일 · **준비물:** 콘솔 컴퓨터, 워크스테이션, 정상 등록 큐브 1개, 충전된 예비 큐브
 
 This is the day's routine: check before opening, watch during opening, close safely. It is a proposed procedure (**To confirm** with Engineering Six, who should name a duty technician).
 <kr>하루의 기본 절차입니다. 개장 전 점검, 운영 중 관찰, 안전한 폐장. 제안 절차이며(**To confirm**, 엔지니어링식스), 엔지니어링식스가 당일 담당 기술자를 지정해야 합니다.</kr>
@@ -22,10 +22,10 @@ flowchart LR
 
 ## Before opening | 개장 전
 
-- [ ] Open the NCT Console and plug in the Workstation. Read the **Attention** panel (the list on the right) first. <kr>NCT 콘솔을 열고 워크스테이션을 꽂습니다. 먼저 **Attention** 패널(오른쪽 목록)을 읽습니다.</kr>
+- [ ] Open the NCT Console and plug in the Workstation. Read the **Automatic updates** panel and the **Attention** panel (top right) first. <kr>NCT 콘솔을 열고 워크스테이션을 꽂습니다. 먼저 **Automatic updates** 패널과 **Attention** 패널(오른쪽 위)을 읽습니다.</kr>
 - [ ] Count charged, tested cubes. Set spares aside. Separate faulty cubes and note their numbers. <kr>충전·점검된 큐브를 셉니다. 예비 큐브를 따로 둡니다. 불량 큐브는 분리하고 번호를 기록합니다.</kr>
 - [ ] Check the preshow power banks, cables and reader mounting. <kr>프리쇼 보조배터리, 케이블, 리더 고정을 확인합니다.</kr>
-- [ ] Start the media system. If the preshow bridge is on the console Mac, press **Disconnect** on its panel so TouchDesigner can use the port. <kr>미디어 시스템을 시작합니다. 프리쇼 브리지가 콘솔 Mac에 꽂혀 있으면 브리지 패널의 **Disconnect**를 눌러 TouchDesigner가 포트를 쓰게 합니다.</kr>
+- [ ] Start the media system. If the preshow bridge is on the console computer, press **Disconnect** on its panel so TouchDesigner can use the port. <kr>미디어 시스템을 시작합니다. 프리쇼 브리지가 콘솔 컴퓨터에 꽂혀 있으면 브리지 패널의 **Disconnect**를 눌러 TouchDesigner가 포트를 쓰게 합니다.</kr>
 - [ ] Test every zone with a known-good cube (table below). <kr>정상 큐브로 모든 존을 점검합니다(아래 표).</kr>
 - [ ] If registrations changed: check the Sync chip shows **✓ Synced** (it syncs by itself; click it to sync now), then check every zone shows **Current** in the Workstation panel › **Zone relay**. <kr>등록이 바뀌었으면 Sync 칩이 **✓ Synced**인지 확인하고(자동으로 동기화됨, 누르면 바로 동기화), 워크스테이션 패널 › **Zone relay**에서 모든 존이 **Current**인지 확인합니다.</kr>
 - [ ] **Flash cubes** page off, **Auto-flash zones** off, no temporary control left on (check each override switch you used). <kr>**Flash cubes** 페이지 끄기, **Auto-flash zones** 끄기, 남은 임시 제어 없음(사용한 오버라이드 스위치마다 확인).</kr>
@@ -50,8 +50,17 @@ More detail: {{page:H4}}
 Keep the console open. Glance at the **Attention** panel from time to time. Each card says what is wrong and offers a button that fixes it.
 <kr>콘솔을 열어 둡니다. 가끔 **Attention** 패널을 봅니다. 카드마다 문제와 해결 버튼이 있습니다.</kr>
 
-Leave Settings › **Automatic updates** on (the default). The console then brings zone databases and the main show up to date by itself. It only touches zones and cubes that are behind, and never sends a show while a show is running. (Simulation-verified)
-<kr>Settings › **Automatic updates**는 켜 둡니다(기본값). 콘솔이 존 데이터베이스와 메인쇼를 스스로 최신으로 맞춥니다. 뒤처진 존과 큐브만 건드리고, 쇼 재생 중에는 쇼를 보내지 않습니다. (Simulation-verified)</kr>
+Leave Settings › **Automatic updates** on (the default). The console then brings zone databases and the main show up to date by itself. It only touches zones and cubes that are behind, and never sends a show while a show is running. It also builds firmware and upgrades out-of-date boards plugged in by USB, but never a board you are using. (Simulation-verified)
+<kr>Settings › **Automatic updates**는 켜 둡니다(기본값). 콘솔이 존 데이터베이스와 메인쇼를 스스로 최신으로 맞춥니다. 뒤처진 존과 큐브만 건드리고, 쇼 재생 중에는 쇼를 보내지 않습니다. 또한 펌웨어를 빌드하고 USB로 꽂은 오래된 보드를 업그레이드하지만, 사용 중인 보드는 건드리지 않습니다. (Simulation-verified)</kr>
+
+The **Automatic updates** panel (top right) shows **✓ Everything up to date** when nothing is waiting. Pool radios, the pool central controller and the preshow bridge are only listed (**by hand**): the console never flashes them.
+<kr>**Automatic updates** 패널(오른쪽 위)은 기다리는 것이 없으면 **✓ Everything up to date**를 표시합니다. 풀 라디오, 풀 중앙 컨트롤러, 프리쇼 브리지는 목록에만 나옵니다(**by hand**). 콘솔은 이 보드들을 플래시하지 않습니다.</kr>
+
+> [!WARNING] Do not unplug a board whose row shows **upgrading**. Wait until the row disappears or turns **failed**.
+> 행에 **upgrading**이 표시된 보드는 뽑지 않습니다. 행이 사라지거나 **failed**가 될 때까지 기다립니다.
+
+> [!WARNING] **Plugging a board into this computer is enough to upgrade it.** About 20 s after an out-of-date board is plugged in, the console reflashes it without a click: an older cube gets the current firmware and show (only while Register and Flash are off), the Mainshow controller gets the current controller firmware, and a pairing station or General Radio becomes a Workstation. To keep a board as it is, press **Skip** on its row before it starts, or switch off the USB upgrade setting in Settings › **Automatic updates**. (Simulation-verified)
+> **이 컴퓨터에 보드를 꽂기만 해도 업그레이드됩니다.** 오래된 보드를 꽂고 약 20초 뒤 콘솔이 클릭 없이 다시 플래시합니다: 오래된 큐브는 현재 펌웨어와 쇼를 받고(Register와 Flash가 꺼져 있을 때만), 메인쇼 컨트롤러는 현재 컨트롤러 펌웨어를 받으며, 등록 스테이션이나 General Radio는 워크스테이션이 됩니다. 보드를 그대로 두려면 시작 전에 해당 행의 **Skip**을 누르거나 Settings › **Automatic updates**에서 USB 업그레이드 설정을 끕니다. (Simulation-verified)
 
 When a visitor's cube fails, give them a charged spare. Diagnose the failed cube away from the audience: plug it into the console by USB and read its Cube panel.
 <kr>관람객 큐브가 실패하면 충전된 예비 큐브를 줍니다. 실패한 큐브는 관람 구역 밖에서 진단합니다. USB로 콘솔에 꽂고 Cube 패널을 읽습니다.</kr>

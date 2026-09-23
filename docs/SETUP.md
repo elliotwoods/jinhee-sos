@@ -308,7 +308,14 @@ READMEs; do not substitute a raw erase/write command for the validated pipelines
 ## 6. Install the Arduino build toolchain
 
 `scripts/setup.py` performs every step of this section automatically (rerun it to repair or update;
-`--no-firmware` skips it). The manual commands below remain the reference.
+`--no-firmware` skips all of it): it installs Arduino CLI when neither it nor Arduino IDE 2 is found
+(winget on Windows, Homebrew on macOS), then ESP32 core 3.3.11 and the pinned libraries with their
+machine-local configs, then runs `scripts/build_all_firmware.py --stale`. The CLI is found through
+`hostos.arduino_cli()`: Arduino IDE 2's bundled CLI, then `arduino-cli` on PATH, then (Windows)
+`%ProgramFiles%\Arduino CLI\arduino-cli.exe`, so a winget install is found even before PATH is refreshed.
+A toolchain or build failure is a warning, not a setup failure. The CLI lookup has a unit test
+(`pairing_station/tests/test_hostos.py`); the whole firmware setup has not been tested end to end on a fresh
+machine. The manual commands below remain the reference.
 
 This is optional when only running apps or flashing verified bundled cube binaries.
 A clean clone excludes `live files/libraries/`, `pairing_station/.arduino/`, most
@@ -376,10 +383,19 @@ pairing_station/.venv/bin/python scripts/build_all_firmware.py
 pairing_station/.venv/bin/python scripts/build_all_firmware.py --stale   # only missing/out-of-date builds
 ```
 
-`--stale` checks the cube and zone manifests (source hashes) and, for the other targets, whether any
-sketch or library file is newer than the build output. The NCT Console also rebuilds the builds it
-flashes (cube, zones, Workstation, Mainshow controller) on its own while Settings › Automatic updates ›
-Firmware builds is on (default), one at a time and never during a hardware job.
+`--stale` checks the cube and zone manifests (source hashes). The pairing station, Workstation and
+Mainshow controller use `dongle.build_state` (`zones/dbmanager/dongle.py`), the same rule the NCT Console
+uses. Every other target is stale when one of its four images (`<sketch>.ino.bin`, `.bootloader.bin`,
+`.partitions.bin`, `.merged.bin`) is missing or older than a compiled source (`.ino`, `.h`, `.hpp`, `.c`,
+`.cpp`, `.S`) in the sketch or its library folders, ignoring `build/` folders and the output folder.
+
+The NCT Console also rebuilds the builds it flashes (cube, zones, Workstation, Mainshow controller) on its
+own while Settings › Automatic updates › "Build firmware when its source changes (cube, zone plates,
+Workstation, Mainshow controller), one build at a time, before anything is flashed from it" is on (setting
+`auto_build`, default on): one build at a time, never while a hardware job runs, and a failed build is
+retried only after its source changes or **Retry** in the Automatic updates panel. Its partner
+`auto_firmware_usb` (also on by default) then upgrades out-of-date USB boards from those builds; see
+[console/README.md](../console/README.md#automatic-firmware-autoupgradepy).
 
 Or choose **Build all firmwares** in VS Code and press F5. Fourteen targets are included (the
 `--dry-run` output is the authoritative list); the zone and diagnostic rows below are the main ones:

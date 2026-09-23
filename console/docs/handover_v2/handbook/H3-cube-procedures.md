@@ -109,6 +109,9 @@ Firmware written and verified, show written and confirmed / 펌웨어 쓰기·�
 With the Register page also on, each new cube is flashed first, then registered.
 <kr>Register 페이지도 켜 두면 새 큐브를 먼저 플래시한 뒤 등록합니다.</kr>
 
+**Automatic upgrade.** While Register and Flash are both off, a plugged-in cube with older firmware is upgraded by itself (firmware plus the published show, the same steps as this page). Its row in the **Automatic updates** panel shows **Starts in N s** first; press **Skip** to leave it alone. With Register or Flash on, those pages decide. (Simulation-verified)
+<kr>**자동 업그레이드.** Register와 Flash가 모두 꺼져 있으면, 꽂은 큐브의 펌웨어가 오래된 경우 스스로 업그레이드합니다(펌웨어와 게시된 쇼, 이 페이지와 같은 단계). **Automatic updates** 패널의 행에 먼저 **Starts in N s**가 표시됩니다. 건드리지 않으려면 **Skip**을 누릅니다. Register나 Flash가 켜져 있으면 그 페이지가 처리합니다. (Simulation-verified)</kr>
+
 > [!WARNING] The page skips a board it identifies as a Workstation, zone board or controller. A board that answers nothing is **flashed** as a cube. While the page is on, plug in cubes only.
 > 페이지는 워크스테이션, 존 보드, 컨트롤러로 식별된 보드는 건너뜁니다. 아무 응답이 없는 보드는 큐브로 **플래시됩니다**. 페이지가 켜져 있는 동안에는 큐브만 꽂습니다.
 

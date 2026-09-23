@@ -5,8 +5,8 @@ Kimchi and Chips → Amberin / Engineering Six
 
 ## About this handover | 이 인수인계 문서에 대하여
 
-Kimchi and Chips wrote this handover for Amberin and Engineering Six. It explains how to run and look after the installation with the **NCT Console**, the one operator program on the Mac.
-<kr>이 인수인계 문서는 김치앤칩스가 앰버린과 엔지니어링식스를 위해 작성했습니다. Mac의 단일 운영 프로그램인 **NCT Console**로 전시를 운영하고 관리하는 방법을 설명합니다.</kr>
+Kimchi and Chips wrote this handover for Amberin and Engineering Six. It explains how to run and look after the installation with the **NCT Console**, the one operator program on the console computer (a Mac or Windows PC).
+<kr>이 인수인계 문서는 김치앤칩스가 앰버린과 엔지니어링식스를 위해 작성했습니다. 콘솔 컴퓨터(Mac 또는 Windows PC)의 단일 운영 프로그램인 **NCT Console**로 전시를 운영하고 관리하는 방법을 설명합니다.</kr>
 
 This is **version 2**. It describes the state on 23 September 2026 (KST): NCT Console 0.1.0, source commit c955d9f.
 <kr>이 문서는 **2판**입니다. 2026년 9월 23일(한국 시간) 기준입니다: NCT Console 0.1.0, 소스 커밋 c955d9f.</kr>
@@ -22,37 +22,14 @@ Version 1 ({{v1-root}}) is unchanged. It describes the older separate apps, whic
 **The Extended reference** ({{page:XP}}) is in English only. It is for engineers and AI agents. It holds every detail left out of the Handbook: versions, pins, protocols, file paths and sources.
 <kr>**확장 참조**({{page:XP}})는 영어로만 작성되었습니다. 기술자와 AI 에이전트를 위한 문서입니다. 핸드북에서 뺀 모든 세부 정보(버전, 핀, 프로토콜, 파일 경로, 출처)를 담습니다.</kr>
 
-## Who reads what | 누가 무엇을 읽나
+Hardware claims carry an evidence level such as **Bench-verified** or **Simulation-verified**. The levels are explained in {{page:X01}}.
+<kr>하드웨어 관련 내용에는 **Bench-verified**, **Simulation-verified** 같은 근거 등급을 표시합니다. 등급 설명은 {{page:X01}}에 있습니다.</kr>
 
-| Reader · 독자 | Read · 읽을 페이지 |
-|---|---|
-| Everyone · 모두 | {{page:H1}} |
-| Floor operators · 현장 운영자 | {{page:H2}}, {{page:H4}} (your zone · 담당 존), {{page:H5}} |
-| Cube desk · 큐브 담당 | {{page:H3}}, {{page:H5}} |
-| Engineering Six · 엔지니어링식스 | {{page:H1}}, then the Extended reference · 이후 확장 참조 {{page:XP}} |
-| Amberin (project management · 프로젝트 관리) | {{page:H6}}, then open items · 이후 남은 항목 {{page:X13}} |
-
-## Evidence levels | 근거 등급
-
-Every hardware claim carries one of these levels.
-<kr>모든 하드웨어 관련 내용에는 아래 등급 중 하나를 표시합니다.</kr>
-
-| Level · 등급 | Meaning · 의미 |
-|---|---|
-| **Code-checked** · 코드 확인 | In the code; not run on hardware for this document · 코드에 구현됨, 이 문서를 위해 실물로 실행하지 않음 |
-| **Simulation-verified** · 시뮬레이션 확인 | Passed the console's tests or simulated boards · 콘솔 테스트나 시뮬레이션 보드로 확인 |
-| **Bench-verified** · 벤치 확인 | Run on a named real board at the bench · 이름을 밝힌 실제 보드로 벤치에서 실행 |
-| **Field-reported** · 현장 보고 | Reported working on site by a named person · 이름이 밝혀진 사람이 현장에서 동작을 보고 |
-| **To confirm** · 확인 필요 | Needs a site check or a client decision · 현장 확인 또는 클라이언트 결정 필요 |
-
-The console screenshots are simulated: simulated boards and example data. Yellow outlines mark what to look at. Numbers and versions in them are examples, not site settings.
-<kr>콘솔 스크린샷은 시뮬레이션 보드와 예시 데이터로 만든 화면입니다. 노란 테두리는 확인할 부분입니다. 화면의 번호와 버전은 예시이며 현장 설정값이 아닙니다.</kr>
+In the screenshots, yellow outlines mark what to look at. Numbers and versions in them are examples, not site settings.
+<kr>스크린샷의 노란 테두리는 확인할 부분입니다. 화면의 번호와 버전은 예시이며 현장 설정값이 아닙니다.</kr>
 
 This handover is not a hardware acceptance certificate. It does not move cube assembly, testing, maintenance or running the exhibition into Kimchi and Chips' scope.
 <kr>이 문서는 하드웨어 검수 증명서가 아닙니다. 큐브 조립, 테스트, 유지보수, 전시 운영을 김치앤칩스의 업무 범위로 옮기지 않습니다.</kr>
-
-> [!WARNING] **Korean text:** the Korean in this version is a machine draft, written alongside the English. A native speaker must review it before the handover meeting.
-> **한국어 안내:** 이 판의 한국어는 영어와 함께 작성한 기계 초안입니다. 인수인계 회의 전에 원어민 검토가 필요합니다.
 
 ## Pages | 페이지 목록
 

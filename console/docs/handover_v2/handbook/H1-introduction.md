@@ -1,8 +1,5 @@
 <span color="red">*This document was written by Kimchi and Chips*</span>
 
-> [!INFO] **Who:** everyone · **When:** before your first shift, or when you need the big picture · **You need:** nothing
-> **누가:** 모두 · **언제:** 첫 근무 전, 또는 전체 구조를 알아야 할 때 · **준비물:** 없음
-
 This page explains what a visitor does, which board does what, and how the NCT Console fits in.
 <kr>이 페이지는 관람객이 하는 일, 각 보드의 역할, NCT Console의 위치를 설명합니다.</kr>
 
@@ -45,31 +42,44 @@ flowchart LR
 More detail: {{page:H4}}
 <kr>자세한 내용: {{page:H4}}</kr>
 
-## The system map | 시스템 구성도
+## The wireless and communication map | 무선·통신 구성도
 
 ```mermaid
 flowchart TD
   CU["Cube<br/>큐브"]:::dev
   ZB["Zone boards<br/>존 보드"]:::dev
   PC["Pool central controller<br/>풀 중앙 컨트롤러"]:::dev
-  PB["Preshow bridge → TouchDesigner<br/>프리쇼 브리지 → 터치디자이너"]:::dev
+  FL["23 frame lights<br/>프레임 조명 23개"]:::dev
+  PB["Preshow bridge<br/>프리쇼 브리지"]:::dev
+  MED["Media system<br/>미디어 시스템"]:::dev
   MC["Mainshow controller<br/>메인쇼 컨트롤러"]:::dev
   WS["Workstation<br/>워크스테이션"]:::dev
-  NC["NCT Console (Mac)<br/>NCT 콘솔"]:::op
+  NC["NCT Console computer<br/>NCT 콘솔 컴퓨터"]:::op
   WEB["Web inventory<br/>웹 인벤토리"]:::data
-  CU -->|"tag · 태그"| ZB
-  ZB -->|"colour · 색"| CU
-  ZB -->|"pool radios · 풀 라디오"| PC
-  ZB -->|"preshow · 프리쇼"| PB
-  MC -->|"show start · 쇼 시작"| CU
-  NC -->|"USB"| WS
-  WS -->|"radio · 무선"| CU
-  WS -->|"radio · 무선"| ZB
-  NC <-->|"Sync · 동기화"| WEB
+  CU -->|"NFC tag · 태그"| ZB
+  ZB -->|"ESP-NOW · 무선"| CU
+  ZB -->|"ESP-NOW · 무선"| PC
+  ZB -->|"ESP-NOW · 무선"| PB
+  PC -->|"wired · 배선"| FL
+  PB -->|"USB serial · USB"| MED
+  MED -->|"wired cue · 배선"| MC
+  MC -->|"ESP-NOW · 무선"| CU
+  WS <-->|"ESP-NOW · 무선"| CU
+  WS <-->|"ESP-NOW · 무선"| ZB
+  NC <-->|"USB"| WS
+  NC <-->|"internet · 인터넷"| WEB
   classDef op fill:#fff4d6,stroke:#b58900
   classDef dev fill:#e6f0ff,stroke:#2b6cb0
   classDef data fill:#e8f7ee,stroke:#2f855a
 ```
+
+| Link · 연결 | Used for · 용도 |
+|---|---|
+| **NFC** | Cube tag → zone board reader; the tag needs no battery · 큐브 태그 → 존 보드 리더. 태그는 배터리 불필요 |
+| **ESP-NOW** · 무선 | The exhibition's own radio, channel 2: cube colours, pool and preshow events, show start and the show clock (once a second), Workstation traffic · 전시 전용 무선(채널 2): 큐브 색, 풀·프리쇼 이벤트, 쇼 시작과 쇼 타임코드(1초마다), 워크스테이션 통신 |
+| **USB** | Console computer ↔ Workstation; any board for identifying or flashing; preshow bridge → TouchDesigner (serial) · 콘솔 컴퓨터 ↔ 워크스테이션, 식별·플래시할 보드, 프리쇼 브리지 → TouchDesigner(시리얼) |
+| **Internet** · 인터넷 | Sync and publishing (HTTPS) only · 동기화와 게시(HTTPS)에만 사용 |
+| **Wired** · 배선 | Pool central → frame lights (PCA9685 → relays); media server cue → Mainshow controller trigger input (closed to GND through an interface fitted on site) · 풀 중앙 → 프레임 조명(PCA9685 → 릴레이), 미디어 서버 큐 → 메인쇼 컨트롤러 트리거 입력(현장 인터페이스로 GND 연결) |
 
 | Board · 보드 | What it does · 하는 일 |
 |---|---|
@@ -77,27 +87,44 @@ flowchart TD
 | **Pool central controller** · 풀 중앙 컨트롤러 | Lights the 23 portrait frames that the six pool radios ask for · 풀 라디오 6대가 요청한 초상화 프레임 23개를 켬 |
 | **Preshow bridge** · 프리쇼 브리지 | Passes preshow events to TouchDesigner by USB · 프리쇼 이벤트를 USB로 TouchDesigner에 전달 |
 | **Mainshow controller** · 메인쇼 컨트롤러 | Takes the media server's cue and starts the main show on every ready cube · 미디어 서버 큐를 받아 준비된 모든 큐브에서 메인쇼 시작 |
-| **Workstation** · 워크스테이션 | The small radio board on the Mac's USB. It reads tags for registration and reaches cubes and zone boards over the air · Mac USB에 꽂는 작은 무선 보드. 등록용 태그를 읽고 큐브·존 보드와 무선으로 통신 |
+| **Workstation** · 워크스테이션 | The small radio board on the console computer's USB. It reads tags for registration and reaches cubes and zone boards over the air · 콘솔 컴퓨터 USB에 꽂는 작은 무선 보드. 등록용 태그를 읽고 큐브·존 보드와 무선으로 통신 |
 
-Boards talk over the exhibition's own radio link. It needs no Wi-Fi router. The internet is used only to **sync** the inventory and to publish zone databases and the main show.
-<kr>보드들은 전시 전용 무선으로 통신합니다. Wi-Fi 공유기가 필요 없습니다. 인터넷은 인벤토리 **동기화**와 존 데이터베이스·메인쇼 게시에만 씁니다.</kr>
+Boards talk over **ESP-NOW**, the exhibition's own radio on channel 2. It needs no router and no Wi-Fi network. The internet is used only to **sync** the inventory and to publish zone databases and the main show.
+<kr>보드들은 채널 2의 전시 전용 무선인 **ESP-NOW**로 통신합니다. 공유기나 Wi-Fi 네트워크가 필요 없습니다. 인터넷은 인벤토리 **동기화**와 존 데이터베이스·메인쇼 게시에만 씁니다.</kr>
 
-> [!WARNING] Not every board is a cube. Never write cube firmware to a zone board, the Workstation or a controller. The console refuses this by role; do not work around it.
-> 모든 보드가 큐브는 아닙니다. 존 보드, 워크스테이션, 컨트롤러에 큐브 펌웨어를 쓰지 마십시오. 콘솔은 역할에 따라 이를 거부합니다. 우회하지 마십시오.
+### What the console refuses to flash | 콘솔이 플래시를 거부하는 경우
+
+Not every board is a cube. The console checks a board's role before it writes firmware. (Code-checked)
+<kr>모든 보드가 큐브는 아닙니다. 콘솔은 펌웨어를 쓰기 전에 보드의 역할을 확인합니다. (Code-checked)</kr>
+
+| Writing · 쓰는 것 | Refused · 거부 대상 | Override · 우회 |
+|---|---|---|
+| Cube firmware · 큐브 펌웨어 | Any board whose role is not cube or unknown: "That board is a ‹role›; the cube flasher refuses it" · 역할이 큐브·미확인이 아닌 모든 보드 | None · 없음 |
+| Zone firmware · 존 펌웨어 | A board the inventory lists as a cube or an excluded device, or one running Workstation or controller firmware: "REFUSED: ‹label›. Force flashing a cube unregisters it." · 인벤토리에 큐브나 제외 장치로 올라 있는 보드, 워크스테이션·컨트롤러 펌웨어가 든 보드 | **Force flash** (hold to confirm). It overwrites the board; a cube loses its LED firmware and is unregistered · **Force flash**(길게 눌러 확인). 보드를 덮어씀. 큐브는 LED 펌웨어를 잃고 등록이 해제됨 |
+| Workstation / Mainshow controller firmware · 워크스테이션·메인쇼 컨트롤러 펌웨어 | Known cubes, known zone boards and the installed pairing station. The board written is recorded as excluded from cube service · 알려진 큐브, 알려진 존 보드, 설치된 등록 스테이션. 쓴 보드는 큐브 서비스에서 제외로 기록됨 | None · 없음 |
+
+To move a board into or out of cube service, change its **Role** in the cube panel (**auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**). The selector is locked while a station operation runs.
+<kr>보드를 큐브 서비스에 넣거나 빼려면 큐브 패널의 **Role**을 바꿉니다(**auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**). 스테이션 작업 중에는 선택할 수 없습니다.</kr>
 
 More detail: {{page:X02}}
 <kr>자세한 내용: {{page:X02}}</kr>
 
 ## The console at a glance | 콘솔 한눈에 보기
 
-The NCT Console is one window on the Mac. It replaces ten separate operator apps. Plug a board in by USB: the console identifies it without restarting it and lists it by role.
-<kr>NCT Console은 Mac의 하나의 창입니다. 열 개의 개별 운영 앱을 대체합니다. 보드를 USB로 꽂으면 콘솔이 재시작 없이 식별하고 역할별로 표시합니다.</kr>
+The NCT Console is one window on the console computer, a Mac or Windows PC. It replaces ten separate operator apps. Plug a board in by USB: the console identifies it without restarting it and lists it by role.
+<kr>NCT Console은 콘솔 컴퓨터(Mac 또는 Windows PC)의 하나의 창입니다. 열 개의 개별 운영 앱을 대체합니다. 보드를 USB로 꽂으면 콘솔이 재시작 없이 식별하고 역할별로 표시합니다.</kr>
 
 {{shot:C-1}}
 The console: device rail (left), the selected device's panel (centre), Attention panel (right), Log dock (bottom) / 콘솔: 장치 레일(왼쪽), 선택한 장치의 패널(가운데), Attention 패널(오른쪽), Log 도크(아래)
 
 The **Attention panel** shows **suggestion cards**. Each card says what the console noticed and what to check. A card never blocks your work.
 <kr>**Attention 패널**에는 **제안 카드**가 표시됩니다. 각 카드는 콘솔이 알아챈 내용과 확인할 점을 알려 줍니다. 카드는 작업을 막지 않습니다.</kr>
+
+Above Attention, the **Automatic updates** panel shows what the console is bringing up to date by itself: firmware builds, boards plugged in by USB, and zone databases and the main show over the air. **✓ Everything up to date** means nothing is waiting. (Simulation-verified)
+<kr>Attention 위의 **Automatic updates** 패널은 콘솔이 스스로 최신으로 맞추는 것을 보여 줍니다: 펌웨어 빌드, USB로 꽂은 보드, 무선으로 보내는 존 데이터베이스와 메인쇼. **✓ Everything up to date**는 기다리는 것이 없다는 뜻입니다. (Simulation-verified)</kr>
+
+Otherwise each board or build has a row: port, current → target version, and a state pill (for example **upgrading**, **waiting**, **failed**, **by hand**). **Pause** / **Resume** in the header stops or restarts everything. **Skip** leaves one board alone until it is replugged; **Retry** tries a failed one again.
+<kr>그 밖의 경우 보드나 빌드마다 한 줄이 표시됩니다: 포트, 현재 → 목표 버전, 상태 표시(예: **upgrading**, **waiting**, **failed**, **by hand**). 머리글의 **Pause** / **Resume**은 전체를 멈추거나 다시 시작합니다. **Skip**은 다시 꽂을 때까지 그 보드를 건드리지 않고, **Retry**는 실패한 보드를 다시 시도합니다.</kr>
 
 Every result shows its **result status**: Sent → Delivered → Acknowledged → Verified, or Failed. Only Acknowledged and Verified count as success. Delivered only means the radio got it there.
 <kr>모든 결과에는 **결과 상태**가 표시됩니다: Sent → Delivered → Acknowledged → Verified, 또는 Failed. Acknowledged와 Verified만 성공입니다. Delivered는 무선으로 도착했다는 뜻일 뿐입니다.</kr>
@@ -118,11 +145,11 @@ Use these names; the screen and every page use them too.
 
 | Name | 이름 | Meaning · 뜻 |
 |---|---|---|
-| **NCT Console** | NCT 콘솔 | The one operator program on the Mac · Mac의 단일 운영 프로그램 |
+| **NCT Console** | NCT 콘솔 | The one operator program on the console computer (Mac or Windows PC) · 콘솔 컴퓨터(Mac 또는 Windows PC)의 단일 운영 프로그램 |
 | **Cube** | 큐브 | The glowing object a visitor carries · 관람객이 들고 다니는 빛나는 물체 |
 | **Cube number** | 큐브 번호 | The number on the cube's label · 큐브 라벨의 번호 |
 | **Tag** | 태그 | The NFC tag inside a cube · 큐브 안의 NFC 태그 |
-| **Workstation** | 워크스테이션 | The radio board on the Mac's USB; older kinds: pairing station, General Radio · Mac USB의 무선 보드. 이전 종류: 등록 스테이션, General Radio |
+| **Workstation** | 워크스테이션 | The radio board on the console computer's USB; older kinds: pairing station, General Radio · 콘솔 컴퓨터 USB의 무선 보드. 이전 종류: 등록 스테이션, General Radio |
 | **Zone board** | 존 보드 | A tag reader board in a zone · 존의 태그 리더 보드 |
 | **Zone database** | 존 데이터베이스 | The tag → cube-number list on every zone board · 모든 존 보드에 저장된 태그 → 큐브 번호 목록 |
 | **Inventory** | 인벤토리 | The console's list of every cube · 콘솔의 전체 큐브 목록 |

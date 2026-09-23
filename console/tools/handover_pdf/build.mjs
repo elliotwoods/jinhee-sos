@@ -413,7 +413,7 @@ function buildHtml(ctx, pagesIn, pages = {}) {
         <div><div class="cl">Baseline</div><div class="cv">${esc(ctx.baselineDate)}</div><div class="ck">문서 기준일 2026년 9월 23일</div></div>
         <div><div class="cl">Version</div><div class="cv">Version 2 · NCT Console ${esc(ctx.consoleVersion)}</div><div class="ck">${esc(ctx.commitLine)}</div></div>
       </div>
-      <div class="cover-note"><span>This document was written by Kimchi and Chips. Printed ${esc(ctx.built)} from the handover v2 drafts: the handbook, then the extended reference (English) as an appendix. Korean text is machine-drafted and must be reviewed by a native speaker.</span><span>한국어는 기계 초안이며 원어민 검토가 필요합니다.</span></div>
+      <div class="cover-note"><span>This document was written by Kimchi and Chips. Printed ${esc(ctx.built)} from the handover v2 drafts: the handbook, then the extended reference (English) as an appendix.</span></div>
     </div>
   </section>`;
   sections.push({ id: 'cover', html: cover });
@@ -468,7 +468,7 @@ function buildHtml(ctx, pagesIn, pages = {}) {
     Documentation baseline ${esc(ctx.baselineDate)}; NCT Console ${esc(ctx.consoleVersion)}, ${esc(ctx.commitLine)}.</p>
     <p class="colo-kr">운영·기술 인수인계 v2 — NCT 콘솔. 김치앤칩스가 앰버린 / 엔지니어링식스를 위해 작성했습니다.</p>
     <p class="colo-small">Printed edition of the Notion handover v2 pages, built ${esc(ctx.built)} by <code>console/tools/handover_pdf</code> from
-    <code>console/docs/handover_v2/handbook</code> and <code>extended</code>. Screenshots are simulated console captures (<code>console/docs/shots</code>). Set in Inter, Noto Sans KR and JetBrains Mono.</p>
+    <code>console/docs/handover_v2/handbook</code> and <code>extended</code>. Screenshots are console captures with example data (<code>console/docs/shots</code>). Set in Inter, Noto Sans KR and JetBrains Mono.</p>
   </div></section>` });
 
   const cssString = (t) => '"' + t.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';

@@ -276,7 +276,7 @@ Run folder `flashing_station/data/runs/<attempt-id>/`: frozen segment copies, `u
 
 - Source: `console/flashflow.py`, `console/web/panels/FlashSection.js`, `console/intake.py`, `console/sounds.py`.
 - USB only: nothing on this page uses the radio. Intake (`intake.py::tick`) flashes a candidate port only after the console's probe has finished with it, and only if its role is `cube` or `unknown`/none, it is not **Protected**, and the inventory does not presume it is a zone, Workstation or Mainshow controller. Everything else is recorded `skipped · not a cube`. A silent board (`unknown`) is therefore taken: keep only cubes in reach.
-- The Attention card **Cube #n runs v1.4.1-USB.2; the local build is v1.7.0-USB.1** is information, not an instruction to flash. A v1.4.1 cube plays the original show and works with every zone and controller; it cannot receive a newly published show.
+- The Attention card **Cube #n runs v1.4.1-USB.2; the local build is v1.7.0-USB.1** is information, not an instruction to flash. A v1.4.1 cube plays the original show and works with every zone and controller; it cannot receive a newly published show. With the automatic USB upgrade on (default, below) such a cube is upgraded anyway when it is plugged in while Register and Flash are off.
 - Switch **Flash cubes as they are plugged in** (`flash.enable`). Not saved: **off at every launch**. Off text: "Off: plugging in a cube does nothing here. It is off every time the console starts." On text: "Every cube on USB, now or plugged in later, gets the firmware (skipped if it already has this build) and the published show, once per plug-in." Hazard: "Writes firmware and NVS on every cube plugged in while it is on."
 - Switching on refuses when the cube build has an error. It resets the session's attempted-port list and starts a session for the "needs attention" rule.
 - Chips: **Firmware v…** or **Firmware build not ready** (banner **The cube firmware build is not ready**) · **Show vN** or **No published show**.
@@ -311,6 +311,18 @@ Sounds (Settings › Behaviour › "Audio cues for USB cube flashing", setting `
 | success (rising four-note chord) | `success`, or firmware skipped with the show written; a boot check that passed |
 | tick (single) | Firmware skipped and nothing written |
 | failure (falling three notes) | Anything else, including `boot_unconfirmed` and a failed boot check |
+
+### Automatic cube upgrade (Settings › Automatic updates)
+
+- Setting `auto_firmware_usb`, default **on** (full text in {{page:X11}}). Source `console/autoupgrade.py`; shown in the **Automatic updates** panel at the top of the right sidebar.
+- Condition: the cube's verified `?` answer reports an `FW:` different from `core.VERSION` (v1.7.0-USB.1). An unverified cube (no matching `Cube MAC:` / `FW:` / READY) and a MAC whose role is `excluded` are left alone. A cube whose FW matches is not listed.
+- What runs: the Flash-page pipeline (`jobs/cube.flash_job`, not manual): firmware written and verified, boot checked, NVS registration kept, then the published main show brought up to date in NVS (as on the Flash page). Job title "Flash cube firmware ‹version› and show v‹n› on ‹port›".
+- Only while Register (`auto_register`) and the Flash page (**Flash cubes as they are plugged in**, and its intake) are off: otherwise the row reads "Waiting: Register or Flash is on". Those pages do their own flashing.
+- Also held back while the console is busy or a hardware job runs, for 20 s after the cube was identified ("Starts in N s"), and for 60 s after the operator sent a command naming it ("Waiting: in use (a command was sent to it in the last minute)").
+- One automatic job at a time. Each cube is tried once per plug-in and target version; a failure shows **Retry** (or replug). **Skip** holds until the cube is unplugged. **Pause** lasts until the console restarts.
+- The advisor card **Cube #n runs ‹fw›; the local build is ‹fw›** then says: "It will be upgraded automatically once Register and Flash are off (Settings › Automatic updates); or flash it now (NVS registration preserved; boot is re-checked)."
+- Cubes heard over the air with older firmware (reported through the show registry in the last day) are counted in the panel line "{n} heard over the air in the last day with older firmware: plug in over USB to upgrade". Firmware never changes over the air.
+- The cube build itself is rebuilt automatically when its source changes (`auto_build`, {{page:X11}}); a cube waits in **needs build** until the build is current.
 
 ### Single cube from its panel
 
@@ -437,6 +449,7 @@ flowchart TD
 - `SHOW_LIVE` rate: the old chapter 05 and AGENTS.md said about 20 Hz (AGENTS.md since corrected). The code sends about every 60 ms (uitext says "about 16 times a second"). This page uses the code value.
 - The old chapter 05 says Workstations, zone boards and controllers are "never taken" by the Flash page. The code skips boards identified (or presumed by the inventory) as such, but takes a board that answers nothing (role `unknown`). The flasher still refuses protected and excluded MACs. **Code-checked**.
 - `cube.recover_receipts` has no button. **To confirm** whether one is wanted.
+- Automatic cube upgrade (`auto_firmware_usb`, commit `6b26cdf`): **Simulation-verified** only (`console/tests/test_autoupgrade.py`, including `test_cube_waits_while_register_is_on`). No cube has been upgraded automatically on hardware. Because it is on by default, any v1.4.1-USB.2 cube plugged into the console Mac with Register and Flash off is upgraded to v1.7.0-USB.1 and given the published show; switch it off or **Skip** if a cube must stay on v1.4.1.
 - The rest of the fleet (v1.4.1-USB.2) cannot receive a published show. Moving it means one USB pass with the Flash page. Partial rollout is safe. **To confirm** with the client whether and when to move the fleet.
 
 ## Sources
@@ -444,6 +457,7 @@ flowchart TD
 - `console/regflow.py`, `console/web/panels/RegisterSection.js`, `console/web/lib/register.js`
 - `console/flashflow.py`, `console/web/panels/FlashSection.js`, `console/intake.py`, `console/sounds.py`
 - `console/jobs/cube.py`, `console/commands_extra.py` (`cube.recover_receipts`)
+- `console/autoupgrade.py` (`plan`, `blocked`, `start_flash`), `console/tests/test_autoupgrade.py`, commit `6b26cdf`
 - `console/hub.py` (`identified`, stop-before-pin, `shutdown`, settings defaults), `console/probe.py`, `console/state.py` (`capabilities`)
 - `console/advisor.py` (`reg.*`, `station.nfc_down`, `zone.local_differs`, `cube.*`, `flash.*`, `build.stale`), `console/uitext.py` (STATUS, ACTIONS)
 - `console/web/panels/CubePanel.js`, `WorkstationPanel.js`, `others.js` (Automatic intake), `sections.js` (Settings)

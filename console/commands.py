@@ -623,6 +623,14 @@ def dongle_flash(hub, device, firmware='workstation'):
     return _job(dongle_jobs.flash_job(hub, hub.device_by_id(device), firmware))
 
 
+
+@command('dongle.flash_force', 'destructive')
+def dongle_flash_force(hub, device, firmware='workstation'):
+    """As dongle.flash, overriding the inventory protection (a zone, cube, controller or station is overwritten)."""
+    if firmware not in ('workstation', 'mainshow'):
+        raise ValueError('firmware must be workstation or mainshow')
+    return _job(dongle_jobs.flash_job(hub, hub.device_by_id(device), firmware, force=True))
+
 @command('pool.flash_firmware', 'hardware')
 def pool_flash_firmware(hub, device, database_only=False):
     return _job(pool_jobs.flash_job(hub, hub.device_by_id(device), database_only=bool(database_only)))

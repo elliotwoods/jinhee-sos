@@ -22,8 +22,11 @@ flowchart LR
   classDef data fill:#e8f7ee,stroke:#2f855a
 ```
 
-Most days you click nothing. **Settings › Automatic updates** is on by default: the Workstation updates every out-of-date zone board in radio range, and a zone board plugged in by USB gets the database only (its firmware stays the same). A board marked **Newer / differs** is never overwritten: click **Sync** on its red card. (Simulation-verified; not yet run against the installed zone boards.)
-<kr>대부분은 아무것도 누르지 않습니다. **Settings › Automatic updates**는 기본으로 켜져 있습니다. 워크스테이션이 무선 범위 안의 뒤처진 존 보드를 모두 업데이트하고, USB로 꽂은 존 보드에는 데이터베이스만 씁니다(펌웨어는 그대로). **Newer / differs**로 표시된 보드는 덮어쓰지 않습니다. 빨간 카드의 **Sync**를 누릅니다. (Simulation-verified. 설치된 존 보드에서는 아직 실행하지 않았습니다.)</kr>
+Most days you click nothing. **Settings › Automatic updates** is on by default: every connected Workstation updates the out-of-date zone boards its own radio hears, one radio at a time, and a zone board plugged in by USB gets the database too. A board marked **Newer / differs** is never overwritten: click **Sync** on its red card. (Simulation-verified; not yet run against the installed zone boards.)
+<kr>대부분은 아무것도 누르지 않습니다. **Settings › Automatic updates**는 기본으로 켜져 있습니다. 연결된 워크스테이션마다 자기 무선이 듣는 뒤처진 존 보드를 한 번에 무선 하나씩 업데이트하고, USB로 꽂은 존 보드에도 데이터베이스를 씁니다. **Newer / differs**로 표시된 보드는 덮어쓰지 않습니다. 빨간 카드의 **Sync**를 누릅니다. (Simulation-verified. 설치된 존 보드에서는 아직 실행하지 않았습니다.)</kr>
+
+A configured zone board plugged in by USB with older firmware is also upgraded by itself, keeping its identity (zone, point, name and settings). Pool radios are never upgraded automatically: they and the pool central controller are a matched set, upgraded together by hand. Watch the **Automatic updates** panel (top right). (Simulation-verified)
+<kr>USB로 꽂은, 설정이 끝난 존 보드의 펌웨어가 오래되었으면 식별 정보(존, 포인트, 이름, 설정)를 유지한 채 스스로 업그레이드됩니다. 풀 라디오는 자동으로 업그레이드하지 않습니다. 풀 라디오와 풀 중앙 컨트롤러는 한 세트이므로 함께 수동으로 업그레이드합니다. **Automatic updates** 패널(오른쪽 위)을 봅니다. (Simulation-verified)</kr>
 
 Do it by hand after a big registration session, for a deliberate check, or when the switches are off:
 <kr>많은 큐브를 등록한 뒤, 의도적으로 점검할 때, 또는 스위치가 꺼져 있을 때는 직접 합니다.</kr>
@@ -35,7 +38,7 @@ Do it by hand after a big registration session, for a deliberate check, or when 
 Zone relay: each zone with its database version and signal / Zone relay: 존별 데이터베이스 버전과 신호
 
 3. Click **Update all out-of-date zones (n)** and stay near the boards. A board is done when its row says **Current**. For one board: click its name, then **Update database over the air**. <kr>**Update all out-of-date zones (n)**을 누르고 보드 가까이에 있습니다. 행이 **Current**가 되면 끝난 것입니다. 보드 하나만: 이름을 누른 뒤 **Update database over the air**.</kr>
-4. For boards far from the Mac, carry the Mac and the Workstation through the space with **auto-update all (walk the space)** ticked (a failed board is retried after 30 s). Write down any board still out of date. <kr>Mac에서 먼 보드는 **auto-update all (walk the space)**를 켠 채 Mac과 워크스테이션을 들고 걷습니다(실패한 보드는 30초 뒤 재시도). 뒤처진 채 남은 보드를 기록합니다.</kr>
+4. For boards far from the console computer, carry the computer and the Workstation through the space with **auto-update all (walk the space)** ticked (a failed board is retried after 30 s). Write down any board still out of date. <kr>콘솔 컴퓨터에서 먼 보드는 **auto-update all (walk the space)**를 켠 채 컴퓨터와 워크스테이션을 들고 걷습니다(실패한 보드는 30초 뒤 재시도). 뒤처진 채 남은 보드를 기록합니다.</kr>
 
 > [!WARNING] "delivered" in the **Log** is not success; only **Current** is. If the USB cable drops, the run stops: read the Zone relay table again before you assume anything.
 > **Log**의 "delivered"는 성공이 아닙니다. **Current**만 성공입니다. USB 케이블이 빠지면 실행이 멈춥니다. 무엇이든 가정하기 전에 Zone relay 표를 다시 읽습니다.

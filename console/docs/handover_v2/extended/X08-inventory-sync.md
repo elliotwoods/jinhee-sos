@@ -164,7 +164,7 @@ Zone states (`zone_registry.classify`):
 | **Newer / differs** (`ahead`) | higher version, or same version with other content (legacy per-computer counter) | **Sync** on the red card; never force an older version. Only a new publication fixes it: the next publish is numbered above it |
 | **Nothing published** (`unpublished`) | no publication | **Sync & publish** |
 
-Zone relay UI (Workstation panel, rail group **Stations** › **Zone relay**): **Query zones**, **auto-refresh (3 s)**, **Show out of range**, **Update all out-of-date zones (n)** (one-click hardware button, tooltip), **auto-update all (walk the space)** (= Settings switch "Zone databases over the air"; on a second relay reads "· another relay is walking"), **Stop**. Columns: name, type, point, firmware, database version, state, signal. Per-board page (card "Over the air"): **Update database over the air**, **Set RX gain**, **Identify (10 s)**, **Request tap log**, **Reboot** (misses tags for a few seconds). Log success line: "Database v… confirmed on n zone(s)".
+Zone relay UI (Workstation panel, rail group **Stations** › **Zone relay**): **Query zones**, **auto-refresh (3 s)**, **Show out of range**, **Update all out-of-date zones (n)** (one-click hardware button, tooltip), **auto-update all (walk the space)** (= Settings switch "Zone databases over the air"; the suffix "· another relay is walking" is still in the code, but since every relay-capable link walks it only shows on a link that does not relay), **Stop**. Columns: name, type, point, firmware, database version, state, signal. Per-board page (card "Over the air"): **Update database over the air**, **Set RX gain**, **Identify (10 s)**, **Request tap log**, **Reboot** (misses tags for a few seconds). Log success line: "Database v… confirmed on n zone(s)".
 
 Attention cards: "Local cube mappings differ from the published zone database" → **Sync & publish**; "The inventory synced but the zone database was not published" → **Sync again**; "The web has a newer zone database v…" → **Sync (pulls the database)**; "Zone … holds v…, above this computer's v…" (red); "Zone … did not confirm database v…" (retry closer, or USB: {{page:X09}}).
 
@@ -179,19 +179,23 @@ RX gain vs signal:
 - All preshow readers were reported set to 48 dB. Higher gain helps a weak tag but can add noise; position still matters. Neither number proves the visitor effect.
 - API note: `zones.set_rx_gain` takes argument `db` (not `rx_gain`); snapshot rows carry `rssi` but `bars`/`signal` are null (the glyph is computed in the page).
 
-Which radio walks: `hub.relay_session()` = the primary link (`station_session()`: first connected link with a reader, else first connected) if it relays zones, else the first relay-capable Workstation; `hub.apply_auto_modes()` switches every other relay's walk-around off.
+Which radio walks (from commit `6b26cdf`): every relay-capable Workstation link. `hub.apply_auto_modes()` (every 1 s) switches walk-around on for each `WorkstationSession` with `relay_capable` while `auto_zone_db_radio` is on, and off otherwise. Each registry walks only its own candidates (`ZoneRegistry.walk_candidates`): zones behind the publication, in range, not backing off, and heard by **this** radio in the last 20 s (`IN_RANGE`), because the zone store is shared between radios. `hub.zone_walk_allowed(session)` lets a radio start a walk only while no other radio on this computer is publishing, so two radios never broadcast chunks over each other. A zone only a second Workstation can reach is therefore still updated. The old rule (only the primary link walked, `hub.relay_session()`) is gone; `relay_session()` still picks the link for manual relay commands.
+
+A walk that cannot publish ("Cached zone database is inconsistent; pull it again from the web") does not fail the tick: it logs "Auto update all could not start: ‹error›" once per distinct error, shows the error as the registry message, and backs every candidate off for 30 s (`WALK_BACKOFF`).
+
+Main show relay (`console/showedit.py::choose_relay`): the relay is kept while a publication or request is in flight. Otherwise, with cubes behind and several show relays, the console uses the relay whose radio heard most of the out-of-date cubes in the last 20 s. With nothing to send, the relays take turns querying, 10 s each (`RELAY_TURN`); the new relay queries at once, so every radio learns which cubes it reaches.
 
 Relay firmware capabilities (`zones/dbmanager/dongle.py`): **workstation-1.0.0** (current), **nct-pairing-1.8-zones** (installed pairing station), **general-radio-1.x**: signal + RX gain. nct-pairing 1.7: signal, no RX gain. 1.6: neither. Card "Relay firmware … is older than …" offers **Write the Workstation firmware**, never for the protected station 3C:0F:02:AD:83:24.
 
 ### Automatic updates
 
-Settings › Automatic updates. All five on by default; persisted in metadata `console_settings`. Saved settings from before a key existed load that key as on (defaults in `console/hub.py`, then the saved keys).
+Settings › Automatic updates. All on by default (the five database switches below, plus `auto_build` and `auto_firmware_usb` for firmware, {{page:X11}}); persisted in metadata `console_settings`. Saved settings from before a key existed load that key as on (defaults in `console/hub.py`, then the saved keys).
 
 | Switch (label) | Key | Behaviour |
 |---|---|---|
-| Zone databases over the air | `auto_zone_db_radio` | Walk-around on the preferred relay only; newly plugged relays pick it up within a second |
+| Zone databases over the air | `auto_zone_db_radio` | Full label: "Zone databases over the air: every zone relay walks the zone database to the out-of-date zones its radio hears, one radio at a time". Walk-around on every relay-capable link, each for the zones its own radio heard in the last 20 s, one publishing at a time (`hub.zone_walk_allowed`); newly plugged relays pick it up within a second |
 | Zone databases over USB | `auto_zone_db_usb` | `Intake.database_step()`: database-only update (`jobs/zone.update_db_job`) for a configured zone board on USB that is behind; once per board and publication; independent of Auto-flash zones |
-| Main show over the air | `auto_show` | Show registry walk-around (Show editor › Auto update); never mid-show ({{page:X03}}) |
+| Main show over the air | `auto_show` | Show registry walk-around (Show editor › Auto update) through the relay that heard the out-of-date cubes; idle relays take 10 s query turns; never mid-show ({{page:X03}}) |
 | Pull a newer zone database and show from the web | `auto_pull` | Needs the password. Pulls a newer zone database when a status check reports one (each version once per run); newer show every 5 min (300 s) while a show relay is connected and `auto_show` is also on. Logs only a new pull ("Pulled show vN") or each distinct error once ("Automatic show pull: …"); "No show published on the web yet" and "already here" are silent |
 | Sync the inventory with the web by itself… | `auto_sync` | Full label: "Sync the inventory with the web by itself: local changes upload a few seconds later, web changes download, new cube mappings publish (needs the web password)". See below |
 
@@ -261,6 +265,7 @@ Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`):
 | A laptop running old sync code reverted cube unregistrations (#134, #138) twice; re-applied 23 Sept 01:05 (web revision 16). Every computer must run current code before syncing | Field-reported (Elliot's bench computer) |
 | Zone database update over the air never run on installed boards | Simulation-verified only |
 | Automatic updates never run against installed zone boards, the dongle or the web pull | Simulation-verified (`console/tests/test_auto_update.py`) |
+| Every relay walking, one publishing at a time, per-radio candidates, the inconsistent-cache back-off and the show relay choice (`6b26cdf`) never run with two real Workstations | Simulation-verified (`console/tests/test_auto_update.py`: `test_every_relay_walks_and_one_publishes_at_a_time`, `test_a_zone_is_walked_only_by_a_radio_that_heard_it`, `test_a_walk_that_cannot_publish_does_not_break_the_tick`) |
 | Automatic inventory sync (`auto_sync`) is uncommitted work on 23 Sept and has never run against the real web inventory | Simulation-verified (`console/tests/test_auto_update.py` AutoSyncTests) |
 | Every sync turns automatic numbering off (`auto_number=0`), so new cubes found by discovery or USB wait in **Needs number** and **Pair new cubes (auto)** skips them | Code-checked (`web_sync.py`, `inventory_sync.py`, `database.reserve`, `controller.choose`) |
 | Workstation firmware not flashed on any board | Code-checked; build only |
@@ -271,10 +276,10 @@ Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`):
 
 ## Sources
 
-- `pairing_station/database.py`, `inventory_sync.py` (`merge_records`, `_merge_device`, `_merge_role`, `reconcile`, `apply`, `validate`), `web_sync.py`, `sync_all.py`, `web_client.py`, `zone_publish.py`, `zone_registry.py`
+- `pairing_station/database.py`, `inventory_sync.py` (`merge_records`, `_merge_device`, `_merge_role`, `reconcile`, `apply`, `validate`), `web_sync.py`, `sync_all.py`, `web_client.py`, `zone_publish.py`, `zone_registry.py` (`walk_candidates`, `tick`, `WALK_BACKOFF`); `console/showedit.py` (`choose_relay`, `RELAY_TURN`)
 - `zones/tools/zonedb.py`, `zones/dbmanager/dongle.py`, `zones/firmware/libraries/NctZone/src/NctZoneProtocol.h`, `NctZoneLink.h`
 - `scripts/sync_inventory.py`, `scripts/web_sync.py`, `web/src/lib/records.ts`
-- `console/hub.py` (`station_session`, `relay_session`, `apply_auto_modes`, `auto_sync`, `watch_local_changes`, `auto_sync_finished`, `auto_error`), `console/jobs/sync.py` (`needs_sync`, `sync_job auto=`), `console/state.py` (`describe_auto`), `console/simdocs.py`, `console/web/components/Attention.js`, `console/web/panels/InventorySection.js`, `console/intake.py`, `console/advisor.py` (`sync.*`, `zone.*`, `dongle.old`, `tag.*`), `console/state.py`, `console/jobs/sync.py` (`check_job`), `console/jobs/dongle.py`, `console/commands.py`, `console/uitext.py`, `console/web/panels/WorkstationPanel.js`, `sections.js`, `others.js`, `console/web/lib/format.js`
+- `console/hub.py` (`station_session`, `relay_session`, `apply_auto_modes`, `zone_walk_allowed`, `auto_sync`, `watch_local_changes`, `auto_sync_finished`, `auto_error`), `console/jobs/sync.py` (`needs_sync`, `sync_job auto=`), `console/state.py` (`describe_auto`), `console/simdocs.py`, `console/web/components/Attention.js`, `console/web/panels/InventorySection.js`, `console/intake.py`, `console/advisor.py` (`sync.*`, `zone.*`, `dongle.old`, `tag.*`), `console/state.py`, `console/jobs/sync.py` (`check_job`), `console/jobs/dongle.py`, `console/commands.py`, `console/uitext.py`, `console/web/panels/WorkstationPanel.js`, `sections.js`, `others.js`, `console/web/lib/format.js`
 - `console/README.md` (Automatic updates), `docs/SETUP.md` §4, `console/TEST_REPORT_2026-09-23.md`
 - Old drafts `06-zone-databases.md`, `12-inventory-database-sync.md`
 

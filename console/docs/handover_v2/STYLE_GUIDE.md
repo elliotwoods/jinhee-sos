@@ -27,7 +27,7 @@ Handbook length rules:
 - No "Engineering detail" toggles and no Sources toggles. End a section with one line such as
   `More detail: {{page:X06}}` / `<kr>자세한 내용: {{page:X06}}</kr>`.
 - Tables only where they replace more text than they add.
-- Keep the purpose callout, the steps and the "What success looks like" table. Keep evidence levels short, for example
+- Keep the steps and the "What success looks like" table. No purpose callout on H0/H1 (user, 2026-09-23); H2–H6 pending the user's decision. Keep evidence levels short, for example
   "(Bench-verified)".
 
 **Extended reference** (`extended/X*.md`) is **English only** and dense. It is for engineers and AI agents, and it holds
@@ -99,15 +99,15 @@ label or in the old apps. The Glossary (chapter 02) holds this full table, with 
 
 | Canonical (EN) | Korean | Not / old names | Plain meaning |
 |---|---|---|---|
-| **NCT Console** (or "the console") | NCT 콘솔 | the app, pairing app, GUI | The one operator program on the Mac |
+| **NCT Console** (or "the console") | NCT 콘솔 | the app, pairing app, GUI | The one operator program on the console computer (Mac or Windows PC) |
 | **Cube** | 큐브 | device, LED cube, Neocore | The glowing object a visitor carries |
 | **Cube number** | 큐브 번호 | ID, cube_id, label number | The number on the cube's label |
 | **Tag** | 태그 | NFC UID, card, sticker | The NFC tag inside a cube that zone boards read |
-| **Workstation** | 워크스테이션 | General Radio, dongle, pairing station, station, relay | The small radio board plugged into the Mac by USB. It talks to cubes and zone boards over the air and has the tag reader for registration. The installed *pairing station* and the bench *General Radio* are older kinds of Workstation and still work |
+| **Workstation** | 워크스테이션 | General Radio, dongle, pairing station, station, relay | The small radio board plugged into the console computer by USB. It talks to cubes and zone boards over the air and has the tag reader for registration. The installed *pairing station* and the bench *General Radio* are older kinds of Workstation and still work |
 | **Zone board** | 존 보드 | plate, reader, reader board, zone | A tag reader board in a zone (Preshow, Desert, Pool, Reset). "Zone" alone means the area of the exhibition |
 | **Zone database** | 존 데이터베이스 | zone DB, zdb, mapping | The tag → cube-number list stored on every zone board |
 | **Inventory** | 인벤토리 | devices database, SQLite, records | The console's list of every cube (number, tag, role) |
-| **Web inventory** | 웹 인벤토리 | Vercel, web copy, blob | The shared online copy that keeps several Macs in step |
+| **Web inventory** | 웹 인벤토리 | Vercel, web copy, blob | The shared online copy that keeps several computers in step |
 | **Sync** | 동기화 | web sync, push/pull | Exchanging the inventory and published zone databases with the web inventory |
 | **Main show** | 메인쇼 | mainshow, show image | The finale animation every cube plays together |
 | **Mainshow controller** | 메인쇼 컨트롤러 | M5 show starter, show trigger | The board that starts the main show on every cube |
@@ -193,7 +193,7 @@ Chapters 12, 15 and 16 are reference pages: tables first, prose second.
 - List items: the EN text, then ` <kr>…</kr>` on the same item.
 - Callouts: the EN line, then the KR line, inside the same callout.
 - Mermaid labels: `"English<br/>한국어"`.
-- Korean is still machine-drafted. Keep the note on the root page that a native speaker must review it.
+- Korean is still machine-drafted, but per the user (2026-09-23) no reader-facing note says so, and screenshots are not described to readers as "simulated" (evidence levels still apply).
 
 ## Draft dialect (what the renderer and the PDF builder understand)
 

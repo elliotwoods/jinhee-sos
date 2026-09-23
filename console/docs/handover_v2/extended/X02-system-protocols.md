@@ -6,8 +6,8 @@
 
 The installation is a set of ESP32 boards (cubes, zone boards, a Workstation, the pool central controller, the preshow
 bridge and the Mainshow controller) that talk over ESP-NOW on channel 2, plus one operator program, the NCT Console
-0.1.0, on a Mac. This page records the working copy of 23 September 2026 (KST), source commit `c955d9f`, with the
-shared repository one commit ahead (`5996e10`, poolcentral-4.2.2). It holds the board and version inventory, the five
+0.1.0, on a Mac. This page records the repository of 23 September 2026 (KST): `main` at `6b26cdf`, which includes
+`5996e10` (poolcentral-4.2.2); the console and firmware state described is that of `c955d9f`. It holds the board and version inventory, the five
 radio protocols, the console architecture, zone storage, the pool output map, wiring, build and test commands, the
 loopback API, open release discrepancies, what changed from v1 and how evidence is graded.
 
@@ -16,8 +16,8 @@ loopback API, open release discrepancies, what changed from v1 and how evidence 
 ### Handover identity
 
 - Handover: version 2, Kimchi and Chips → Amberin / Engineering Six.
-- Describes: working copy of 23 September 2026 (KST), NCT Console `0.1.0` (`console/state.py` `CONSOLE_VERSION`), commit `c955d9f`.
-- Shared repository `origin/main`: one commit ahead, `5996e10` (hojun, 23 Sept 04:47 KST, "PoolCentral 4.2.2: re-measured frame map for three 8-channel relay modules").
+- Describes: repository of 23 September 2026 (KST), NCT Console `0.1.0` (`console/state.py` `CONSOLE_VERSION`), baseline commit `c955d9f`.
+- Repository `main` (pushed to GitHub): `6b26cdf` (Elliot Woods, 23 Sept 18:52 KST, handover restructure and automatic firmware updates), on top of `5996e10` (hojun, 23 Sept 04:47 KST, "PoolCentral 4.2.2: re-measured frame map for three 8-channel relay modules"). `PoolCentral.ino` reads `poolcentral-4.2.2`.
 - Kimchi and Chips on site from: Thursday 17 September 2026.
 - Version 1 ({{v1-root}}): unchanged; describes the ten separate Tk apps, which still work and remain a fallback.
 - Screenshots in the handbook: simulated (`console/app.py --simulate --scenario docs`); yellow outlines mark controls; numbers, versions and readings in them are examples, not site settings. 43 captures in `console/docs/shots/manifest.json` (git `c955d9f`, 23 Sept 04:59 KST).
@@ -107,7 +107,7 @@ reported version next to the local build.
 | Desert board | Tag → yellow, name panel | `zones/firmware/DesertZone` | desert-2.4.0 | Mixed desert-2.3.0 / 2.4.0 in range | Bench-verified (zone query) |
 | Pool radio | Tag + slider → blue, `PoolState` | `zones/firmware/PoolZone` | pool-3.2.0 | Not in range at the bench | Code-checked |
 | Reset plate | `SET_ZONE 0` | `zones/firmware/ResetZone` | reset-1.0.0 | Reset 1 (ex-Preshow 3 SuperMini `48:F6:EE:15:8F:20`); the 23 Sept registry lists two boards named "Reset 1" (zone DB v31, v32) | Code-checked |
-| Pool central controller | ORs six radios, drives 23 frames | `zones/firmware/PoolCentral` | poolcentral-4.2.0 (working copy); **4.2.2** on `origin/main` | 4.2.2 | Field-reported (Hojun, 23 Sept) |
+| Pool central controller | ORs six radios, drives 23 frames | `zones/firmware/PoolCentral` | **poolcentral-4.2.2** | 4.2.2 | Field-reported (Hojun, 23 Sept) |
 | Preshow bridge | `PreshowEvent` → `PRESHOW,n,ON/OFF` | `zones/firmware/PreshowBridge` | preshowbridge-1.0.0 | `AC:27:6E:83:21:C4` heard beaconing | Bench-verified (beacons only) |
 | Mainshow controller | `SET_ZONE 4`, `SHOW_START`, show clock | `zones/firmware/MainshowController` | mainshow-1.3.0 | #134 on mainshow-1.2.0; 1.3.0 tested on #138, then #138 reflashed | Bench-verified (serial logs only) |
 | Pool light test bridge | Emulates the six pool radios | `poolzone_test/` | — | Bench only | — |
@@ -137,7 +137,17 @@ reported version next to the local build.
 - The installed pairing station's USB identity is **Protected**: never probed or flashed.
 
 > [!WARNING]
-> Not every ESP32 is a cube. Never write cube firmware to a zone board, the Workstation, the pool central controller, the preshow bridge or the Mainshow controller. The console refuses these by role; do not work around it.
+> Not every ESP32 is a cube. Never write cube firmware to a zone board, the Workstation, the pool central controller, the preshow bridge or the Mainshow controller. The console refuses these by role; do not work around it. Force-flashing zone firmware onto a cube overwrites its LED firmware and unregisters it.
+
+Flash refusals (Code-checked):
+
+| Writer | Refuses | Message | Override |
+|---|---|---|---|
+| Cube firmware, `cube.flash_firmware` (`console/commands.py`) | Any device whose role is not `cube`, `unknown` or none | "That board is a ‹role›; the cube flasher refuses it" | None. The Flash page intake also skips non-cubes and **Protected** ports ({{page:X03}}) |
+| Zone firmware, `zone.flash` (`console/web/panels/ZonePanel.js`) | Detection kind `cube` (inventory row with a number or tag), `station` (installed pairing station `3C:0F:02:AD:83:24`, or role `excluded`) or `other` (flash image recognised as Workstation, General Radio, pool central, range test, preshow bridge or Mainshow controller) (`zones/flasher/zone_detect.py`) | "REFUSED: ‹label›. Force flashing a cube unregisters it." | **Force flash** (`zone.flash_force`, hold to confirm): "Overwrites whatever the board was. A cube loses its LED firmware and is unregistered." |
+| Workstation / Mainshow controller firmware, `dongle.flash` (`console/jobs/dongle.py`, `zones/dbmanager/dongle.py::refusal`) | Installed pairing station; known zone boards; inventory cubes not marked excluded. A recorded Mainshow controller is refused only for non-mainshow firmware, and the console clears that check for Workstation firmware (a Workstation supersedes the controller), so in the console it never refuses a controller | e.g. "‹MAC› is a cube #‹n› in the inventory; refusing to overwrite cube firmware" | None. On success the MAC is recorded `excluded` ("recorded as excluded from cube service") and marked as controller or not |
+
+Role changes: the cube panel's **Role** selector (`inventory.set_role`; **auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**) moves a board into or out of cube service. Refused while a station operation runs: "Finish or stop the current station operation before changing a role" (selector tooltip "Stop the active operation first").
 
 ### Which Workstation does which job
 
@@ -147,8 +157,10 @@ The console recognises a station by its `hello` capability fields (`has_reader`,
 | Job | Station used |
 |---|---|
 | Registration | First connected station with a reader |
-| Automatic zone database updates | That station if it relays zones, otherwise the first relay |
-| Show updates | Any station reporting `show:1` |
+| Automatic zone database updates | Every relay-capable station, each for the zones its own radio heard in the last 20 s; one publishes at a time (`hub.zone_walk_allowed`) ({{page:X08}}) |
+| Show updates | Any station reporting `show:1`; automatic updates use the relay that heard the out-of-date cubes, and idle relays take 10 s query turns |
+
+With Settings › Automatic updates › `auto_firmware_usb` on (default), a legacy pairing station (`nct-pairing-*`) or General Radio (`general-radio-*`) plugged into the console over USB is upgraded to **workstation-1.0.0** once idle, and an older `workstation-*` or Mainshow controller is upgraded too. The installed station 3C:0F:02:AD:83:24 is never touched. Simulation-verified only; detail {{page:X09}}, {{page:X11}}.
 
 | Station kind | Reader | Zone relay | Show / set_zone / pool / preshow |
 |---|---|---|---|
@@ -237,6 +249,7 @@ flowchart LR
 | `api.py`, `window.py`, `httpbridge.py` | Page API (`pull`, `call`, `confirm`, `get_copy`, `get_lines`); hosted in pywebview or, as fallback, the default browser over loopback |
 | `web/` | Vendored Preact and htm, no build step, no network. Colour tokens in `web/styles.css`; every command button carries `data-doc="<command>"` (used by the screenshot tool) |
 | `regflow.py`, `flashflow.py`, `intake.py`, `showedit.py` | Register page, Flash page, USB intake (off at launch), Show editor |
+| `autoupgrade.py` | Automatic firmware builds and USB upgrades (settings `auto_build`, `auto_firmware_usb`, both on by default). Ticked by the hub every 1 s on the owner thread; starts jobs only through the existing job modules (`jobs/build.py`, `jobs/zone.py`, `jobs/dongle.py`, `jobs/cube.py`); one automatic job at a time. Feeds the **Automatic updates** panel (`web/components/AutoUpdates.js`, top of the right sidebar) and the advisor ({{page:X11}}) |
 | `simulate.py`, `simdocs.py`, `docscenes.py` | Fake boards for `--simulate` and the documentation bench. A simulated console refuses every non-loopback web server (`client()` in `console/jobs/sync.py`, raises `SimulatedWeb`) |
 
 - Launch: `console/Launch.command` (Mac) or `console/Launch.bat` (Windows). While it runs it holds every old app's instance lock; old apps refuse to start on the same database and the console names the holder.
@@ -276,11 +289,11 @@ From `zones/firmware/*/partitions.csv` (use the maintained file, not this table,
 Inverse (4.2.2, output → frame, from the `PoolOutput.h` comment): 1→21, 2→3, 3→22, 4→8, 5→13, 6→6, 7→12, 8→18, 9→1,
 10→15, 11→20, 12→16, 13→5, 14→7, 15→23, 16→none, 17→17, 18→9, 19→4, 20→19, 21→11, 22→2, 23→10, 24→14.
 
-- `POOL_OUTPUT_FOR_MEMBER` in `zones/firmware/PoolCentral/PoolOutput.h`. The 4.2.0 row (23 outputs, measured 21 September) is what this working copy still holds.
+- `POOL_OUTPUT_FOR_MEMBER` in `zones/firmware/PoolCentral/PoolOutput.h`. The repository (`6b26cdf`) holds the 4.2.2 row. The 4.2.0 row (23 outputs, measured 21 September) is kept for history only.
 - Evidence: Field-reported (Hojun, 23 September): every slider 1–23 lights its own lamp; `OUT DUMP` dark, `i2c_errors=0`, `mismatches=0`. Detail: {{page:X06}}, `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md`.
 
 > [!WARNING]
-> Pull `origin/main` before building PoolCentral: this working copy holds the old 4.2.0 table. After any relay-board or loom change re-measure with `poolzone_test/tests/frame_map.py`; the table is a measurement, not a convention. Driver readback confirms PCA9685 registers only, not relay contacts, lamp supply or light.
+> Never build PoolCentral from a revision before `5996e10`: it holds the old 4.2.0 table. After any relay-board or loom change re-measure with `poolzone_test/tests/frame_map.py`; the table is a measurement, not a convention. Driver readback confirms PCA9685 registers only, not relay contacts, lamp supply or light.
 
 ### Wiring
 
@@ -334,6 +347,21 @@ tools (or **This computer › Firmware builds**); never hand-edit hashes. On Win
 | `pairing_station/.venv/bin/python console/app.py --simulate --scenario docs --browser` | Documentation bench, no hardware | — |
 | `pairing_station/.venv/bin/python console/tools/docshots.py --list` | Screenshot scenarios (without `--list`: recapture) | 43 captures |
 
+- Build speed (`pairing_station/hostos.py::arduino_build_args`, commit `6b26cdf`): every firmware build passes `--build-property tools.esptool_py.path=<venv>` so the ESP32 core uses the esptool in `pairing_station/.venv` when it reports exactly 5.3.1 (else the core's own tool). Cause of the old slowness: each build ran the core's bundled esptool three times, even with nothing to compile; it unpacks itself into a new temporary folder on every run and macOS scans that folder, about 10 s per run. Images are byte-identical.
+- Measured on the bench Mac with real builds (nothing uploaded), before → after:
+
+| Target | Cold | No change | One file edited |
+|---|---|---|---|
+| Cube | 67.9 → 27.4 s | 38.9 → 4.1 s | 43.8 → 7.9 s |
+| Workstation | 70.1 → 36.0 s | 36.9 → 4.0 s | 41.4 → 8.6 s |
+| DesertZone | 63.1 → 31.5 s | 34.1 → 4.0 s | 38.6 → 7.8 s |
+| PoolZone, new build ID | ~68 → 8.6 s | — | — |
+
+- PoolZone's build ID (`POOL_BUILD_ID`) now goes in through a generated `zones/build/PoolZone/pool_build_opt.h` (the core's `build.opt.path` hook, `zones/flasher/zone_build.py::build`), so a source change no longer wipes the whole build cache. The build fails if the binary lacks `h<source_hash>`.
+- arduino-cli 1.5.1 never uses its shared compiled-core cache when `--build-path` is given, so each target's first (cold) build still compiles the core once. Builds are not byte-reproducible (the core embeds the compile date and time).
+- PreshowZone and TagPlateZone manifests were stale on 23 September (sources changed 22 September after the last build); the console's automatic build rebuilds them.
+- Fixed in `6b26cdf`: the **Build** buttons for the Workstation and the Mainshow controller in This computer › Firmware builds sent `which` instead of the `firmware` argument that `build.dongle` takes (`console/web/panels/others.js`).
+- The console rebuilds out-of-date targets by itself (`auto_build`): cube, the five zone sketches, Workstation, Mainshow controller; one at a time; a failed build waits for a source change. Needs arduino-cli and core 3.3.11.
 - CI: the same suites on every push, `.github/workflows/tests.yml`, `macos-latest` and `windows-latest`.
 - Host simulations and simulated boards are not hardware evidence. Tk GUI tests need a desktop session.
 - `hardware_check.py`, `e2e_check.py`, `i2c_soak.py` drive real outputs: read first, run only in a maintenance window.
@@ -397,14 +425,15 @@ curl -sS --config pairing_station/data/api.curl http://127.0.0.1:8765/status
 ## Known issues / open questions
 
 > [!DANGER]
-> **PoolCentral flash speed.** The PoolCentral README specifies FQBN `esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashFreq=40`: the installed board boot-looped at 80 MHz, and bootloader and application must be flashed as a pair at the same setting. `scripts/build_all_firmware.py` (working copy and `origin/main`) builds PoolCentral with the generic `C3` profile; `C3_SLOW_FLASH` is defined but unused. Confirm which board is installed and reconcile the recipe before building or flashing PoolCentral from the aggregate build.
+> **PoolCentral flash speed.** The PoolCentral README specifies FQBN `esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashFreq=40`: the installed board boot-looped at 80 MHz, and bootloader and application must be flashed as a pair at the same setting. `scripts/build_all_firmware.py` (at `6b26cdf`) builds PoolCentral with the generic `C3` profile; `C3_SLOW_FLASH` is defined but unused. Confirm which board is installed and reconcile the recipe before building or flashing PoolCentral from the aggregate build.
 
 | Issue | Evidence |
 |---|---|
 | PoolCentral recipe mismatch (above); neither recipe tested for this document | Code-checked |
-| Working copy one commit behind: PoolCentral 4.2.0 and old frame table | Code-checked |
 | Zone database v38 published ~03:48 KST 23 Sept by a simulated console that reached the real web inventory with fake records; guard now in `console/jobs/sync.py` `client()`. Clean-up decision open ({{page:X13}}) | Bench-verified (web contents); clean-up To confirm |
 | Workstation firmware not on any board | Simulation-verified only |
+| Automatic builds and USB firmware upgrades (`console/autoupgrade.py`) never run on hardware; the first real Workstation flash (bench General Radio AC:27:6E:82:68:54) is pending | Simulation-verified (`console/tests/test_autoupgrade.py`, `test_auto_update.py`) |
+| Side effect of the `pool_build_opt.h` change: the pool calibration app (`zones/calibration/firmware.py`, which compares the board's reported build ID with the local PoolZone source hash) shows "Update available" for the pool radios until they are reflashed. Keep or change this: user decision pending | To confirm |
 | #134 on mainshow-1.2.0 (no show clock) | Bench-verified |
 | Tag plates and pool radios not inventoried at the bench | To confirm |
 | Desert boards mixed 2.3.0 / 2.4.0 | Bench-verified |
@@ -421,10 +450,11 @@ curl -sS --config pairing_station/data/api.curl http://127.0.0.1:8765/status
 - `zones/firmware/*/*.ino` (`FIRMWARE_VERSION`), `zones/firmware/*/partitions.csv`, `zones/README.md`
 - `zones/firmware/libraries/NctZone/src/NctZoneProtocol.h`, `NctCubeProtocol.h`, `NctPoolProtocol.h`, `NctPreshowProtocol.h`; `zones/firmware/libraries/NctShow/src/NctShowProtocol.h`
 - `zones/firmware/Workstation/README.md`, `zones/firmware/MainshowController/README.md`
-- `zones/firmware/PoolCentral/PoolOutput.h` (working copy and `origin/main` `5996e10`), `RELAY_BOARD_FINDINGS.md`
+- `zones/firmware/PoolCentral/PoolOutput.h` (4.2.2, at `6b26cdf`), `RELAY_BOARD_FINDINGS.md`
 - `scripts/build_all_firmware.py` (`--dry-run`), `docs/SETUP.md`, `AGENTS.md`, `.github/workflows/tests.yml`
+- `console/autoupgrade.py`, `pairing_station/hostos.py` (`arduino_build_args`, `ESPTOOL_VERSION`), `zones/flasher/zone_build.py` (`pool_build_opt.h`), `zones/calibration/firmware.py`, `console/web/panels/others.js` (Firmware builds)
 - Local inventory `flash_runs`, `show_cubes` and publication metadata (read-only, 23 September)
 - Engineering Six PDF, physical pages 6–9, 13–14, 23–27
-- Commits `c955d9f`, `5996e10`
+- Commits `c955d9f`, `5996e10`, `6b26cdf`
 
 <span color="red">*This document was written by Kimchi and Chips*</span>

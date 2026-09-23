@@ -28,7 +28,7 @@ The latest field reports say the exhibition interactions broadly work. This page
 | **Pool relay supply:** the fitted SRD-05VDC relays were found fed 12 V on JD-VCC (about 5.7× rated coil power). Target wiring: JD-VCC 5 V from a buck, VCC 3.3 V; confirm it was done. PCA9685 supply never measured | To confirm | Engineering Six, Hojun | Field-reported (`RELAY_BOARD_FINDINGS.md`) |
 | **Pool radio ids:** six pool radios report ids 1, 2, 3, 3, 4, 4. Give each a distinct id 1–6 ({{page:X06}}) | Open | Engineering Six | Field-reported (`RELAY_BOARD_FINDINGS.md`) |
 | **Reset plate names:** two boards both named "Reset 1" (v31, v32); rename and update ({{page:X09}}) | Open | Cube desk | Bench-verified (registry read) |
-| **Release package:** agree one source revision (`origin/main` is at `5996e10`, one commit past the documentation copy) and matching verified builds; reconcile the PoolCentral 40 MHz flash recipe with the aggregate build ({{page:X02}}, {{page:X06}}); record the installed firmware and zone database version per board | Open | Engineering team | Code-checked |
+| **Release package:** agree one source revision (`main` is at `6b26cdf`, which includes poolcentral-4.2.2; no release tagged) and matching verified builds; reconcile the PoolCentral 40 MHz flash recipe with the aggregate build ({{page:X02}}, {{page:X06}}); record the installed firmware and zone database version per board | Open | Engineering team | Code-checked |
 | **Automatic updates:** agree whether Settings › Automatic updates (all on by default) stay on during opening hours | Decision needed | Operator, Engineering Six | Simulation-verified |
 | **Windows:** if used, run the Windows bring-up checklist (`docs/SETUP.md` §2b) with real boards; WebView2 window and browser fallback untested on Windows hardware | Open if used | Receiving team | Code-checked, Simulation-verified (CI) |
 
@@ -115,7 +115,7 @@ Do the walk in a maintenance window with the receiving operator and a technical 
 ## Sources
 
 - `console/TEST_REPORT_2026-09-23.md`
-- `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (`origin/main`)
+- `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (commit `5996e10`)
 - `docs/SETUP.md` §2b and §10
 - Local inventory tables `flash_runs`, `show_cubes` and publication metadata (read-only, 23 Sept)
 - Field reports listed in {{page:X12}}

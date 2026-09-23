@@ -4,7 +4,7 @@
 
 ## Summary
 
-Six pool radios each read one slider (VL53L4CD distance sensor) while a visitor holds a cube on the radio's reader. Each radio sends the chosen member (frame 1–23) to the Pool central controller, which ORs all radios and switches the member's frame lamp through two PCA9685 drivers and three 8-channel relay modules (outputs 1–24, one unused). The radios and the central are a matched set. Pool central controller **poolcentral-4.2.2** (commit `5996e10`, Hojun) carries the frame map re-measured after the relay modules were replaced; this working copy of the repository still holds 4.2.0. Operator steps are in {{page:H4}} and {{page:H5}}.
+Six pool radios each read one slider (VL53L4CD distance sensor) while a visitor holds a cube on the radio's reader. Each radio sends the chosen member (frame 1–23) to the Pool central controller, which ORs all radios and switches the member's frame lamp through two PCA9685 drivers and three 8-channel relay modules (outputs 1–24, one unused). The radios and the central are a matched set. Pool central controller **poolcentral-4.2.2** (commit `5996e10`, Hojun) carries the frame map re-measured after the relay modules were replaced; the repository (`main` at `6b26cdf`) holds 4.2.2. Operator steps are in {{page:H4}} and {{page:H5}}.
 
 ## Facts
 
@@ -100,7 +100,7 @@ The radio latches the beacon's source as a pinned peer and unicasts back (MAC-la
 
 | Item | Value |
 |---|---|
-| Firmware | **poolcentral-4.2.2** installed (commit `5996e10` on `origin/main`, Hojun, 23 Sep 04:47 KST). Local working copy: poolcentral-4.2.0 (`bf869f8`). The board ran poolcentral-4.1.0, which is in no commit, before 4.2.2 (backup `poolzone_test/build/backup-central-d40592e7d0c4-poolcentral-4.1.0.bin`, gitignored, sha256 `8e95a6c0...a7083a`) |
+| Firmware | **poolcentral-4.2.2** installed and in the repository (commit `5996e10`, Hojun, 23 Sep 04:47 KST; `main` at `6b26cdf`). Superseded: poolcentral-4.2.0 (`bf869f8`). The board ran poolcentral-4.1.0, which is in no commit, before 4.2.2 (backup `poolzone_test/build/backup-central-d40592e7d0c4-poolcentral-4.1.0.bin`, gitignored, sha256 `8e95a6c0...a7083a`) |
 | Board | ESP32-C3, FQBN `esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashFreq=40` (not the SuperMini profile). Not a zone board: no PN532, no `zcfg`/`zdb`, not a zone-flasher target |
 | I²C | SDA GPIO8, SCL GPIO9, 100 kHz, 25 ms transaction timeout |
 | Drivers | PCA9685 `0x40` = outputs 1–16 (channels 0–15); `0x41` = outputs 17–24 (channels 0–7). Full-on / full-off only, no PWM. `validMode`: MODE1 & 0x7F = 0x20, MODE2 = 0x04 (OUTDRV totem pole) |
@@ -237,7 +237,7 @@ Pool radios and the Pool central controller are a matched set: reflash them toge
 - Relay power: whether `JD-VCC` now runs at 5 V from a buck (target wiring) or still at 12 V (coil overdrive 5.7×) is not recorded. **To confirm** ({{page:X13}}).
 - Radio id clash 1, 2, 3, 3, 4, 4 (ids 5, 6 unused) is unresolved. **Code-checked** (registry, central telemetry in the findings note).
 - Installed radios run pool-3.0.0, repository pool-3.2.0 (adds colour repeats, 48 dB gain, RX gain reporting). **Code-checked** (registry).
-- Central version: poolcentral-4.2.2 is on `origin/main` only; this working copy still has 4.2.0. Pull before any rebuild. **Code-checked.**
+- Central version: the repository (`6b26cdf`) holds poolcentral-4.2.2 and its frame map; do not rebuild from a revision before `5996e10` (4.2.0 table). **Code-checked.**
 - Central identity contradiction: the PoolCentral README's flash-speed note names the installed board `48:F6:EE:15:8E:E0` (also the "USB receiver" in `poolzone_test/E2E_RESULTS.md`), while the relay findings' boot log from the installation reads `MAC=D4:05:92:E7:D0:C4` (backup file named `d40592e7d0c4`). Which board is installed, and whether it needs 40 MHz, is **To confirm**.
 - Build recipe: `build_all_firmware.py` builds the central at the default flash speed although the README requires 40 MHz with bootloader and app flashed together. Settle before rebuilding ({{page:X10}}). **Code-checked.**
 - Contradiction with the old operator chapter: it said "the radio fills in the ticks between" control points. In the code the radio stores exactly the 23 values it is sent; ticks not sent keep their previous values. Linear interpolation exists only in the console's guided-recording tools (`recording.interpolate_ticks`) and in the legacy-endpoint seed. **Code-checked.**
@@ -248,7 +248,7 @@ Pool radios and the Pool central controller are a matched set: reflash them toge
 ## Sources
 
 - `zones/firmware/PoolZone/PoolZone.ino` (pool-3.2.0), `SliderCalibration.h`, `SliderTuning.h`, `OneEuroFilter.h`
-- `zones/firmware/PoolCentral/PoolCentral.ino`, `README.md`, `PoolArbiter.h`, `PoolOutput.h` (4.2.0 here; 4.2.2 and `RELAY_BOARD_FINDINGS.md` at `5996e10`)
+- `zones/firmware/PoolCentral/PoolCentral.ino`, `README.md`, `PoolArbiter.h`, `PoolOutput.h` (4.2.2), `RELAY_BOARD_FINDINGS.md` (commit `5996e10`)
 - `zones/firmware/libraries/NctZone/src/NctPoolProtocol.h`
 - `zones/firmware/Workstation/README.md` (Pool role)
 - `zones/calibration/recording.py`

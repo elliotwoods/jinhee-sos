@@ -10,14 +10,14 @@ from jobs.base import Job
 FIRMWARES = {'workstation': dongle.WORKSTATION, 'mainshow': dongle.MAINSHOW}
 
 
-def flash_job(hub, device, which='workstation', force_build=False):
+def flash_job(hub, device, which='workstation', force_build=False, force=False):
     firmware = FIRMWARES[which]
     known = dongle.known_boards(hub.db, hub.store.zones())
     if which == 'workstation':
         # A Workstation is a superset of the relay and the controller: converting either is allowed.
         known = dict(known, controllers=set())
     port = hub.port_dict(device)
-    if device.mac:
+    if device.mac and not force:
         reason = dongle.refusal(device.mac, known, firmware)
         if reason:
             raise ValueError(reason)
@@ -27,7 +27,7 @@ def flash_job(hub, device, which='workstation', force_build=False):
     hub.hold_port(device, job)
 
     def work(emit, cancel):
-        return dongle.flash(port, known, folder, emit, force_build=force_build, firmware=firmware)
+        return dongle.flash(port, known, folder, emit, force_build=force_build, firmware=firmware, force=force)
 
     def done(job):
         if job.state == 'done' and job.result:

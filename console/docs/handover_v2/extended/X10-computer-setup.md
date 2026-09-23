@@ -11,8 +11,8 @@ How to set up a Mac or Windows computer to run the NCT Console, what a full back
 ### Source and release
 
 - Repository: https://github.com/elliotwoods/jinhee-sos
-- 23 Sept commits: `de08bb0` (NCT Console, show system), `d43eaa4` (handover docs, Korean UI, Flash page), `c955d9f` (Workstation). The shared repository (`origin/main`) is one commit ahead: `5996e10` (PoolCentral 4.2.2, Hojun). The documentation copy's `PoolCentral.ino` still reads `poolcentral-4.2.0`.
-- This documentation task did not commit, push or tag a release.
+- 23 Sept commits: `de08bb0` (NCT Console, show system), `d43eaa4` (handover docs, Korean UI, Flash page), `c955d9f` (Workstation), `5996e10` (PoolCentral 4.2.2, Hojun), `6b26cdf` (handover restructure, automatic firmware updates). `main` is at `6b26cdf` and pushed to GitHub; `PoolCentral.ino` reads `poolcentral-4.2.2`.
+- No release has been tagged.
 
 > [!WARNING] Engineering Six should agree one source revision and its matching verified builds before deployment and record that commit id in the sign-off ({{page:X13}}).
 
@@ -195,7 +195,7 @@ flowchart TD
 |---|---|
 | Windows never run with hardware: WebView2 window, browser fallback, serial, esptool, audio untested | Code-checked, Simulation-verified (CI) |
 | Instance-lock refusal: old app refused while the console ran (23 Sept); reverse direction by test only | Bench-verified (one direction); Simulation-verified (`console/tests/test_locks.py`) |
-| Release revision not agreed; documentation copy one commit behind `origin/main` | Code-checked (`git log`, 23 Sept) |
+| Release revision not agreed or tagged (`main` at `6b26cdf`) | Code-checked (`git log`, 23 Sept) |
 | The console falls back to a browser with no error message (pywebview missing, or no WebView2 on Windows); seen on a new computer | Code-checked (`console/app.py::native_available`); user report of a new computer opening in a browser |
 | "SSL: certificate verify failed" during setup on another computer; the step (pip or `scripts/sync_inventory.py`) and the cause are not confirmed. Likely python.org macOS Python without `Install Certificates.command`, else TLS interception | User report only; To confirm |
 

@@ -294,3 +294,159 @@ locally).
   - `pairing_station/database.py`: `NEW_UNNUMBERED`.
 - **Goes to:** H3 (numbering note and the Register Number step), H5 (Needs number), X03 (number rules), X08 (web
   endpoint and blob), X11 (messages).
+
+## 2026-09-23 · from auto-firmware-usb-updates · automatic builds and USB firmware upgrades (COMMITTED in 6b26cdf; Simulation-verified only, no hardware flash yet)
+
+APPLY to the handbook (H1 console at a glance: the new panel; H2 daily: what the panel means, leave it on; H3: cubes
+are upgraded automatically only while Register and Flash are off; H4: zone boards upgrade over USB, and zone databases
+are walked by every relay; H5: failed / "by hand" / "no build tools" rows) and to the X pages (X02 architecture; X03
+cubes; X08 zone databases over the air; X09 zone boards; X11 settings, panel, cards).
+
+- `console/autoupgrade.py`; the hub ticks it every 1 s.
+- **New settings,** both ON by default (metadata `console_settings`):
+  - `auto_build`: "Build firmware when its source changes (cube, zone plates, Workstation, Mainshow controller), one build
+    at a time, before anything is flashed from it".
+  - `auto_firmware_usb`: "Upgrade the firmware of USB boards that are out of date: zone plates keep their identity, a
+    pairing station or General Radio becomes a Workstation, cubes only while Register and Flash are off. Never while you
+    are using the board; pool radios, the pool central and the preshow bridge are only listed".
+- **Builds:**
+  - Targets: the cube, the 5 zone sketches, the Workstation and the Mainshow controller.
+  - A target is out of date when its manifest check fails, or when the dongle build is stale or missing.
+  - One build at a time, starting with the targets a waiting board needs.
+  - A failed build is not retried until its source changes (keyed by source fingerprint).
+  - Builds need arduino-cli and core 3.3.11; without them the panel shows "no build tools".
+- **USB upgrades:**
+  - **Zone plate** (not a pool radio): upgraded when its FW differs from the sketch's `FIRMWARE_VERSION`. It goes
+    through the zone flasher pipeline and keeps the profile, point, name, params and RX gain from its own `?` report.
+    Needs the board configured and a published zone database.
+  - **Pairing station** (nct-pairing-*) or **General Radio** (general-radio-*): becomes workstation-1.0.0. An old
+    workstation-* or an old Mainshow controller is upgraded too.
+  - **Cube:** when its `?` FW differs from core.VERSION (v1.7.0-USB.1). Uses the Flash-page pipeline (firmware plus the
+    published show), and only while Register and the Flash page are off.
+  - **Listed only, never flashed:**
+    - pool radios ("Pool radios and the pool central are a matched set: upgrade them together by hand");
+    - PoolCentral and PreshowBridge (no flash pipeline);
+    - unconfigured zones.
+  - **Never touched:** the protected station 3C:0F:02:AD:83:24. Every existing flasher refusal still applies.
+- **What holds an upgrade back:**
+  - the console is busy (pairing mode, a zone publication, any hardware job, a session arming);
+  - Register is not idle, or Flash intake is armed;
+  - the board was identified less than 20 s ago ("Starts in N s");
+  - the operator named that board in a command in the last 60 s ("Waiting: in use…");
+  - the relay is publishing or sending the show;
+  - the show is running (for Workstation and Mainshow).
+- **Retries:** one automatic job at a time. Each board is tried once per plug-in and target version; after a failure,
+  use Retry or replug. Skip holds until a replug. Pause is runtime only.
+- **Panel "Automatic updates"** (`web/components/AutoUpdates.js`, at the top of the right sidebar above Attention):
+  - "✓ Everything up to date" when idle.
+  - Otherwise one row per build or USB board: port, current → target, a state pill, the reason, progress, and
+    **Skip** / **Retry**.
+  - State pills: queued, building, upgrading, waiting, checking, needs build, skipped, paused, off, failed, by hand,
+    no build tools.
+  - Header: **Pause** / **Resume**.
+  - Over-the-air lines:
+    - "Zone databases v{n}: X current · Y behind · Z updating";
+    - "Main show v{n}: …";
+    - "{n} more behind, out of range: updated when a radio next hears them";
+    - "{n} heard over the air in the last day with older firmware: plug in over USB to upgrade".
+  - "Recent (n)" history. Automatic jobs appear in Jobs only when they fail.
+- **Zone databases over the air:**
+  - Every relay-capable Workstation link now walks the zones its own radio heard in the last 20 s, one radio at a time
+    (`hub.zone_walk_allowed`).
+  - New settings text: "Zone databases over the air: every zone relay walks the zone database to the out-of-date zones
+    its radio hears, one radio at a time".
+  - A walk that cannot publish (an inconsistent cache) logs once and backs off.
+- **Main show over the air:** the console uses the relay that heard the out-of-date cubes. With nothing to send, relays
+  take turns querying every 10 s.
+- **Advisor:**
+  - `build.stale` is silent while the auto-builder handles a target. It still shows when the build failed, the tools
+    are missing, or `auto_build` is off.
+  - `dongle.old` and `cube.fw_different` say the board "will be upgraded automatically" when `auto_firmware_usb` is on.
+  - New card `zone.fw_behind` (info): zone firmware heard over the air is older than the build. Pool radios get the
+    matched-set wording.
+- **Build speed** (`hostos.arduino_build_args`):
+  - Builds now use the venv's esptool 5.3.1; images are byte-identical.
+  - A no-change zone rebuild went from 35 s to 4.5 s; a cold build from about 70 s to about 32 s.
+  - PoolZone's build ID now goes through a generated `pool_build_opt.h`.
+  - Side effect: the pool calibration app shows "Update available" for the pool radios until they are reflashed (the
+    user is deciding whether to keep that).
+- **Fixed:** the Workstation and Mainshow Build buttons in This computer › Firmware builds sent the wrong argument.
+- **Evidence:** simulation and unit tests only. The first real Workstation flash (bench General Radio
+  AC:27:6E:82:68:54) is still pending.
+
+**Applied to extended** (2026-09-23): X02 (Which Workstation does which job, Console architecture `autoupgrade.py` row, Build and validation commands: build speed, `pool_build_opt.h`, Build-button fix, auto builds; Known issues: pool calibration "Update available" To confirm, automatic upgrades Simulation-verified; Sources), X03 (Flash page note, new "Automatic cube upgrade" section, Known issues, Sources), X08 (Zone relay UI label, "Which radio walks" rewritten with back-off and show relay choice, Automatic updates table, Known issues, Sources), X09 (new "Automatic firmware upgrade over USB" section, Known issues, Sources), X11 (Settings rows `auto_zone_db_radio`, `auto_build`, `auto_firmware_usb`, new "Automatic updates panel" section, `build.stale`/`dongle.old`/`cube.fw_different` rows, new `zone.fw_behind` rows, Known issues, Sources). Checked against the code: `zones/flasher/zone_build.py` (not `zones/tools/`); the walk back-off is 30 s (`WALK_BACKOFF`).
+**Applied to handbook** (2026-09-23): H1 console at a glance (two paragraphs: the **Automatic updates** panel above Attention, **✓ Everything up to date**, rows with state pills, **Pause**/**Resume**, **Skip**/**Retry**); H2 (start checklist reads the panel, Automatic updates paragraph extended to builds and USB upgrades, pool radios / pool central / preshow bridge only listed **by hand**, WARNING: do not unplug a board showing **upgrading**); H3 C ("Automatic upgrade" paragraph: only while Register and Flash are off, **Starts in N s**, **Skip**); H4 A (every Workstation walks the zones its radio hears, one radio at a time; USB zone boards get firmware upgrades keeping identity, pool radios by hand); H5 new §11 "The Automatic updates panel" (pill table: waiting, needs build, failed, by hand, no build tools, paused/off) and a symptom-index row. Evidence kept: Simulation-verified.
+
+## 2026-09-23 · from jinhee-sos-20 · Windows handoff merge (f498c6a; simulation and unit tests on the Mac; Windows suites ran, no hardware checks of these features)
+
+1. **console/README.md ~l.108 "Firmware builds (auto_build)"** describes `hub.auto_build_step()` and a `build.stale`
+   card retry. That code was dropped in the merge. Now:
+   - automatic builds live in `console/autoupgrade.py` (`AutoUpgrade.tick`), with `auto_build` and `auto_firmware_usb`
+     both on by default;
+   - a failed build is remembered by source fingerprint and retried only after a source change or the operator's
+     **Retry** in its panel;
+   - one build at a time, and never while any hardware job runs (now checked directly).
+   - Goes to: README fix; X02/X11 check.
+2. **docs/SETUP.md §6**, the paragraph after `build_all_firmware.py --stale`, now reads:
+   - the pairing station, Workstation and Mainshow controller use `dongle.build_state`;
+   - other targets compare compiled sources (.ino/.h/.hpp/.c/.cpp/.S, ignoring build/ and the output folder) against
+     the four images (`<sketch>.ino.bin`, `.bootloader.bin`, `.partitions.bin`, `.merged.bin`);
+   - fix the label: the checkbox reads "Build firmware when its source changes (cube, zone plates, Workstation, Mainshow
+     controller), one build at a time, before anything is flashed from it", and it has a partner, `auto_firmware_usb`.
+   - Goes to: SETUP fix; X10.
+3. **Setup** (`scripts/setup.py`, commit 9261547):
+   - installs arduino-cli (winget on Windows, Homebrew on Mac), the ESP32 core and pinned libraries, then runs
+     `build_all_firmware.py --stale`; `--no-firmware` skips all of this;
+   - `hostos.arduino_cli()` also finds `%ProgramFiles%\Arduino CLI`;
+   - not hardware-tested end to end;
+   - the Setup.bat comment understates what it does (the sender will change it on request).
+   - Goes to: SETUP, X10, H? (no).
+4. **Workstation reader view** (`console/sessions/workstation.py`, `WorkstationPanel.js`):
+   - an **On the reader** card shows the tag on the reader: UID, owning cube (committed uid, then pending_uid), inventory
+     and last colour sent;
+   - a history of up to 20 recent tags with held time;
+   - buttons **Flash 2 s**, **SET_ZONE**, **Stop**, **Open cube page**, acting on the cube on the reader or on the
+     selected history row;
+   - observation only: no database writes and no `nfc_seen`;
+   - when idle the console sends `nfc_poll` at most once a second; colour sends now carry the MAC;
+   - evidence: simulation, plus hardware on the Windows bench only.
+   - Goes to: X11 (Workstation panel), X03 (not a scan), H5 maybe (identify a cube by its tag).
+5. **docshots.py** forces UTF-8 stdout (it crashed on a cp949 Windows console). Goes to: X10 or X02 build tools.
+6. **Simulator MACs in the real web inventory** (rev 20, from the 2026-09-22 leak): A4:CF:12:34:56:78/79/9A,
+   34:85:18:00:00:12 and 02:AA:BB:CC:DD:01/EE.
+   - Web pulls spread them to computers, and `scripts/sync_inventory.py` (run by setup.py) exports them to
+     `inventory/devices`.
+   - No console simulation path writes to Git (guard: `console/tests/test_sim_isolation.py`).
+   - Not cleaned up; the user decides.
+   - Goes to: X13 open item, X08 known issue.
+
+## 2026-09-23 · user feedback on the PDF, batch 1 (relayed by jinhee-sos-1c)
+
+**Applied** (2026-09-23):
+- H0: removed "Who reads what" and the evidence-level table (now a one-line pointer to X01, which already had the
+  table). Screenshot sentence no longer says "simulated". Korean machine-draft WARNING removed.
+- H1: removed the purpose callout.
+- PDF: dropped the machine-draft note from the title page and "simulated" from the colophon.
+- STYLE_GUIDE updated to match.
+
+Pending: whether to remove the purpose callouts on H2–H6 (jinhee-sos-1c is asking the user).
+Also pending from the README fix: SETUP §7 target table is stale (Pool central path/output, missing Workstation,
+Mainshow controller, Preshow bridge and Range test rows, pairing-only build example); `build_all_firmware.py` comment
+names `general_radio.py`.
+
+## 2026-09-23 · user feedback batch 2 · Applied
+
+- Handbook "Mac" wording: the console runs on a Mac or a Windows PC. H0, H1, H2, H4, H5 now say "the console computer" /
+  "this computer" / "a Mac or Windows PC" (KR 콘솔 컴퓨터 / 컴퓨터 / Mac 또는 Windows PC). Launcher lines keep
+  `Launch.command` (Mac) / `Launch.bat` (Windows). The Windows-untested caveat stays in X10 only (X10 already says
+  "never used with hardware"). STYLE_GUIDE canonical rows (NCT Console, Workstation, Web inventory) updated.
+- H1 "The system map" is now "The wireless and communication map": every edge labelled NFC / ESP-NOW / USB (serial) /
+  internet / wired; 10 nodes (media system node = TouchDesigner + media server cue); legend table EN+KR; the
+  paragraph names ESP-NOW on channel 2. PDF: map prints at 9.8 pt, H1 is 6 pages.
+- H1 "Not every board is a cube" WARNING moved to X02 (merged with the existing warning under "How the console presents
+  each role", plus a Code-checked refusal table and the Role selector). H1 now has a short "What the console refuses
+  to flash" table (cube / zone + **Force flash** / Workstation and controller firmware) and the **Role** selector line.
+- Code finding for the owner of X07: `console/jobs/dongle.py` clears the Mainshow-controller check when writing
+  Workstation firmware, and mainshow firmware is allowed on a controller, so the console never refuses a recorded
+  controller. X07 line "The dongle flasher refuses to turn a recorded controller back into a Workstation" is true only
+  of the old Zone Database Manager (`zones/dbmanager`), not the console. Not changed here.

@@ -148,6 +148,8 @@ ACTIONS = {
                         hazard='Writes the app partition and may rewrite the show in NVS.'),
     'dongle.flash': dict(label='Write Workstation / controller firmware', what='Turns a spare ESP32-C3 into a Workstation or the Mainshow controller.',
                          hazard='Replaces whatever firmware the board had; a full backup is taken the first time.', needs='A spare board on USB that is not a cube in use.'),
+    'dongle.flash_force': dict(label='Force write Workstation / controller firmware', what='Writes the Workstation or Mainshow controller firmware to a board the inventory protects (a zone, cube, controller or the station).',
+                               hazard='Overwrites whatever the board was: a zone leaves the show, a cube loses its LED firmware. A full backup is taken the first time. Hold to confirm.'),
     'pairing.register': dict(label='Register (scan a tag)', what='Flashes this cube red/blue and waits for a fresh NFC scan at the station, then sends it its number and tag.',
                              hazard='A scanned tag that belongs to another device is transferred to this cube.', needs='Station connected and its NFC reader ready.',
                              disabled='The station is not connected, its reader is not ready, or another operation is running.'),

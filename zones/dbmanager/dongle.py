@@ -242,13 +242,14 @@ def refusal(mac, known, firmware=PAIRING):
     return None
 
 
-def flash(port, known, folder, emit, force_build=False, firmware=PAIRING, backup='first'):
+def flash(port, known, folder, emit, force_build=False, firmware=PAIRING, backup='first', force=False):
     """Build if needed, identify, refuse cubes/zones, write `firmware` (the relay by default). Returns the board MAC.
 
     Runs on a worker thread (no SQLite here: `known` comes from known_boards()); the caller records
     the dongle's excluded role afterwards so the cube and zone flashers leave it alone.
     `backup`: 'first' reads the full flash once per board (the GUIs); 'always' reads it again into a
     timestamped file before this write (the command line, for a board being moved between roles).
+    `force`: the operator overrode refusal() (a zone, cube, controller or the station is overwritten).
     """
     runner = Runner(emit, folder / 'dongle.log')
     folder.mkdir(parents=True, exist_ok=True)
@@ -281,8 +282,10 @@ def flash(port, known, folder, emit, force_build=False, firmware=PAIRING, backup
             raise RuntimeError('ESP32-C3 bootloader did not report a MAC; nothing was written')
         mac = match[1].upper()
         reason = refusal(mac, known, firmware)
-        if reason:
+        if reason and not force:
             raise RuntimeError(reason + '; nothing was written')
+        if reason:
+            emit('stage', f'Override: {reason}')
         stem = mac.replace(':', '')
         image = BACKUPS / (f'{stem}.bin' if backup == 'first' else f'{stem}-{time.strftime("%Y%m%d-%H%M%S")}.bin')
         if backup == 'always' or not image.is_file():

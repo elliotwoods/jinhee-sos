@@ -28,7 +28,7 @@ WORKSTATION_FIRMWARE = dongle.WORKSTATION.version  # what "Write the Workstation
 RX_GAIN_FLOOR = 'desert-2.4.0 / tagplate-2.4.0 / pool-3.2.0 / preshow-3.3.0'
 LOCK_APPS = {'.lock': 'the Pairing station app', '.flasher.lock': 'the Cube USB flasher',
              '.zonedb.lock': 'the Zone Database Manager', '.mainshow.lock': 'the Mainshow controller app'}
-FLASH_COMMANDS = ('cube.flash_firmware', 'zone.flash', 'zone.flash_force', 'zone.update_db_usb', 'dongle.flash',
+FLASH_COMMANDS = ('cube.flash_firmware', 'zone.flash', 'zone.flash_force', 'zone.update_db_usb', 'dongle.flash', 'dongle.flash_force',
                   'pool.flash_firmware', 'pool.assign_radio_id', 'zone.detect')
 AIR_COMMANDS = ('zones.update', 'zones.update_all', 'zones.reboot', 'zones.set_rx_gain', 'zones.identify', 'zones.query',
                 'zones.request_log', 'zones.walkaround')

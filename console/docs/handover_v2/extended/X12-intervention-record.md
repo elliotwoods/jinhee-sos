@@ -66,6 +66,7 @@ What Kimchi and Chips changed, when, and on what evidence, from 17 to 23 Septemb
 | [d43eaa4](https://github.com/elliotwoods/jinhee-sos/commit/d43eaa4) | 23 Sept 04:19 | Elliot Woods | Handover docs, Korean UI text, guided Flash page |
 | [5996e10](https://github.com/elliotwoods/jinhee-sos/commit/5996e10) | 23 Sept 04:47 | hojun | PoolCentral 4.2.2 frame map for three 8-channel relay modules |
 | [c955d9f](https://github.com/elliotwoods/jinhee-sos/commit/c955d9f) | 23 Sept 04:58 | Elliot Woods | Workstation device (handover v2 baseline) |
+| [6b26cdf](https://github.com/elliotwoods/jinhee-sos/commit/6b26cdf) | 23 Sept 18:52 | Elliot Woods | Handover handbook and extended reference (restructure); automatic firmware updates |
 
 Other commits in the range (second-laptop merges and inventory syncs, 21 Sept 00:26–18:58: `1b81371`, `c69b961`, `cc17e7c`, `935fdf9`, `06cb05c`, `7c23a1e`, `4639deb`, `4d34859`) are housekeeping; `c54c67e` (17 Sept 18:06) is the initial commit.
 
@@ -84,7 +85,7 @@ Other commits in the range (second-laptop merges and inventory syncs, 21 Sept 00
 | Hojun, Korean report | 21–22 Sept | Eight replacement desert tag-module sets | Documentation request |
 | Elliot, Tuesday report | 22 Sept | Preshow and enclosed NFC work, USB batteries, main show 9 of 10 cubes | Documentation request |
 | "NFC unknown" and "cannot connect to the ESP32" cases | 22 Sept | {{page:X11}} | Documentation request; reporter not named |
-| Hojun, PoolCentral 4.2.2 | 23 Sept | Relay modules replaced, frame map re-measured and checked on site | Commit message and `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (`origin/main`) |
+| Hojun, PoolCentral 4.2.2 | 23 Sept | Relay modules replaced, frame map re-measured and checked on site | Commit message and `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (commit `5996e10`) |
 | Local inventory records | 23 Sept | Flash receipts, cube show reports, publication metadata | Read-only query of the bench computer's database |
 
 Exact work times in the field reports were not independently verified.
@@ -114,7 +115,7 @@ Exact work times in the field reports were not independently verified.
 
 - `git log --date=iso --all` (commit times +09:00), `git show 5996e10`
 - `console/TEST_REPORT_2026-09-23.md`, `console/docs/shots/manifest.json`
-- `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (on `origin/main`)
+- `zones/firmware/PoolCentral/RELAY_BOARD_FINDINGS.md` (commit `5996e10`)
 - Local inventory tables `flash_runs`, `show_cubes`, `metadata` (read-only)
 - The documentation requests that supplied the field reports
 - Old draft `16-intervention-record.md`

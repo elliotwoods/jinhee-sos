@@ -26,16 +26,60 @@ This page is the reference behind the daily routine and troubleshooting in {{pag
 | Behaviour › Open a live session automatically for every identified board | `auto_sessions` | on | |
 | Behaviour › Preview the selected cube with a 1 s flash (pairing station) | `preview_flash` | on | |
 | Behaviour › Audio cues for USB cube flashing (**Test sound**) | `audio` | on | Never plays in a simulation |
-| Automatic updates › **Zone databases over the air** | `auto_zone_db_radio` | on | One link walks the zone database: the link with an NFC reader if it relays, else the first relay-capable Workstation. Every other relay stops walking, so two radios never broadcast chunks over each other. Re-applied every 1 s |
+| Automatic updates › **Zone databases over the air** | `auto_zone_db_radio` | on | Full text: "Zone databases over the air: every zone relay walks the zone database to the out-of-date zones its radio hears, one radio at a time". Every relay-capable Workstation link walks the zones its own radio heard in the last 20 s; only one radio publishes at a time (`hub.zone_walk_allowed`). Re-applied every 1 s. Detail {{page:X08}} |
 | Automatic updates › **Zone databases over USB** | `auto_zone_db_usb` | on | Database-only update for any configured zone board on USB that is behind. Once per board and publication. Firmware and identity untouched. Independent of the armed intake |
 | Automatic updates › **Main show over the air** | `auto_show` | on | Cubes in range on an older show are updated through a Workstation (or General Radio 1.1.0+). Never mid-show. Cubes v1.5.0+ only |
 | Automatic updates › **Pull a newer zone database and show from the web** | `auto_pull` | on | Needs the web password. Zone pull: each web version is tried once per run. Show pull: every 300 s while a show relay is connected, and only if `auto_show` is also on. Logs only a new pull or each distinct error once; "No show published on the web yet" is silent |
 | Automatic updates › **Sync the inventory with the web by itself…** | `auto_sync` | on | Uploads 5 s after the last local change, syncs when the 60 s web check finds changes, at least 15 s apart; backs off 60 s doubling to 10 min after a failure; a rejected password is forgotten and automatic sync stops until sign-in. Same full sync as the button. Never in `--simulate`. Detail {{page:X08}} |
+| Automatic updates › **Build firmware when its source changes…** | `auto_build` | on | Full text: "Build firmware when its source changes (cube, zone plates, Workstation, Mainshow controller), one build at a time, before anything is flashed from it". Needs arduino-cli and ESP32 core 3.3.11. Never uploads. See **Automatic updates panel** below |
+| Automatic updates › **Upgrade the firmware of USB boards that are out of date…** | `auto_firmware_usb` | on | Full text: "Upgrade the firmware of USB boards that are out of date: zone plates keep their identity, a pairing station or General Radio becomes a Workstation, cubes only while Register and Flash are off. Never while you are using the board; pool radios, the pool central and the preshow bridge are only listed". See below |
 | Register › **Register cubes as they are plugged in** | `auto_register` | off | Saved |
 | Flash › **Flash cubes as they are plugged in** | not saved | off at every launch | {{page:X03}} |
 | This computer › Automatic intake › **Auto-flash zones** | not saved | off at every launch | Hazard: "Identified zone boards are updated in place; legacy sketches take the zone and point below. Cubes and stations are skipped." |
 
-Saved settings from before a key existed load it as on. The docs bench (`simdocs`) switches all five automatic updates off, so screenshots show them unticked. The automatic updates only touch zones and cubes that are behind. A zone that was off is updated soon after it answers again. They are safe to leave on during opening hours. Theme is per browser.
+Saved settings from before a key existed load it as on. The Settings card's note reads "Saved on this computer; on by default." The docs bench (`simdocs`) switches all seven automatic updates off, so screenshots show them unticked. The automatic updates only touch zones and cubes that are behind. A zone that was off is updated soon after it answers again. They are safe to leave on during opening hours. Theme is per browser.
+
+### Automatic updates panel (firmware builds and USB upgrades)
+
+Source: `console/autoupgrade.py` (ticked by the hub every 1 s), panel `console/web/components/AutoUpdates.js`. Location: the top of the right sidebar, above **Attention** and **Jobs** (`console/web/app.js`).
+
+- Header **Automatic updates**, with **Pause** / **Resume** and a summary: **Paused**, **Working** (an automatic job runs) or **Off** (both `auto_build` and `auto_firmware_usb` off).
+- Idle: "✓ Everything up to date". Below it only what still needs someone: "{n} more behind, out of range: updated when a radio next hears them" and the firmware-heard line.
+- Otherwise one row per build ("Build ‹target›", with its version) and per USB board (name, `port · current → target`), with a state pill, the reason, and a progress bar while it runs. Boards that are only listed ("by hand") collapse behind "{n} to upgrade by hand" until expanded or something runs.
+- State pills (state → pill): queued → **queued** · building → **building** · running → **upgrading** · waiting and settling → **waiting** · checking → **checking** · build → **needs build** · skipped → **skipped** · paused → **paused** · off → **off** · failed → **failed** · report → **by hand** · no_tools → **no build tools**.
+- Buttons: **Skip** on a board that is waiting, settling, needs build, paused or off; **Retry** on a skipped or failed board and on a failed build.
+- Over-the-air lines: **Zone databases** "v{n}: X current · Y behind · Z updating" (plus the walking relay's message while it publishes, and "Over-the-air zone updates are off (Settings › Automatic updates)" when `auto_zone_db_radio` is off and zones are behind); **Main show** "v{n}: X current · Y behind" (plus the registry message while publishing); "{n} more behind, out of range: updated when a radio next hears them"; "{n} heard over the air in the last day with older firmware: plug in over USB to upgrade" (expandable list: label · current → build). "Behind" counts only boards in range now.
+- "Recent (n)": the last 8 automatic jobs (✓ or ✕, label, version, port, error text).
+- **Jobs** list: automatic builds and upgrades appear there only when they fail (`origin: 'auto'`, `console/web/components/Attention.js`).
+
+Build targets: the cube, the five zone sketches (PreshowZone, TagPlateZone, DesertZone, PoolZone, ResetZone), the Workstation and the Mainshow controller. A target is out of date when its manifest check fails, or when the Workstation or Mainshow build is stale or missing. One build at a time; targets a waiting board needs go first. A failed build is not retried until its source changes (source fingerprint), or until **Retry**. Without arduino-cli and core 3.3.11 the row says **no build tools**: "Install Arduino IDE or arduino-cli with ESP32 core 3.3.11 to build firmware".
+
+USB upgrades (`auto_firmware_usb`):
+
+| Board | Condition | What runs | Notes |
+|---|---|---|---|
+| Zone plate (not a pool radio) | Its `?` firmware differs from the sketch's `FIRMWARE_VERSION` | Zone flasher pipeline, keeping profile, point, name, params and RX gain from its own report | Needs a configured board ("Unconfigured board: give it an identity on the Flash page once") and a published zone database ("No zone database is published yet") ({{page:X09}}) |
+| Pairing station (`nct-pairing-*`) or General Radio (`general-radio-*`) | Always | Becomes workstation-1.0.0 | An older `workstation-*` is upgraded too. The protected station 3C:0F:02:AD:83:24 is never planned |
+| Mainshow controller | Older than mainshow-1.3.0 | Mainshow controller firmware | Held while the show runs |
+| Cube | Verified `?` FW differs from `core.VERSION` (v1.7.0-USB.1) | Flash-page pipeline: firmware plus the published show | Only while Register and the Flash page are off; excluded MACs skipped ({{page:X03}}) |
+| Pool radio | Older than the build | Listed only (**by hand**) | "Pool radios and the pool central are a matched set: upgrade them together by hand" |
+| Pool central, preshow bridge | Older than the sketch | Listed only | "No automatic flash for this board; upload it from its sketch by hand" (pool central adds the matched-set note) |
+
+Hold-back rules, checked in this order (reason text in the row):
+
+1. Skipped: "Skipped until it is plugged in again". Failed: the failure text. Already tried at this version: **checking** "Checking the new firmware", then **failed** "Still reports ‹fw› after the automatic upgrade; use Retry or flash it by hand".
+2. `auto_firmware_usb` off: "Automatic firmware upgrades are off (Settings › Automatic updates)". Paused: "Paused".
+3. Build not ready: "Waiting for the firmware build".
+4. Cube while Register (`auto_register`) or Flash is on: "Waiting: Register or Flash is on". Flash-page intake armed: "Waiting: the Flash page intake is armed".
+5. Any hardware job running: "Waiting for the running job". Console busy (pairing mode, publication, session arming, Register not idle): "Waiting: the console is busy".
+6. Board not yet identified: "Waiting for the board to be identified". Identified less than 20 s ago: "Starts in N s".
+7. The operator named the board in a command in the last 60 s: "Waiting: in use (a command was sent to it in the last minute)".
+8. It is relaying: "Waiting: it is relaying right now"; sending the show: "Waiting: it is sending the show"; Workstation or Mainshow controller while the show runs: "Waiting: the show is running".
+
+- One automatic job at a time; the others read "Queued behind another automatic update".
+- Each board is tried once per plug-in and target version. After a failure: **Retry** or replug. **Skip** holds until the board is unplugged. **Pause** is runtime only: a restart resumes.
+- Log lines (source `auto`): "Automatic build: ‹label› ‹version› (‹reason›)", "Automatic firmware upgrade: ‹label› on ‹port›: ‹current› → ‹version›", "Automatic firmware updates paused/resumed".
+- Every existing flasher refusal still applies.
 
 ### Temporary controls (leases)
 
@@ -138,6 +182,9 @@ Tier 0: environment
 | **Cube firmware build needs attention: ‹error›** | warn | Manifest, binaries and source disagree; the cube flasher refuses | **Rebuild the cube firmware** |
 | **‹Sketch› firmware: ‹error›** | info | A zone build is stale | **Build ‹Sketch›** |
 | **Workstation firmware build is missing/stale** · **Mainshow controller firmware build is missing/stale** | info | Flashing a dongle or controller builds it first (minutes) | **Build the Workstation firmware** / **Build the Mainshow controller firmware** |
+
+The three `build.stale` cards stay silent while the automatic builder has the target queued or building. They still show when that build failed or the tools are missing (the text then ends "Automatic build: ‹reason›"), or when `auto_build` is off.
+
 | **Another app is open on this database: ‹apps›** | info | An old app's instance lock is held by another process. Web downloads wait | none |
 | **‹port› is owned by another application** | warn | The port refused to open. Likely holder named (old app, or a tool without a lock: zone flasher, calibration, bench test, serial monitor) | **Probe the port again** |
 
@@ -149,7 +196,7 @@ Tier 1: links
 | **Station link is not connected** | bad | Session open, no hello. The console re-handshakes every 3 s and never replays an interrupted operation. If silent: unplug and replug; look for a reboot loop | **Reconnect the station** |
 | **Station is on channel N; cubes and zones use 2** | bad | Channel is compiled in | **Write the Workstation firmware** (not offered for `3C:0F:02:AD:83:24`) |
 | **Station firmware has no zone support** | warn | No zone relay (needs workstation-1.0.0 or nct-pairing-1.8-zones). Zone updates, queries, RX gain over the air unavailable | **Write the Workstation firmware**, or **Open the zones guide** for the protected station |
-| **Relay firmware ‹fw› is older than ‹current›** | warn | An older nct-pairing (1.7 adds signal strength, 1.8 RX gain) or an older workstation build. A legacy General Radio is left alone | **Write the Workstation firmware** (not for the protected station) |
+| **Relay firmware ‹fw› is older than ‹current›** | warn | An older nct-pairing (1.7 adds signal strength, 1.8 RX gain) or an older workstation build. A legacy General Radio is left alone by this card. With `auto_firmware_usb` on and the board on USB (not protected), the next step reads "It will be upgraded automatically to workstation-1.0.0 over USB once the console is idle (Settings › Automatic updates)." | **Write the Workstation firmware** (not for the protected station; no button while the automatic upgrade applies) |
 | **Station NFC reader is not responding** | bad | Registration disabled; discovery, saved-mapping transmission and LED tests still work. I²C status 2 = address NACK (wiring, I²C mode switch, power). Status 5 = bus timeout (a line held low: power-cycle reader and station together). Check SDA 4 / SCL 3, I²C mode, VCC from station 5 V. Not raised for a reader-less dongle | **Try a bus clear and re-init** (only when no operation runs), **Read the reader status**, **Open the I²C notes** |
 | **‹label›: its radio driver stopped answering** | bad | The Workstation reported `fatal`: three sends in a row got no result from the Wi-Fi driver. It refuses every radio operation until power-cycled; its leases release what it held. Unplug and replug (a watchdog reset is not enough) | **Probe again after replugging** |
 | **Pool lamp N is held but no pool central is heard** | warn | Broadcasting a member with no PoolCentral beacon latched. Central off, out of range or other channel | **Release the lamp** |
@@ -179,6 +226,8 @@ Tier 2: database
 | **Zone "‹zone›" is receiving vN** | info | Chunks staged k/n. A partial update is discarded after 60 s without chunks | none |
 | **N known zone(s) out of range hold an older database** | info | None answered in the last 20 s | **Turn on Auto-update all** |
 | **Zone "‹zone›" did not confirm database vN** | warn | Announce and chunks sent (radio "delivered" only); the zone never reported vN with the published CRC | zone update buttons |
+| **N zone(s) run firmware older than the build** (`zone.fw_behind`, key `plates`) | info | Zones heard over the air in the last day (not on USB) with firmware older than the build; up to six named as "‹name› (‹fw› → ‹build›)". Firmware is only upgraded over USB; the zone database still updates over the air. Next step: "Plug it in over USB to upgrade it (automatically); it keeps its identity." ("(automatically)" only with `auto_firmware_usb` on) | none |
+| **N pool radio(s) run firmware older than the build** (`zone.fw_behind`, key `pool`) | info | Same, for `pool-*` firmware. "The pool radios and the pool central are a matched set: a partial upgrade can leave the lights unanswered." Next step: "Upgrade the pool radios and the pool central together by hand (they are never upgraded automatically)." | none |
 
 Tier 3: device events (zone board on USB: Monitor-tab history)
 
@@ -210,7 +259,7 @@ Tier 3: device events (zone board on USB: Monitor-tab history)
 | **Pool radio id N sends the legacy packet** | warn | Pre-2026 firmware accepted by the shim (insurance only) | none |
 | **Pool central lost radio ‹label›** | warn | `RADIO TIMEOUT`: heartbeats stopped (power, range, crash) | **Query zones** |
 | **Two preshow plates are flashed as point N** · **The media bridge sees plates sharing a point id** | bad | Cues fight over one TouchDesigner channel | none (reflash one) |
-| **Cube #n runs ‹fw›; the local build is ‹fw›** | warn | Information: the cube still works with every zone and controller | **Flash cube firmware** |
+| **Cube #n runs ‹fw›; the local build is ‹fw›** | warn | Information: the cube still works with every zone and controller. With `auto_firmware_usb` on, the next step reads "It will be upgraded automatically once Register and Flash are off (Settings › Automatic updates); or flash it now (NVS registration preserved; boot is re-checked)." | **Flash cube firmware** |
 | **Cube #n firmware version not verified** | info | No matching `FW:` + `Cube MAC:` + `Cube READY` | **Check boot** |
 | **Cube #n says it is UNREGISTERED** | warn | Cube NVS holds no ID; ignores zone commands | **Send the saved mapping** or **Register at the station** |
 | **Cube #n: ESP-NOW failed to start** | bad | `ESP-NOW INIT ERROR`; never answers | **Flash cube firmware** |
@@ -393,7 +442,9 @@ flowchart TD
 - Battery endurance is unmeasured. Neither the planned capacities in the Engineering Six PDF nor this handover establish a tested runtime. Measure it and set a swap interval. **To confirm**.
 - Automatic inventory sync (`auto_sync`, uncommitted on 23 Sept): **Simulation-verified** only (`console/tests/test_auto_update.py` AutoSyncTests). Never run against the real web inventory.
 - EN | KR switch: **Simulation-verified** (simulator, headless Chrome, unit tests `console/web/tests/i18n.test.js`, `console/tests/test_uitext.py`).
-- Automatic updates: **Simulation-verified** (`console/tests/test_auto_update.py`, 6 tests: persistence across restart, one walking relay with General Radio fallback, the show switch, one USB update for a behind zone, the USB switch, pull gating). Never run against real zones, the Workstation or the web pull.
+- Automatic updates: **Simulation-verified** (`console/tests/test_auto_update.py` AutoUpdateTests: settings persist across a restart, every relay walks and one publishes at a time, a zone is walked only by a radio that heard it, a walk that cannot publish does not break the tick, the show switch, one USB database update for a behind zone, the USB switch, pull gating, one automatic build at a time with no retry after a failure). Never run against real zones, the Workstation or the web pull.
+- Automatic firmware builds and USB upgrades (`auto_build`, `auto_firmware_usb`, commit `6b26cdf`): **Simulation-verified** only (`console/tests/test_autoupgrade.py`, 11 tests: defaults on, legacy relays become Workstations one at a time, the protected station is never planned, an old zone plate keeps its identity, a pool radio is only reported, a cube waits while Register is on, the hold-back gates, an operator command marks a board in use, a stale build is built before the flash, a failed build waits for a source change, the panel section). No board has been flashed automatically; the first real Workstation flash (bench General Radio AC:27:6E:82:68:54) is pending.
+- With both switches on by default, plugging an out-of-date board into the console Mac now changes its firmware without a click: an old cube (v1.4.1-USB.2) once Register and Flash are off, the Mainshow controller #134 (mainshow-1.2.0 → 1.3.0), a General Radio (→ Workstation). Switch `auto_firmware_usb` off, or **Skip**, before plugging in a board that must stay as it is. **Code-checked**.
 - The old chapter 03 says "the status bar shows what is still held". `console/web/components/StatusBar.js` shows link, mode, Zone DB, cubes, station and jobs; no held-lease item was found. Check each panel's toggle instead. **Code-checked** (contradiction noted).
 - The old chapter 11 quotes "Another app is open on this database: …" as a start-up refusal. It is the Attention card `apps.legacy_open`. The console's start-up refusal is `<App> is already open on this database; close it before starting the NCT Console`. Because the console holds all four old-app locks and skips its own in the 5 s probe, the card cannot normally fire while the console runs. It did fire wrongly in the first dongle pass on 23 September, before the probe skipped the console's own locks. **Code-checked**.
 - Button labels that differ from the old chapter 11: Force flash is **Force flash as a zone (overwrites it)** (port card) or **Force flash (unregisters the cube)** (job card). **Sync was interrupted while uploading** offers **Sync now**. **Cube mappings changed …** offers **Sync & publish**. **Code-checked**.
@@ -405,7 +456,8 @@ flowchart TD
 
 - `console/advisor.py` (every card title, severity and button)
 - `console/uitext.py` (STATUS pills, ACTIONS tooltips), `console/uitext_ko.py`
-- `console/hub.py` (settings defaults, `apply_auto_modes`, auto pulls, `auto_sync`, lock probe, `shutdown`, `identified`), `console/state.py` (`describe_auto`), `console/jobs/sync.py`
+- `console/hub.py` (settings defaults, `apply_auto_modes`, `zone_walk_allowed`, `touch`, auto pulls, `auto_sync`, lock probe, `shutdown`, `identified`), `console/state.py` (`describe_auto`), `console/jobs/sync.py`
+- `console/autoupgrade.py`, `console/web/components/AutoUpdates.js`, `console/web/components/Attention.js` (`Jobs` filter), `console/advisor.py` (`rule_builds`, `dongle.old`, `rule_zone_firmware`, `rule_cubes`), `console/tests/test_autoupgrade.py`, commit `6b26cdf`
 - `console/web/components/TopBar.js` (page order, EN | KR switch), `console/web/app.js` (⌘1–7), `console/web/lib/i18n.js` (`nct.lang`, `?lang=`)
 - `console/web/panels/sections.js` (Settings), `others.js` (Automatic intake), `ZonePanel.js` (Monitor, leases), `WorkstationPanel.js`, `ShowSection.js`
 - `console/web/components/StatusBar.js`, `TopBar.js`, `console/web/app.js` (shortcuts)

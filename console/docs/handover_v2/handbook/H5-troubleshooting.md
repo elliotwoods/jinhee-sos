@@ -23,6 +23,7 @@ Find the symptom in the index and go to its section. Card titles and buttons are
 | The console will not start, or a USB board is not identified · 콘솔 미실행 또는 USB 보드 미식별 | Another app holds the inventory or the port · 다른 앱이 인벤토리나 포트를 점유 | 8 |
 | The Sync chip does not reach **✓ Synced**, or a cube lost its number · Sync 칩이 **✓ Synced**가 안 됨 또는 큐브 번호 사라짐 | Password, network, or a newer change elsewhere · 비밀번호, 네트워크, 다른 곳의 새 변경 | 9 |
 | The console opens in a web browser · 콘솔이 웹 브라우저에서 열림 | Not started with its launcher; WebView2 missing (Windows) · 실행 파일로 시작하지 않음, WebView2 없음(Windows) | 10 |
+| A row in **Automatic updates** does not finish · **Automatic updates** 행이 끝나지 않음 | Board in use, a failed flash, a pool board, or missing build tools · 사용 중인 보드, 플래시 실패, 풀 보드, 빌드 도구 없음 | 11 |
 
 Before you fix anything, swap in a charged, known-good cube. If it works, the first cube is at fault: take it to the cube desk. If it fails too, the zone board or the path after it is at fault. Don't re-register a batch or start the show on every cube to diagnose one cube.
 <kr>무엇이든 고치기 전에 충전된 정상 큐브로 바꿔 봅니다. 정상 큐브가 동작하면 처음 큐브의 문제이므로 큐브 데스크로 가져갑니다. 정상 큐브도 실패하면 존 보드나 그 뒤 경로의 문제입니다. 큐브 하나를 진단하려고 전체 재등록을 하거나 모든 큐브에 쇼를 시작하지 않습니다.</kr>
@@ -32,8 +33,8 @@ Before you fix anything, swap in a charged, known-good cube. If it works, the fi
 > [!INFO] **Symptom:** a recently registered cube does nothing at a zone. The zone board reports "unknown tag", but the console shows the cube as registered.
 > **증상:** 최근 등록한 큐브가 존에서 반응이 없습니다. 존 보드는 "unknown tag"라고 하지만 콘솔에서는 큐브가 등록된 것으로 보입니다.
 
-Registering changes only the inventory on this Mac. The zone board knows the cube only after a sync (automatic by default) publishes a new zone database and the board receives it.
-<kr>등록은 이 Mac의 인벤토리만 바꿉니다. 동기화(기본 자동)가 새 존 데이터베이스를 게시하고 보드가 그것을 받아야 존 보드가 큐브를 압니다.</kr>
+Registering changes only the inventory on this computer. The zone board knows the cube only after a sync (automatic by default) publishes a new zone database and the board receives it.
+<kr>등록은 이 컴퓨터의 인벤토리만 바꿉니다. 동기화(기본 자동)가 새 존 데이터베이스를 게시하고 보드가 그것을 받아야 존 보드가 큐브를 압니다.</kr>
 
 1. A known-good cube also fails there? Then it is the reader: section 3. <kr>정상 큐브도 실패하면 리더 문제입니다: 3절.</kr>
 2. The Sync chip does not show **✓ Synced**? Click it to sync now, or see section 9. <kr>Sync 칩이 **✓ Synced**가 아니면 눌러서 바로 동기화하거나 9절을 봅니다.</kr>
@@ -229,5 +230,28 @@ The browser page is the same console with the same inventory. You can keep worki
 
 More detail: {{page:X10}}
 <kr>자세한 내용: {{page:X10}}</kr>
+
+## 11. The Automatic updates panel | 11. Automatic updates 패널
+
+> [!INFO] **Symptom:** the **Automatic updates** panel (top right) does not show **✓ Everything up to date**, and a row stays.
+> **증상:** **Automatic updates** 패널(오른쪽 위)에 **✓ Everything up to date**가 나오지 않고 행이 남아 있습니다.
+
+Read the row's state pill and the reason under it. (Simulation-verified; no real board has been upgraded automatically yet.)
+<kr>행의 상태 표시와 그 아래 이유를 읽습니다. (Simulation-verified. 실제 보드를 자동으로 업그레이드한 적은 아직 없습니다.)</kr>
+
+| Pill · 상태 | It means · 의미 | Do this · 조치 |
+|---|---|---|
+| **waiting** (**Starts in N s**, **Waiting: in use…**, **Waiting: Register or Flash is on**) | Normal: it starts when the board and the console are free · 정상: 보드와 콘솔이 비면 시작 | Nothing; or **Skip** · 없음, 또는 **Skip** |
+| **needs build** | The firmware is still being built · 펌웨어 빌드 중 | Wait · 기다림 |
+| **failed** | The upgrade or build did not finish · 업그레이드나 빌드가 끝나지 않음 | **Retry**, or unplug and replug the board; copy the reason if it fails again · **Retry** 또는 다시 꽂기, 반복되면 이유 기록 |
+| **by hand** | Pool radios, pool central controller, preshow bridge, or an unconfigured board: never flashed automatically · 자동 플래시 안 함 | Pool set: upgrade radios and central together by hand (engineer) · 풀 세트는 엔지니어가 함께 수동 업그레이드 |
+| **no build tools** | This computer cannot build firmware · 이 컴퓨터에서 빌드 불가 | Engineer: install arduino-cli with ESP32 core 3.3.11 · 엔지니어: arduino-cli와 ESP32 core 3.3.11 설치 |
+| **paused** / **off** | **Pause** was pressed, or the switch is off in Settings › **Automatic updates** · 일시 정지 또는 설정 꺼짐 | **Resume**, or switch it on · **Resume** 또는 켜기 |
+
+Never unplug a board whose row shows **upgrading**. Successful and failed upgrades are listed under **Recent (n)**; only failures appear in Jobs.
+<kr>행에 **upgrading**이 표시된 보드는 절대 뽑지 않습니다. 성공과 실패는 **Recent (n)** 아래에 표시되고, Jobs에는 실패만 나옵니다.</kr>
+
+More detail: {{page:X11}}
+<kr>자세한 내용: {{page:X11}}</kr>
 
 <span color="red">*This document was written by Kimchi and Chips*</span>

@@ -62,6 +62,26 @@ A zone board is a tag reader board in a zone (Preshow, Desert, Pool, Mainshow en
 - **Update database over USB** (**Firmware & database** tab): writes only the published database into the board's `zdb` slot via esptool; firmware and identity untouched; the board reboots and reports the new version. Offered when the board's database is older than the publication; a current board is skipped (boards accept only a higher version).
 - With Settings › Automatic updates › **Zone databases over USB** on (default) the console does this itself for a configured zone board that is behind, once per board and publication, without Auto-flash zones. Result on the tab's **Automatic database update** row.
 
+### Automatic firmware upgrade over USB (Settings › Automatic updates)
+
+Setting `auto_firmware_usb`, default **on** (full text in {{page:X11}}); source `console/autoupgrade.py`; rows in the **Automatic updates** panel at the top of the right sidebar. Separate from **Auto-flash zones** (which stays off at launch) and from the database-only update above.
+
+| Board on USB | Condition | Result |
+|---|---|---|
+| Zone plate: Preshow, Tag plate (preshow exit / mainshow entrance), Desert, Reset | Firmware in its `?` report differs from the sketch's `FIRMWARE_VERSION` (`zone_build.FIRMWARE_PREFIX` maps `preshow-`, `tagplate-`, `desert-`, `pool-`, `reset-`) | Zone flasher pipeline (`jobs/zone.flash_job`): firmware + identity + published database, keeping the profile, point, name, params and RX gain from the board's own report (`zone_detect.from_report`, `zone_detect.plan(auto=True)`) |
+| Unconfigured zone board | — | Listed only: "Unconfigured board: give it an identity on the Flash page once" |
+| Any zone plate while no zone database is published | — | Listed only: "No zone database is published yet" |
+| Zone report incomplete | — | Listed only: "Incomplete zone report; identify the board again" |
+| Pool radio (`pool-*`) | Older than the build | Listed only: "Pool radios and the pool central are a matched set: upgrade them together by hand" |
+| Pool central, preshow bridge | Older than the sketch | Listed only: "No automatic flash for this board; upload it from its sketch by hand" (the pool central adds the matched-set note). They have no flash pipeline in the console |
+| Pairing station (`nct-pairing-*`) or General Radio (`general-radio-*`) | Always | Becomes **workstation-1.0.0** through the dongle flasher (`jobs/dongle.flash_job`); an older `workstation-*` is upgraded too. Refused as usual for a MAC the inventory knows as a cube or zone |
+| Mainshow controller | Older than mainshow-1.3.0 | Mainshow controller firmware; waits while the show runs |
+| Installed pairing station 3C:0F:02:AD:83:24 | — | Never planned (protected); every flasher also refuses it |
+
+- The zone plate's firmware target is built first if stale (`auto_build`); the row shows **needs build** meanwhile.
+- Held back while the console is busy, a hardware job runs, **Auto-flash zones** or the cube intake is armed (row text "Waiting: the Flash page intake is armed"), for 20 s after identification ("Starts in N s"), for 60 s after the operator's last command to the board, and while the board relays or sends the show. One automatic job at a time; once per plug-in and target version; **Skip** until replug; **Retry** after a failure; **Pause** is runtime only.
+- Zones heard over the air with older firmware raise the info card **N zone(s) run firmware older than the build** (pool radios: **N pool radio(s) run firmware older than the build**, matched-set wording). Firmware only changes over USB; the zone database still updates over the air.
+
 ### Cube monitor (Zone panel › **Monitor**)
 
 - Shows tag UID, cube number and MAC, lookup result, radio delivery, reader health (**NFC scanning**, degraded, not responding). LED ring = colour the board commanded (confirm the real light by eye). **History** = recent taps.
@@ -144,11 +164,14 @@ The "behind" card fires only from the plate's own `?` report; a stale report or 
 | **Contradiction on preshow order:** `zones/README.md` says "Flash the bridge first"; `AGENTS.md` says plates and bridge update in either order (bridge accepts the old 2-byte packet; preshow-3.2.0+ plates send it until they hear a beacon). Both are compatible for current firmware; bridge-first is the conservative order | Code-checked |
 | No zone board was flashed or updated over USB through the console while this handover was written | Procedures Code-checked; Monitor, unknown-tag cards and scripted flash Simulation-verified (`console/docscenes.py`, no esptool) |
 | Pool radio IDs reported 1, 2, 3, 3, 4, 4 (duplicates): see {{page:X06}}, {{page:X13}} | Field-reported (`RELAY_BOARD_FINDINGS.md`) |
+| Automatic zone plate and station → Workstation upgrades over USB (`auto_firmware_usb`, commit `6b26cdf`) | Simulation-verified only (`console/tests/test_autoupgrade.py`: `test_old_zone_plate_is_flashed_keeping_its_identity`, `test_pool_radio_is_only_reported`, `test_legacy_relays_become_workstations_one_at_a_time`, `test_protected_station_is_never_planned`). No board flashed; the first real Workstation flash (bench General Radio AC:27:6E:82:68:54) is pending |
+| On by default: plugging in an out-of-date zone plate, General Radio or Mainshow controller for diagnosis now reflashes it once the 20 s settle passes. Switch `auto_firmware_usb` off or press **Skip** first if the board must stay as it is | Code-checked |
 
 ## Sources
 
 - `zones/flasher/zone_detect.py`, `zone_flash.py` (`execute`, `update_database`), `zone_build.py` (`PROFILES`, `FIRMWARE_PREFIX`), `zone_monitor.py`
 - `zones/tools/zonedb.py` (`RX_GAINS`, `ZONE_TYPES`), `zones/README.md` (zone firmwares, Reset, matched sets), `zones/firmware/*/*.ino` (`FIRMWARE_VERSION`)
+- `console/autoupgrade.py`, `console/tests/test_autoupgrade.py`, `zones/dbmanager/dongle.py` (`refusal`, `family`, `current`), commit `6b26cdf`
 - `console/sessions/zone_console.py`, `console/jobs/zone.py`, `console/intake.py`, `console/advisor.py` (`tag.*`, `build.stale`, `zone.*`), `console/uitext.py` (`zone.flash`, `zone.flash_force`, `zone.detect`), `console/web/panels/ZonePanel.js`, `others.js`
 - `console/TEST_REPORT_2026-09-23.md` (zone registry census)
 - Old draft `13-zone-boards.md`
