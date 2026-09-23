@@ -16,7 +16,6 @@ and status labels stay in English and bold in both languages, so they match the 
 | Term | 한국어 | Old names | Meaning |
 |---|---|---|---|
 | **Amberin** | 앰버린 | — | Project management for the exhibition; receives this handover |
-| **Cube desk** | 큐브 담당 / 큐브 데스크 | — | The staff and table where cubes are registered, updated, charged and handed out |
 | **Desert** | 사막존 | — | The zone with the member name panels; 23 member positions in the design |
 | **Elliot** | Elliot | — | Kimchi and Chips; source of named field reports |
 | **Engineering Six** | 엔지니어링식스 | — | Originally developed the exhibition's interactive systems; the receiving engineers |

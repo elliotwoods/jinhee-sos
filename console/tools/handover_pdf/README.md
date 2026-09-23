@@ -1,6 +1,7 @@
 # Handover v2 printable PDF
 
-Builds `console/docs/NCT_Console_Handover_v2.pdf` from the same drafts as the Notion pages:
+Builds `console/docs/NCT_Console_Handover_v2_<version>.pdf` (plus `NCT_Console_Handover_v2.pdf`, a copy of the latest
+build) from the same drafts as the Notion pages:
 the handbook (`console/docs/handover_v2/handbook/H*.md`, bilingual) and the extended reference
 (`console/docs/handover_v2/extended/X*.md`, English only). Page keys, titles and the dialect are defined in
 `console/docs/handover_v2/STYLE_GUIDE.md` (› Two sections, › Draft dialect); this tool reads the two page tables from
@@ -23,8 +24,31 @@ JetBrains Mono; mermaid 11 from jsdelivr). Environment overrides:
 | `CHROME_PATH` | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` | Chrome or Chromium to print with (on Windows e.g. `C:\Program Files\Google\Chrome\Application\chrome.exe`) |
 | `HANDOVER_DOCS` | `console/docs/handover_v2` | Draft folder (holds `STYLE_GUIDE.md`, `handbook/`, `extended/`); point it at a scratch copy to test |
 | `HANDOVER_TMP` | `<os tmp>/nct-handover-pdf` | Scratch folder: `handover.html` (the intermediate page, open it in Chrome to debug), resized screenshots, previews |
-| `HANDOVER_PDF_OUT` | `console/docs/NCT_Console_Handover_v2.pdf` | Output file |
+| `HANDOVER_PDF_OUT` | versioned file + stable copy in `console/docs/` | Write exactly this one file instead (scratch/test builds). A path outside `console/docs/` also stops the version counter |
+| `HANDOVER_NO_BUMP=1` | off | Do not record this build in `build_version.json` (scratch/test builds; the pages show the version the next real build would get) |
 | `HANDOVER_PNG=1` | off | Embed the original 2880 px PNG screenshots instead of 1600 px JPEG copies (PDF several times larger) |
+
+## Build version
+
+Every build has a version: the build date in Korea time (KST, Asia/Seoul) plus a letter for that day's build count.
+The first build of the day is `2026-09-23`, the second `2026-09-23B`, then `C`, `D` … `Z`, `AA`, `AB` …
+The version is printed on the title page (Version block and the note under it), in the running footer of every page
+that has one ("… · 23 September 2026 · build 2026-09-23B"), on the colophon, and in the PDF metadata (title, subject,
+keywords).
+
+- A real build (`npm run build` without `HANDOVER_PDF_OUT`) writes `console/docs/NCT_Console_Handover_v2_<version>.pdf`
+  and copies it to `console/docs/NCT_Console_Handover_v2.pdf`, so existing links to the stable name always get the
+  latest build. Older versioned files are never deleted or overwritten: if a versioned file already exists, for
+  example after the counter file was deleted, the build skips to the next free letter. (`console/docs/*.pdf` is
+  gitignored.)
+- The counter is `build_version.json` in this folder: `{"date": "YYYY-MM-DD", "count": n, "version": "…"}`. It is
+  gitignored, so each computer counts its own builds. The version is worked out before rendering, but the file is
+  written only after the PDF has been written, so a failed build does not use a letter. A new KST date starts again
+  at count 1.
+- Test builds must not use letters: set `HANDOVER_NO_BUMP=1` and point `HANDOVER_PDF_OUT` at a scratch file, e.g.
+  `HANDOVER_NO_BUMP=1 HANDOVER_PDF_OUT=/path/to/scratch/t.pdf npm run build`. `HANDOVER_PDF_OUT` outside
+  `console/docs/` does not bump either. `HANDOVER_NO_BUMP=1` on its own still writes both files into `console/docs/`,
+  so the next real build overwrites that versioned file.
 
 `npm run preview -- 1 2 17` rasterises those pages to PNG in `$HANDOVER_TMP/preview` (macOS `sips`) for a quick look.
 
@@ -34,8 +58,10 @@ JetBrains Mono; mermaid 11 from jsdelivr). Environment overrides:
 2. **About this handover**: `handbook/H0-*.md` as a short opening without a chapter number. Its page-link list
    (every line starting with `{{page:…}}`, and a heading left empty by that) and its "About this handover" heading
    are dropped.
-3. The handbook in Parts, each with a divider page: **I Introduction** (H1), **II Procedures** (H2, H3, H4),
-   **III Troubleshooting** (H5), **IV What we fixed** (H6) (`PARTS` in `build.mjs`). Chapter openers show the key
+3. The handbook in Parts, each with a divider page: **I Introduction** (H1), **II Procedures** (H3, H4),
+   **III Troubleshooting** (H5), **IV What we fixed** (H6) (`PARTS` in `build.mjs`). A Part takes whichever of its keys
+   the STYLE_GUIDE table lists. H2 (Daily operation) was retired on 2026-09-23, so it is simply absent and gives no
+   warning. If it were still in the table with a draft, it would print first in Procedures. Chapter openers show the key
    (a large "H3") and the running header reads "H3 · Cube procedures".
 4. An **Appendix divider**, "Appendix — Extended reference (English) / 확장 참조(영문)", listing the X pages, then
    X01…X13 in a compact style: each starts on a new page with a small "Appendix · X06" label instead of a big number,
@@ -67,7 +93,8 @@ page count (divider to the last X page) separately.
   heading it belongs to. The build prints how many were turned or put on landscape pages and the smallest text size
   (`HANDOVER_DEBUG=1` lists every diagram).
 - Title page, running header (small logo + book title left, section right), running footer ("Kimchi and Chips ·
-  NCT Console handover v2 · prepared for Amberin / Engineering Six · 23 September 2026" left, page number right) and a
+  NCT Console handover v2 · prepared for Amberin / Engineering Six · 23 September 2026 · build <version>" left, page
+  number right) and a
   colophon page, all in `build.mjs`/`print.css`.
   The logo is `assets/kimchi-and-chips-logo.svg`, cropped from `assets/kimchi-and-chips-logo-source.svg` (A4 canvas)
   to the artwork, with "AND" in the logo grey `#6d6e71` to match `assets/kimchi-and-chips-logo.png`. Page headers

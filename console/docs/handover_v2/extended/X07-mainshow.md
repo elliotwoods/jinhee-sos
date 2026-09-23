@@ -4,7 +4,7 @@
 
 ## Summary
 
-A visitor taps the cube on a main show entrance zone board, which sends `SET_ZONE 4` and makes the cube **mainshow-ready** (neon, yellow-green). At show time the media server's signal closes the Mainshow controller's trigger input to GND through an installed interface; the controller broadcasts `MSG_SHOW_START` (8) five times with a fresh showId, and every ready cube plays the main show (≈4:58) from its own memory. From mainshow-1.3.0 the controller also sends a once-a-second **show clock** (`SHOW_TIMECODE`) so a late ready cube on v1.5.0+ can join; the installed controller #134 runs mainshow-1.2.0 and does not. The show animation is data, edited in the console's **Show editor**, published as web-allocated versions and sent to cubes over the air. Operator steps are in {{page:H2}}, {{page:H3}} and {{page:H5}}.
+A visitor taps the cube on a main show entrance zone board, which sends `SET_ZONE 4` and makes the cube **mainshow-ready** (neon, yellow-green). At show time the media server's signal closes the Mainshow controller's trigger input to GND through an installed interface; the controller broadcasts `MSG_SHOW_START` (8) five times with a fresh showId, and every ready cube plays the main show (≈4:58) from its own memory. From mainshow-1.3.0 the controller also sends a once-a-second **show clock** (`SHOW_TIMECODE`) so a late ready cube on v1.5.0+ can join; the installed controller #134 runs mainshow-1.2.0 and does not. The show animation is data, edited in the console's **Show editor**, published as web-allocated versions and sent to cubes over the air. Handbook steps: {{page:H3}} (Show editor), {{page:H4}} (one-cube test and trigger) and {{page:H5}}.
 
 ## Facts
 
@@ -80,7 +80,7 @@ The show wiring may hold the trigger input closed for the whole show (about 10 m
 | Pin choice | GPIO1 (used by the desert board) is not broken out on the XIAO; D1 is not a strapping pin; D10 avoided for the trigger because an ex-cube may still have its LED data line on it |
 | GND | Ground. D1 is the XIAO silkscreen label; GPIO numbers are the chip's |
 
-> [!DANGER] The field report says the media system gives a 5 V signal. That is **not** permission to connect 5 V to GPIO3 (a 3.3 V input). The installed adapter circuit, its polarity and the connector pinout are not in the repository; Engineering Six and the media technicians must record them before anyone replaces the controller.
+> [!DANGER] The field report says the media system gives a 5 V signal. That is **not** permission to connect 5 V to GPIO3 (a 3.3 V input). The installed adapter circuit, its polarity and the connector pinout are not in the repository; Engineering Six and the media team must record them before anyone replaces the controller.
 
 > [!WARNING] Do not hold BOOT while powering the controller up: that starts the ROM bootloader instead of the show firmware.
 
@@ -130,7 +130,7 @@ Unsolicited: `show_start` with `id:""` and `source` `button` or `pin`; `locked` 
 - A Workstation, or general-radio-1.1.0+, that starts a show also sends `SHOW_TIMECODE` once a second, bounded by `show_config` (RAM only; the console sends it on connect). `show_stop` ends the timecode only.
 - Workstation panel › **Cubes & show**: **Set … →** zone of one cube (three sends), of all cubes (hold to confirm); start the show on one cube or on all ready cubes (hold to confirm).
 - LEDs: strong green while a show it triggered should be running (298 s).
-- Not the Mainshow controller: no trigger input; its BOOT button does nothing; acts only on console commands. The dongle flasher refuses to turn a recorded controller back into a Workstation.
+- Not the Mainshow controller: no trigger input; its BOOT button does nothing; acts only on console commands. The console allows converting a recorded Mainshow controller into a Workstation (`console/jobs/dongle.py::flash_job` clears the controller check for the `workstation` target; the automatic USB upgrade does the same for an unprotected legacy station). Only the old Zone Database Manager's dongle flasher (`zones/dbmanager`) refuses it.
 - The Workstation firmware (workstation-1.0.0) is built but on no board yet; the bench relay #138 runs general-radio-1.2.0 ({{page:X02}}).
 
 ### Show editor (⌘6, `#/showedit`)
@@ -189,7 +189,7 @@ Registry: **Mainshow 1**, `48:F6:EE:15:8C:74`, zone kind 4, `tagplate-2.4.0`, zo
 
 - #134 runs mainshow-1.2.0: no show clock, so a cube that misses the start does not join late, even on v1.7.0. **Code-checked** (inventory, TEST_REPORT).
 - Only six cubes can receive shows or join late; the rest play the compiled-in original. **Bench-verified** (console records).
-- The signal interface (adapter) circuit, polarity and connector pinout are not recorded. **To confirm** (Engineering Six, media technicians).
+- The signal interface (adapter) circuit, polarity and connector pinout are not recorded. **To confirm** (Engineering Six, media team).
 - Repair history: the M5 show starter sent command 7, which cubes ignored; the dedicated controller (ex-cube #134) sends 8 and keeps the cubes' existing animation. After installation and adaptation of the media team's 5 V signal the show started correctly on site; one of ten tested cubes failed and reflashing/re-registering it was suggested (its identity was not recorded). The sample is not a failure rate or final acceptance. **Field-reported (Elliot, 22 Sep).**
 - Show v5 over the radio (23 Sept, before the USB runs): sent through general-radio-1.2.0 (#138) to #17; #17's NVS read back matched the published image byte for byte. #17 was then restored to v4 and v5 written over USB; the cube reported v5 from NVS. **Bench-verified** from serial and NVS read-back; LEDs not verified.
 - general-radio-1.2.0 ignored a `{"cmd":"hello"}` sent without an `id` straight after the no-reset open. Send `hello` with an `id`. **Bench-verified** (#138, one observation).

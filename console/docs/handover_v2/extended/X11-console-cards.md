@@ -4,7 +4,7 @@
 
 ## Summary
 
-This page is the reference behind the daily routine and troubleshooting in {{page:H2}} and {{page:H5}}. It lists the console settings and their defaults, the technical items of the opening and closing checklists, the shift-log fields, every Attention card the console can raise (exact title, meaning, buttons), and the full symptom catalogue. It also covers instance locks and USB identification rules. Card titles are generated in Python and are always English, also when the console is set to Korean.
+This page is the reference behind the automatic behaviour in {{page:H4}} and the troubleshooting in {{page:H5}}. It lists the console settings and their defaults, the technical items of the opening and closing checklists, the shift-log fields, every Attention card the console can raise (exact title, meaning, buttons), and the full symptom catalogue. It also covers instance locks and USB identification rules. Card titles are generated in Python and are always English, also when the console is set to Korean.
 
 ## Facts
 
@@ -151,11 +151,11 @@ Success state: Attention empty or information cards only · **Zone relay** every
 | USB board not identified | Port held elsewhere, board silent | §10 |
 | Console will not start | Another NCT app open on this database | §11 |
 | **Sync** fails, or a cube lost its number after Sync | Password, network, newer change elsewhere | §12 |
-| Hot, damaged, unstable power | Stop; duty technician | §13 |
+| Hot, damaged, unstable power | Stop using it; have it checked | §13 |
 
 ### Shift-log fields
 
-Date / time · Operator · Cubes usable / spare / faulty (counts) · Affected cube (label number and MAC, from its Cube panel) · Zone / point · Observed symptom · Known-good comparison (did a known-good cube work there?) · Action · Result (Verified / Acknowledged / Delivered / Failed) · Published zone database version (top-bar Sync chip or Inventory › Zone database) · Zones still out of date · Attention cards left open · Next owner.
+Date / time · Cubes usable / spare / faulty (counts) · Affected cube (label number and MAC, from its Cube panel) · Zone / point · Observed symptom · Known-good comparison (did a known-good cube work there?) · Action · Result (Verified / Acknowledged / Delivered / Failed) · Published zone database version (top-bar Sync chip or Inventory › Zone database) · Zones still out of date · Attention cards left open.
 
 New troubleshooting case record: date and time · zone and point · cube number · symptom · exact console card title · known-good comparison · cause · fix · evidence level · who confirmed it.
 
@@ -182,11 +182,10 @@ Tier 0: environment
 | **Cube firmware build needs attention: ‹error›** | warn | Manifest, binaries and source disagree; the cube flasher refuses | **Rebuild the cube firmware** |
 | **‹Sketch› firmware: ‹error›** | info | A zone build is stale | **Build ‹Sketch›** |
 | **Workstation firmware build is missing/stale** · **Mainshow controller firmware build is missing/stale** | info | Flashing a dongle or controller builds it first (minutes) | **Build the Workstation firmware** / **Build the Mainshow controller firmware** |
-
-The three `build.stale` cards stay silent while the automatic builder has the target queued or building. They still show when that build failed or the tools are missing (the text then ends "Automatic build: ‹reason›"), or when `auto_build` is off.
-
 | **Another app is open on this database: ‹apps›** | info | An old app's instance lock is held by another process. Web downloads wait | none |
 | **‹port› is owned by another application** | warn | The port refused to open. Likely holder named (old app, or a tool without a lock: zone flasher, calibration, bench test, serial monitor) | **Probe the port again** |
+
+The three `build.stale` cards stay silent while the automatic builder has the target queued or building. They still show when that build failed or the tools are missing (the text then ends "Automatic build: ‹reason›"), or when `auto_build` is off.
 
 Tier 1: links
 
@@ -377,7 +376,7 @@ flowchart TD
 **§4 A zone reads no tags at all**
 - Symptom: nothing works at one plate, including a known-good cube; Monitor shows no taps.
 - Cards: **NFC reader on "‹zone›" is not responding**, **… answers but scan commands fail**, **RX gain on "‹zone›" is stored but the reader did not accept it**.
-- Checks: (1) power (preshow battery charged). (2) tag area meets the reader; enclosure spacing unchanged. (3) zone header `pins=` and NFC health: standard boards SDA 4 / SCL 3; replacement XIAO preshow boards D4/D5 = GPIO 6/7 (from preshow-3.4.0 the firmware tries 4/3, then 6/7; `NFC:` line ends `pins=<sda>/<scl>`). (4) recovery button fails: power-cycle reader and board together (the PN532 stays powered across a board reset and can hold the bus). (5) still nothing: duty technician ({{page:X09}}).
+- Checks: (1) power (preshow battery charged). (2) tag area meets the reader; enclosure spacing unchanged. (3) zone header `pins=` and NFC health: standard boards SDA 4 / SCL 3; replacement XIAO preshow boards D4/D5 = GPIO 6/7 (from preshow-3.4.0 the firmware tries 4/3, then 6/7; `NFC:` line ends `pins=<sda>/<scl>`). (4) recovery button fails: power-cycle reader and board together (the PN532 stays powered across a board reset and can hold the bus). (5) still nothing: check the reader wiring or replace the reader ({{page:X09}}).
 - Higher RX gain cannot fix a missing record: read but "unknown" is §2.
 - Evidence: **Code-checked** (cards); PN532 bench lessons in `pairing_station/I2C_DEBUG.md`.
 
@@ -403,7 +402,7 @@ flowchart TD
 - Evidence: **Code-checked**; ① / ② / clock **Simulation-verified**; **Field-reported** by Elliot 22 September: triggering works, 1 of 10 tested cubes failed (identity not recorded, {{page:X13}}). Detail: {{page:X07}}.
 
 **§8 Pool frame lamps wrong, flickering or dark**
-- Cards: **Pool radio "‹zone›" is not seen by the central controller** (central off, out of range or version mismatch; reflash radios and central together) · **Two pool radios share radio id N** / **Pool central sees live radios sharing an id** (distinct ids 1–6) · **Pool central lost radio ‹n›** (that radio's power) · **Pool radio "‹zone›" has no saved calibration** (**Calibration** tab) · **Pool radio "‹zone›": distance sensor not found** (technician) · **Pool lamp N is held but no pool central is heard** (release the lamp).
+- Cards: **Pool radio "‹zone›" is not seen by the central controller** (central off, out of range or version mismatch; reflash radios and central together) · **Two pool radios share radio id N** / **Pool central sees live radios sharing an id** (distinct ids 1–6) · **Pool central lost radio ‹n›** (that radio's power) · **Pool radio "‹zone›" has no saved calibration** (**Calibration** tab) · **Pool radio "‹zone›": distance sensor not found** (check the sensor wiring) · **Pool lamp N is held but no pool central is heard** (release the lamp).
 - Removing one cube must not switch off a frame another slider still selects. If it does, record radios and frame and escalate.
 - Evidence: **Code-checked**; calibration **Simulation-verified**. Pool central 4.2.2 field state: {{page:X06}}.
 
@@ -430,7 +429,7 @@ flowchart TD
 - Sync never asks for a decision: newest change wins, and the console reports what this computer gave up. Detail: {{page:X08}}.
 
 **§13 Hot, damaged, smelling, unstable power**
-- Stop using it; duty technician under venue procedure. A software reset does not repair an electrical fault.
+- Stop using it; hand it over under the venue procedure. A software reset does not repair an electrical fault.
 
 > [!DANGER] Hot, damaged or electrically unstable equipment: stop using it and hand it over under the venue procedure. No console action fixes it.
 
@@ -438,9 +437,9 @@ flowchart TD
 
 ## Known issues / open questions
 
-- The checklist, its frequency and the division of duties are handover recommendations, not completed site tests. **To confirm** with Engineering Six, who must adopt it into the venue's opening procedure and name a duty technician.
+- The checklist and its frequency are handover recommendations, not completed site tests. **To confirm** with Engineering Six, who must adopt it into the venue's opening procedure. The handbook no longer carries a daily routine (user, 2026-09-23); this page keeps its technical items.
 - Battery endurance is unmeasured. Neither the planned capacities in the Engineering Six PDF nor this handover establish a tested runtime. Measure it and set a swap interval. **To confirm**.
-- Automatic inventory sync (`auto_sync`, uncommitted on 23 Sept): **Simulation-verified** only (`console/tests/test_auto_update.py` AutoSyncTests). Never run against the real web inventory.
+- Automatic inventory sync (`auto_sync`, committed in 6b26cdf): **Simulation-verified** only (`console/tests/test_auto_update.py` AutoSyncTests). Never run against the real web inventory.
 - EN | KR switch: **Simulation-verified** (simulator, headless Chrome, unit tests `console/web/tests/i18n.test.js`, `console/tests/test_uitext.py`).
 - Automatic updates: **Simulation-verified** (`console/tests/test_auto_update.py` AutoUpdateTests: settings persist across a restart, every relay walks and one publishes at a time, a zone is walked only by a radio that heard it, a walk that cannot publish does not break the tick, the show switch, one USB database update for a behind zone, the USB switch, pull gating, one automatic build at a time with no retry after a failure). Never run against real zones, the Workstation or the web pull.
 - Automatic firmware builds and USB upgrades (`auto_build`, `auto_firmware_usb`, commit `6b26cdf`): **Simulation-verified** only (`console/tests/test_autoupgrade.py`, 11 tests: defaults on, legacy relays become Workstations one at a time, the protected station is never planned, an old zone plate keeps its identity, a pool radio is only reported, a cube waits while Register is on, the hold-back gates, an operator command marks a board in use, a stale build is built before the flash, a failed build waits for a source change, the panel section). No board has been flashed automatically; the first real Workstation flash (bench General Radio AC:27:6E:82:68:54) is pending.

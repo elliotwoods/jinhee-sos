@@ -450,3 +450,99 @@ names `general_radio.py`.
   Workstation firmware, and mainshow firmware is allowed on a controller, so the console never refuses a recorded
   controller. X07 line "The dongle flasher refuses to turn a recorded controller back into a Workstation" is true only
   of the old Zone Database Manager (`zones/dbmanager`), not the console. Not changed here.
+
+## 2026-09-23 · user feedback batch 3 · Applied
+
+- **"Who" removed everywhere.** Purpose callouts (Who / When / You need) deleted from H4, H5, H6 (H0/H1 had none; H3
+  is the other session's). Role framing removed: H1 journey node "Cube desk" → "Receive cube"; H4 C step 5 and H5
+  (swap test, §3 check 5, §4, §7, §8, §11 rows, DANGER callout) no longer send things to "the cube desk", "the duty
+  technician" or "(engineer)"; H6 "Still open" lost its Owner column. X01 "Cube desk" glossary row deleted; X02, X05,
+  X07, X08, X11, X12 reworded; X10 backup table lost its Who column; X13 "Owner / decision" → "Decision / contact" with
+  role entries (Cube desk, Operator, Engineering team) removed; sign-off field "Receiving operator" → "Received by
+  (organisation, name)". Named people stay only as evidence sources. STYLE_GUIDE: page template has no purpose
+  callout; audience section without roles.
+- **H2 removed.** Its First response table is merged into H5's index ("Symptom index and first response": Symptom ·
+  First check · Section, bilingual rows kept) plus the "firmware-difference card is information only" line. The rest
+  (daily routine) is dropped; its technical items already live in X11. `handbook/H2-daily-operation.md` deleted.
+  `{{page:H2}}` fixed in H0 (list), H1 (→ H4), X07 (→ H3/H4/H5), X11 (→ H4/H5). PAGES.json: `H2` → `H2_archived` with
+  the note "archived stub; content moved to H5/H3/H4" (the Notion page becomes a stub). STYLE_GUIDE handbook table
+  has no H2 (H4 12 pp, H5 8 pp). Not my files, for their owners: `console/tools/handover_render.py` still has
+  `'H2': 'Daily operation'` in its title map, and `handover_pdf/build.mjs` still lists `H2` in the Procedures part
+  keys (both harmless: a scratch PDF built fine, H4 = 11 pp, H5 = 8 pp, handbook 51 pp incl. dividers).
+- **H4 opens with "What the console does by itself | 콘솔이 스스로 하는 일"** (from the automatic fact sheet): four
+  groups (always automatic · automatic unless you switch it off · only when you switch it on · never automatic), a
+  table per group, the **Automatic updates** panel and pills, and the "plugging a board in is enough to flash it"
+  WARNING moved from H2. Firmware wording is neutral: "flashes it … if its firmware differs from this computer's
+  build". "Never goes backwards" is stated only for zone databases and shows. Zone database walks carry on during a
+  running show. H4 §F replaced by a one-line pointer to H3; its success-table row removed. H4 A "click Sync on its red
+  card" rewritten (pulled automatically; the card's **Sync** or the chip does it at once). H1's two Automatic-updates
+  paragraphs shrunk to one pointer.
+- **Correction to the fact sheet:** **Pause** in the Automatic updates panel stops only firmware builds and USB firmware
+  upgrades (`console/autoupgrade.py`: `self.paused` gates `start_build` and the upgrade plan; log "Automatic firmware
+  updates paused"). Zone database walks, show updates and sync ignore it. H4 says so.
+- **Web-allocated cube numbers** (the HOLD entry above) are committed in 6b26cdf (`hub.claim_numbers`,
+  `regflow.step_number`, `web_client.claim_number`, `web/src/app/api/inventory/claim/route.ts` exists). X08 has a new
+  "Cube numbers from the web" table and Known-issue row (Code-checked; deployment of the endpoint **To confirm**); X03
+  Number allocation rows and **Pair new cubes (auto)** row updated. **For the H3 owner:** H3 A step 2 ("A new cube
+  gets the lowest free number above 32") and the note "Only the Register page gives a new cube a number … **Needs
+  number**" must match: with the web password the number comes from the web ("Getting a new number from the web…";
+  on failure the cube stays **Needs number** and retries every 60 s), and a brand-new cube seen elsewhere is numbered
+  from the web within seconds; the local lowest-free-above-32 rule applies only without a web password.
+- **X07:** "The dongle flasher refuses to turn a recorded controller back into a Workstation" corrected: true only of
+  the old Zone Database Manager; the console allows it (closes the batch 2 finding).
+- **X11:** the two Tier 0 rows ("Another app is open on this database: ‹apps›", "‹port› is owned by another
+  application") moved into the Tier 0 table; `auto_sync` noted as committed in 6b26cdf (also in X08).
+- Validation: `handover_render.py --all --allow-missing-pages` with fake uploads exits 0.
+
+## 2026-09-23 · from workstation-auto-flash-tag · "Flash the cube when its tag is read" (NOT committed yet; Simulation-verified, unit tests only)
+
+The user wants this written up as a common procedure: H3, new section after B, "Check that a cube is registered, using
+the Workstation reader". Also update X03 (the cube tools table and the "Two kinds of flash" warning: this switch only
+blinks the LEDs), X11 and the Workstation row in console/README.md.
+
+**Where and what**
+- Where: Workstation panel › **On the reader** card, a big ON/OFF switch at its top. The card appears only on a board
+  with a reader.
+- When ON, each tag placed on the reader makes its owning cube flash blue/red for 2 s over this board's radio, the same
+  as **Flash 2 s**.
+- Owner: the device with this committed tag, otherwise the one with this pending tag.
+- Default off. It is off at every console start and whenever the link reopens; the setting is not saved.
+- It sends only while the board is idle. It never writes the database and does not count as an `nfc_seen` scan.
+- One flash per placement: lift the tag and place it again to repeat.
+
+**Exact strings**
+- Switch: **Flash the cube when its tag is read**
+- ON detail: "Each tag placed on the reader makes its cube flash blue/red for 2 s over this radio: the cube is registered
+  and reachable. Nothing is sent while the board is busy."
+- OFF detail: "Off: a tag on the reader is only shown here. It is off every time the console starts."
+- Status line "Last automatic flash": "#<n> · <result> · <time>". Results: flashed / flashed (pending tag) / not
+  flashed: unknown tag / not flashed: the board was busy / not flashed: excluded device.
+- Log lines:
+  - "Flashing cube #44 for 2 s: its tag <uid> is on the reader"
+  - "Not flashed: no device in the inventory owns tag <uid>"
+  - "Flash on tag read turned ON/OFF"
+- Command `radio.reader_flash {device, on}` (hardware; one click with a warning tooltip).
+
+**Procedure**
+1. Open the Workstation panel. The **On the reader** card must show NFC ready.
+2. Turn the switch ON.
+3. Place a cube's tag on the reader. The card shows the cube's number and the cube flashes.
+4. Do the cubes one by one, lifting each tag before placing the next.
+5. Turn the switch OFF when done.
+
+**What each result means**
+- The cube flashes: it is registered and the radio reaches it.
+- "Unknown tag" or "not flashed: unknown tag": no cube owns this tag; register it.
+- A number is shown but nothing flashes: the cube is off, out of range, or has the wrong MAC. Check the Signal column,
+  or use Send saved mapping.
+- flashed (pending tag): the registration was never acknowledged; send the saved mapping again.
+- not flashed: the board was busy: stop the other operation, then place the tag again.
+
+**Sources**
+- `console/sessions/workstation.py` (`set_reader_flash`, `_auto_flash`)
+- `console/commands.py` (`radio.reader_flash`)
+- `console/uitext.py`
+- `console/web/panels/WorkstationPanel.js` (`ReaderCube`)
+- `console/tests/test_workstation.py::test_flash_on_tag_read`
+
+HOLD until the current Notion publishes of H3, X03 and X11 finish.

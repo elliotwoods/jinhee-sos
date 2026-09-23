@@ -5,7 +5,7 @@
 //
 // Book = the handbook, then the extended reference as an appendix (STYLE_GUIDE.md › Two sections):
 //   title page, contents, "About this handover" (handbook/H0-*.md, its page-link list dropped),
-//   Parts Introduction (H1) · Procedures (H2–H4) · Troubleshooting (H5) · What we fixed (H6),
+//   Parts Introduction (H1) · Procedures (H3, H4) · Troubleshooting (H5) · What we fixed (H6),
 //   then an Appendix divider and extended/X01…X13-*.md in a compact English-only style, then the colophon.
 // Page keys and titles are parsed from the two STYLE_GUIDE tables; a page with no draft yet is left out with a
 // warning. The draft dialect (STYLE_GUIDE.md › Draft dialect) is converted to HTML, rendered in the installed Chrome
@@ -13,9 +13,15 @@
 // book is reprinted until they are stable. Unknown placeholders, missing screenshots and mermaid errors fail the build.
 // Intermediate HTML goes to HANDOVER_TMP (default: <os tmp>/nct-handover-pdf), never into the repository.
 // HANDOVER_DOCS points the build at another copy of console/docs/handover_v2 (tests with scratch drafts).
+// Build version: the KST build date plus a letter for that day's build count (2026-09-23, 2026-09-23B, … Z, AA, AB),
+// printed on the title page, in every running footer, on the colophon and in the PDF metadata. The counter lives in
+// build_version.json (gitignored, per machine) and is written only after the PDF is; HANDOVER_NO_BUMP=1, or an output
+// outside console/docs, leaves it alone (scratch builds print the version the next real build would get).
+// A real build writes console/docs/NCT_Console_Handover_v2_<version>.pdf and copies it to NCT_Console_Handover_v2.pdf;
+// older versioned files are never touched (a letter whose file already exists is skipped).
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, renameSync } from 'node:fs';
+import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { Marked } from 'marked';
@@ -27,7 +33,15 @@ const CONSOLE = resolve(HERE, '..', '..');
 const DOCS = process.env.HANDOVER_DOCS ? resolve(process.env.HANDOVER_DOCS) : join(CONSOLE, 'docs', 'handover_v2');
 const SHOTS = join(CONSOLE, 'docs', 'shots');
 const RENDER_PY = join(CONSOLE, 'tools', 'handover_render.py');
-const OUT = process.env.HANDOVER_PDF_OUT || join(CONSOLE, 'docs', 'NCT_Console_Handover_v2.pdf');
+// Default output: console/docs/NCT_Console_Handover_v2_<version>.pdf plus NCT_Console_Handover_v2.pdf as a copy of the
+// latest build (links keep working). HANDOVER_PDF_OUT writes that one file instead.
+const OUT_DIR = join(CONSOLE, 'docs');
+const STABLE_OUT = join(OUT_DIR, 'NCT_Console_Handover_v2.pdf');
+const versionedOut = (version) => join(OUT_DIR, `NCT_Console_Handover_v2_${version}.pdf`);
+const EXPLICIT_OUT = process.env.HANDOVER_PDF_OUT ? resolve(process.env.HANDOVER_PDF_OUT) : null;
+const VERSION_FILE = join(HERE, 'build_version.json');
+const insideDocs = (() => { if (!EXPLICIT_OUT) return true; const r = relative(OUT_DIR, EXPLICIT_OUT); return !!r && !r.startsWith('..') && !isAbsolute(r); })();
+const NO_BUMP = process.env.HANDOVER_NO_BUMP === '1' || !insideDocs;
 const TMP = process.env.HANDOVER_TMP || join(tmpdir(), 'nct-handover-pdf');
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const KEEP_PNG = process.env.HANDOVER_PNG === '1';
@@ -44,10 +58,12 @@ const BOOK = {
   running: 'NCT Console · Handover v2',
   footer: 'Kimchi and Chips · NCT Console handover v2 · prepared for Amberin / Engineering Six',
 };
-// Handbook Parts (the handbook order); H0 opens the book as "About this handover", outside the Parts.
+// Handbook Parts (the handbook order); H0 opens the book as "About this handover", outside the Parts. A Part holds
+// whichever of its keys the STYLE_GUIDE table lists and has a draft for: H2 (Daily operation) was retired on
+// 2026-09-23, and a Procedures key that is not in the table is simply absent (no warning).
 const PARTS = [
   { name: 'Introduction', kr: '소개', keys: ['H1'] },
-  { name: 'Procedures', kr: '작업 절차', keys: ['H2', 'H3', 'H4'] },
+  { name: 'Procedures', kr: '작업 절차', keys: ['H3', 'H4'] },
   { name: 'Troubleshooting', kr: '문제 해결', keys: ['H5'] },
   { name: 'What we fixed', kr: '개선 내역', keys: ['H6'] },
 ];
@@ -75,6 +91,35 @@ function koreanHeavy(s) {
   const k = (plain.match(HANGUL) || []).length;
   const l = (plain.match(/[A-Za-z]/g) || []).length;
   return k >= 4 && k / (k + l) > 0.3;
+}
+
+// ---------------------------------------------------------------------------------------------- build version
+
+// KST calendar date, YYYY-MM-DD
+const kstDate = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+// 1 → '' (first build of the day), 2 → B … 26 → Z, 27 → AA, 28 → AB (bijective base 26)
+function dayLetters(n) {
+  if (n <= 1) return '';
+  let s = '';
+  for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+}
+// The version this build prints. Nothing is written here: commitVersion() records it after the PDF is written.
+function nextVersion() {
+  const date = kstDate();
+  let prev = null;
+  if (existsSync(VERSION_FILE)) {
+    try { prev = JSON.parse(read(VERSION_FILE)); } catch (e) { fail(`${VERSION_FILE} is not valid JSON (${e.message}); fix or delete it`); }
+  }
+  let count = prev && prev.date === date && Number.isInteger(prev.count) && prev.count > 0 ? prev.count + 1 : 1;
+  // never overwrite an earlier versioned PDF (e.g. after the counter file was deleted)
+  if (!EXPLICIT_OUT) while (existsSync(versionedOut(date + dayLetters(count)))) count++;
+  return { date, count, version: date + dayLetters(count) };
+}
+function commitVersion(v) {
+  const tmp = VERSION_FILE + '.tmp';
+  writeFileSync(tmp, JSON.stringify(v, null, 2) + '\n', { encoding: 'utf-8' });
+  renameSync(tmp, VERSION_FILE);
 }
 
 // ---------------------------------------------------------------------------------------------- sources
@@ -411,9 +456,9 @@ function buildHtml(ctx, pagesIn, pages = {}) {
         <div><div class="cl">Prepared by</div><div class="cv">Kimchi and Chips</div><div class="ck">김치앤칩스</div></div>
         <div><div class="cl">Prepared for</div><div class="cv">Amberin / Engineering Six</div><div class="ck">앰버린 / 엔지니어링식스</div></div>
         <div><div class="cl">Baseline</div><div class="cv">${esc(ctx.baselineDate)}</div><div class="ck">문서 기준일 2026년 9월 23일</div></div>
-        <div><div class="cl">Version</div><div class="cv">Version 2 · NCT Console ${esc(ctx.consoleVersion)}</div><div class="ck">${esc(ctx.commitLine)}</div></div>
+        <div><div class="cl">Version</div><div class="cv">Version 2 · build ${esc(ctx.version)}</div><div class="ck">${esc([ctx.consoleVersion && `NCT Console ${ctx.consoleVersion}`, ctx.commitLine].filter(Boolean).join(' · '))}</div></div>
       </div>
-      <div class="cover-note"><span>This document was written by Kimchi and Chips. Printed ${esc(ctx.built)} from the handover v2 drafts: the handbook, then the extended reference (English) as an appendix.</span></div>
+      <div class="cover-note"><span>This document was written by Kimchi and Chips. Printed ${esc(ctx.built)} (KST), build ${esc(ctx.version)}, from the handover v2 drafts: the handbook, then the extended reference (English) as an appendix.</span></div>
     </div>
   </section>`;
   sections.push({ id: 'cover', html: cover });
@@ -465,9 +510,10 @@ function buildHtml(ctx, pagesIn, pages = {}) {
   sections.push({ id: 'colophon', html: `<section class="sec colophon" id="colophon" data-page="back"><div class="colo-inner">
     <img class="colo-logo" src="${logo}" alt="Kimchi and Chips">
     <p><strong>Operations &amp; Technical Handover v2 — NCT Console.</strong> Prepared by Kimchi and Chips for Amberin / Engineering Six.
-    Documentation baseline ${esc(ctx.baselineDate)}; NCT Console ${esc(ctx.consoleVersion)}, ${esc(ctx.commitLine)}.</p>
+    Documentation baseline ${esc(ctx.baselineDate)}; ${esc([ctx.consoleVersion && `NCT Console ${ctx.consoleVersion}`, ctx.commitLine].filter(Boolean).join(', '))}.</p>
+    <p class="colo-version">Build ${esc(ctx.version)}</p>
     <p class="colo-kr">운영·기술 인수인계 v2 — NCT 콘솔. 김치앤칩스가 앰버린 / 엔지니어링식스를 위해 작성했습니다.</p>
-    <p class="colo-small">Printed edition of the Notion handover v2 pages, built ${esc(ctx.built)} by <code>console/tools/handover_pdf</code> from
+    <p class="colo-small">Printed edition of the Notion handover v2 pages, build ${esc(ctx.version)}, built ${esc(ctx.built)} (KST) by <code>console/tools/handover_pdf</code> from
     <code>console/docs/handover_v2/handbook</code> and <code>extended</code>. Screenshots are console captures with example data (<code>console/docs/shots</code>). Set in Inter, Noto Sans KR and JetBrains Mono.</p>
   </div></section>` });
 
@@ -479,14 +525,14 @@ function buildHtml(ctx, pagesIn, pages = {}) {
       + `@page ch${c.num} { @top-right { content: ${head}; } }\n`
       + `@page ch${c.num}w { size: A4 landscape; @top-right { content: ${head}; } }`;
   }).join('\n');
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(BOOK.title)} — ${esc(BOOK.subtitle)}</title>
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(BOOK.title)} — ${esc(BOOK.subtitle)} (build ${esc(ctx.version)})</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="${FONTS_URL}">
 <link rel="stylesheet" href="${pathToFileURL(join(HERE, 'print.css')).href}">
 <style>
 @page {
   @top-left { content: ${cssString(BOOK.running)}; background-image: url("${logo}"); }
-  @bottom-left { content: ${cssString(BOOK.footer + ' · ' + ctx.baselineDate)}; }
+  @bottom-left { content: ${cssString(BOOK.footer + ' · ' + ctx.baselineDate + ' · build ' + ctx.version)}; }
   @bottom-right { content: counter(page); }
 }
 @page toc { @top-right { content: "Contents"; } }
@@ -685,6 +731,9 @@ async function main() {
   const allText = chapters.map((c) => read(c.path)).join('\n');
   const shotIds = [...new Set([...allText.matchAll(/\{\{shot:([A-Za-z0-9-]+)\}\}/g)].map((m) => m[1]))];
 
+  const version = nextVersion();
+  console.log(`build ${version.version}${NO_BUMP ? ` (not recorded: ${process.env.HANDOVER_NO_BUMP === '1' ? 'HANDOVER_NO_BUMP=1' : 'output outside console/docs'})` : ''}`);
+
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--allow-file-access-from-files', '--font-render-hinting=none'] });
   try {
     const shots = await prepareShots(browser, shotIds);
@@ -693,7 +742,8 @@ async function main() {
       baselineDate: '23 September 2026',
       commitLine: commitLine(chapters, index),
       consoleVersion: index.console_version || '',
-      built: new Date().toISOString().slice(0, 10),
+      built: kstDate(),
+      version: version.version,
     };
     for (const ch of chapters) ch.html = convertDraft(ch.num, read(ch.path), ctx);
 
@@ -742,11 +792,25 @@ async function main() {
     const total = await countPages(pdf);
     starts.colophon = total;
     sections.forEach((s, i) => { s.pages = (i + 1 < sections.length ? starts[sections[i + 1].id] : total + 1) - starts[s.id]; });
-    writeFileSync(OUT, pdf);
+    // version in the document information (title, subject, keywords); Chrome's outline and tags are kept as they are
+    const doc = await PDFDocument.load(pdf, { updateMetadata: false });
+    doc.setTitle(`${BOOK.title} — ${BOOK.subtitle} (build ${version.version})`, { showInWindowTitleBar: true });
+    doc.setSubject(`${BOOK.running} · build ${version.version} · baseline ${ctx.baselineDate}`);
+    doc.setKeywords(['NCT Console', 'handover v2', `build ${version.version}`]);
+    doc.setAuthor('Kimchi and Chips');
+    doc.setModificationDate(new Date());
+    pdf = await doc.save({ useObjectStreams: false });
+    const outs = EXPLICIT_OUT ? [EXPLICIT_OUT] : [versionedOut(version.version), STABLE_OUT];
+    for (const out of outs) {
+      const tmp = out + '.tmp';
+      writeFileSync(tmp, pdf);
+      renameSync(tmp, out);
+    }
+    if (!NO_BUMP) commitVersion(version);
     const hb = chapters.filter((c) => c.section === 'handbook').length;
     const handbookPages = (starts.appendix || total) - 1;   // title page … last handbook page (colophon excluded)
     const appendixPages = starts.appendix ? total - starts.appendix : 0;   // divider … last X page
-    console.log(`wrote ${OUT}`);
+    console.log(`wrote ${outs.join(' and ')} (build ${version.version}${NO_BUMP ? ', counter not bumped' : `, recorded in ${VERSION_FILE}`})`);
     console.log(`  ${total} pages, ${hb} handbook + ${chapters.length - hb} extended pages, ${diagrams} diagrams, ${shotIds.length} screenshots; contents page numbers match the PDF outline`);
     console.log(`  handbook: ${handbookPages} pages (title page, contents and Part dividers included); appendix: ${appendixPages} pages (divider included); colophon: 1`);
     console.log(`  intermediate HTML: ${file}`);

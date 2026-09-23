@@ -37,7 +37,7 @@ loopback API, open release discrepancies, what changed from v1 and how evidence 
 
 | Step | Where | Cube command | Cube colour | Notes |
 |---|---|---|---|---|
-| 1 Receive | Cube desk | — | dim white (idle) | Charged, tested cube; show the visitor the tag side |
+| 1 Receive | Hand-out point | — | dim white (idle) | Charged, tested cube; show the visitor the tag side |
 | 2 Preshow | Four points (butterfly) | `SET_ZONE 1` | red | TouchDesigner gets that point's cue; removing the cube releases the point |
 | 3 Desert | 23 member positions (design) | `SET_ZONE 2` | yellow | Tag held steadily; that member's name panel lights |
 | 4 Pool / forest | Six pool radios, 23 frame lights | `SET_ZONE 3` | blue | Cube stays on the tag point while the slider moves; one frame lights |
@@ -97,7 +97,7 @@ reported version next to the local build.
 
 | Board | Role | Firmware source | Version in repo | Installed / observed | Evidence |
 |---|---|---|---|---|---|
-| NCT Console | Operator program | `console/` | 0.1.0 | Bench Mac | Simulation-verified; Bench-verified with #138 and cube desk use |
+| NCT Console | Operator program | `console/` | 0.1.0 | Bench Mac | Simulation-verified; Bench-verified with #138 and bench cube work |
 | Cube | Zone colours, number + tag in NVS, main show | `flashing_station/firmware/neocore_usb` (bundled build `flashing_station/build/manifest.json`) | v1.7.0-USB.1 | Six cubes v1.7.0-USB.1; rest v1.4.1-USB.2 | Bench-verified (flash receipts; LEDs not recorded) |
 | Workstation | Tag reader, cube/zone/show relay, show start, emulated pool radio and preshow plate | `zones/firmware/Workstation` | workstation-1.0.0 | Not on any board | Simulation-verified; host tests; arduino-cli build 1,031,248 B |
 | Installed pairing station (legacy) | Reader + registration relay + zone DB relay | `pairing_station/firmware/pairing_station` | nct-pairing-1.8-zones (frozen) | Installed, Protected, `3C:0F:02:AD:83:24` | Code-checked; no new flashes |

@@ -199,11 +199,11 @@ Settings › Automatic updates. All on by default (the five database switches be
 | Pull a newer zone database and show from the web | `auto_pull` | Needs the password. Pulls a newer zone database when a status check reports one (each version once per run); newer show every 5 min (300 s) while a show relay is connected and `auto_show` is also on. Logs only a new pull ("Pulled show vN") or each distinct error once ("Automatic show pull: …"); "No show published on the web yet" and "already here" are silent |
 | Sync the inventory with the web by itself… | `auto_sync` | Full label: "Sync the inventory with the web by itself: local changes upload a few seconds later, web changes download, new cube mappings publish (needs the web password)". See below |
 
-A **Newer / differs** board is never overwritten automatically. `--simulate` writes to fake zones and never reaches the web (`hub.auto_web` is off, so no automatic sync, status check or pull runs). The docs bench (`console/simdocs.py`, used by `docshots`) switches all five off, so screenshots show them unticked; the real defaults are on.
+A **Newer / differs** board is never overwritten automatically. The zone walk is **not** held while a main show runs (`hub.zone_walk_allowed` checks only that no other radio is publishing); only the show updater holds. `--simulate` writes to fake zones and never reaches the web (`hub.auto_web` is off, so no automatic sync, status check or pull runs). The docs bench (`console/simdocs.py`, used by `docshots`) switches all five off, so screenshots show them unticked; the real defaults are on.
 
 ### Automatic inventory sync (`auto_sync`)
 
-Operators no longer need to press **Sync**; the button still works and syncs at once.
+Nobody needs to press **Sync** any more; the button (and the Sync chip) still syncs at once.
 
 | Item | Value |
 |---|---|
@@ -222,7 +222,24 @@ Operators no longer need to press **Sync**; the button still works and syncs at 
 
 Top-bar Sync chip while `auto_sync` is on (`console/state.py::describe_auto`; clicking it syncs at once): **✓ Synced** · **⟳ Sync in 5 s** (countdown after a local change) · **Sync · retry in 2 min** (after a failure) · **Sync · offline** · **⟳ Sync · sign in**. **Inventory › Web sync** has an **Automatic** row ("on · a local change syncs within seconds; the web is checked every minute" / "off (Settings › Automatic updates)"). The Jobs list hides automatic syncs that succeed and shows failures. Attention cards `sync.publish_pending` (**Cube mappings changed but the zone database was not published**) and `sync.waiting` (**N downloaded change(s) are waiting to be applied**) are hidden while automatic sync is on and has no error; the **Web sync problem** card then says "It retries by itself; Sync now to try at once."
 
-Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`): each sync writes metadata `auto_number=0`. A new cube seen on a synced computer then gets **Needs number** instead of an automatic number. The Register page still assigns a new number; **Pair new cubes (auto)** skips unnumbered cubes. Detail: {{page:X03}} › Number allocation.
+Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`): each sync writes metadata `auto_number=0`, so this computer no longer picks new numbers locally. With the web password stored, new numbers come from the web instead (next section).
+
+### Cube numbers from the web (`hub.claim_numbers`, commit 6b26cdf)
+
+| Item | Value |
+|---|---|
+| When the console claims | `hub.web_numbering()`: a stored web password and not `--simulate` (`hub.auto_web`). No separate setting |
+| Which cubes | Every 2 s: rows with no number, status `needs_number`, detail `NEW_UNNUMBERED` (a brand-new cube seen by USB identification, radio discovery or pairing) and role not `excluded`; plus any MAC the Register page's Number step asked for (`hub.request_number`). One `number.claim` job at a time (a quiet job) |
+| Endpoint | `POST /api/inventory/claim {dataset, mac, exclude[], min: 33, client}` → `{number, existing}` (`pairing_station/web_client.py::claim_number`, `console/jobs/sync.py::claim_job`) |
+| Server rule | `web/src/lib/numbers.ts::claim`: the lowest free number ≥ 33 that no other MAC holds or has claimed and that is not in `exclude`. Idempotent: the same MAC gets the same number back. Claims live in their own blob document (`numbers/<dataset>.json`, compare-and-swap); the inventory document is not written by the claim |
+| `exclude` | Every number in the local database plus the reserved numbers 2, 22, 39 and 43 |
+| Result | `hub.numbers_claimed` renames the cube (`db.rename(..., fresh_scan=True)`), logs "New number #N for ‹MAC› (handed out by the web)"; automatic sync uploads the record. A number taken locally meanwhile is not applied and is excluded next time |
+| Failure (offline, or a web without `/api/inventory/claim` answering 404) | Cubes stay at **Needs number** (never a local guess); retry after 60 s. The Register page shows "The web could not hand out a number (‹error›); retrying. Or assign one by hand." Renaming by hand still works |
+| Register page Number step | With web numbering: "Getting a new number from the web…" until the claim lands. Without a web password: `suggested_number()` locally (lowest free above 32), **NEW NUMBER: write #N on the cube's label** |
+| Old Tk apps | Never claim |
+| Effect | Two computers numbering new cubes at once no longer pick the same number. **Pair new cubes (auto)** pairs a new cube once it has its number |
+
+Detail of the local rules: {{page:X03}} › Number allocation.
 
 ### Workstation replacement
 
@@ -266,8 +283,8 @@ Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`):
 | Zone database update over the air never run on installed boards | Simulation-verified only |
 | Automatic updates never run against installed zone boards, the dongle or the web pull | Simulation-verified (`console/tests/test_auto_update.py`) |
 | Every relay walking, one publishing at a time, per-radio candidates, the inconsistent-cache back-off and the show relay choice (`6b26cdf`) never run with two real Workstations | Simulation-verified (`console/tests/test_auto_update.py`: `test_every_relay_walks_and_one_publishes_at_a_time`, `test_a_zone_is_walked_only_by_a_radio_that_heard_it`, `test_a_walk_that_cannot_publish_does_not_break_the_tick`) |
-| Automatic inventory sync (`auto_sync`) is uncommitted work on 23 Sept and has never run against the real web inventory | Simulation-verified (`console/tests/test_auto_update.py` AutoSyncTests) |
-| Every sync turns automatic numbering off (`auto_number=0`), so new cubes found by discovery or USB wait in **Needs number** and **Pair new cubes (auto)** skips them | Code-checked (`web_sync.py`, `inventory_sync.py`, `database.reserve`, `controller.choose`) |
+| Automatic inventory sync (`auto_sync`, committed in 6b26cdf) has never run against the real web inventory | Simulation-verified (`console/tests/test_auto_update.py` AutoSyncTests) |
+| New cube numbers come from the web (`/api/inventory/claim`) on any computer with the web password; without it, a synced computer (`auto_number=0`) leaves new cubes at **Needs number** outside the Register page | Code-checked (`console/hub.py::claim_numbers`, `console/regflow.py::step_number`, `pairing_station/web_client.py::claim_number`, `web/src/app/api/inventory/claim/route.ts`); Simulation-verified by the console tests. **To confirm:** that the deployed web inventory serves `/api/inventory/claim` (until it does, new cubes stay at **Needs number**) |
 | Workstation firmware not flashed on any board | Code-checked; build only |
 | **Contradiction:** the ch. 06 draft said the console refuses the Mainshow controller when writing a Workstation. `console/jobs/dongle.py::flash_job` clears the controllers set for `workstation` ("a Workstation is a superset… converting either is allowed"), so the console **does** allow converting #134. Only `mainshow`-target and the Zone Database Manager path refuse it | Code-checked |
 | Merge rules, Web sync check, convergence | Code-checked (`inventory_sync.py`); Simulation-verified (`console/tests/test_sync_check.py`, `pairing_station/tests/test_sync_convergence.py`) |

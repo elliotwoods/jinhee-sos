@@ -80,17 +80,17 @@ Each app folder has `Launch.command` (Mac) and `Launch.bat` (Windows). From a te
 
 **Sync** copies device records (MAC, cube number, tags, role) between computers. It is not a backup.
 
-| What | Where | How often | Who |
-|---|---|---|---|
-| Web inventory (device records) | Online, shared by every console | Automatic sync (on by default: seconds after a local change, and when the 60 s web check finds changes) or **Sync** | Automatic; operators |
-| Published zone database and main show | Online, versions allocated by the web | Each publish (**Sync** / **Publish**) | Cube desk |
-| Git inventory (`inventory/devices/*.json`) | Repository | When a release is agreed (`scripts/sync_inventory.py`, then commit) | Engineering |
-| Full local inventory (`pairing_station/data/devices.sqlite3`) | Private backup location, never Git | Recommended: after each registration session and before any bulk change | Duty technician |
-| Cube flash receipts, logs, NVS backups (`flashing_station/data/`) | Same private backup | With the inventory backup | Duty technician |
-| Zone identities, backups, flashing evidence (`zones/flasher/data/`) | Same private backup | With the inventory backup | Duty technician |
-| Pool calibration recordings (`console/data/recordings/`) and calibration backups | Same private backup (calibration itself is also in each pool radio's NVS) | After calibration work | Duty technician |
-| `pairing_station/data/` scan/audit DB and historical station backup | Same private backup | With the inventory backup | Duty technician |
-| Source revision and build manifests | Git commit id, recorded in the sign-off | Each release | Engineering |
+| What | Where | How often |
+|---|---|---|
+| Web inventory (device records) | Online, shared by every console | Automatic sync (on by default: seconds after a local change, and when the 60 s web check finds changes) or **Sync** |
+| Published zone database and main show | Online, versions allocated by the web | Each publish (**Sync** / **Publish**) |
+| Git inventory (`inventory/devices/*.json`) | Repository | When a release is agreed (`scripts/sync_inventory.py`, then commit) |
+| Full local inventory (`pairing_station/data/devices.sqlite3`) | Private backup location, never Git | Recommended: after each registration session and before any bulk change |
+| Cube flash receipts, logs, NVS backups (`flashing_station/data/`) | Same private backup | With the inventory backup |
+| Zone identities, backups, flashing evidence (`zones/flasher/data/`) | Same private backup | With the inventory backup |
+| Pool calibration recordings (`console/data/recordings/`) and calibration backups | Same private backup (calibration itself is also in each pool radio's NVS) | After calibration work |
+| `pairing_station/data/` scan/audit DB and historical station backup | Same private backup | With the inventory backup |
+| Source revision and build manifests | Git commit id, recorded in the sign-off | Each release |
 
 > [!DANGER] Never copy or share `pairing_station/data/web_password` or `pairing_station/data/api.curl`; both are recreated per computer. Never commit the SQLite database, its `-wal` file or flash backups.
 

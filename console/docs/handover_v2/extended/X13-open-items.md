@@ -10,26 +10,26 @@ The latest field reports say the exhibition interactions broadly work. This page
 
 ### Open items
 
-| Item | Status | Owner / decision | Evidence |
+| Item | Status | Decision / contact | Evidence |
 |---|---|---|---|
 | **Pool printed names:** cover, remove or otherwise treat the printed names the sliders cannot match exactly | Open | Amberin / Lotte decide; Engineering Six implement and check repeatability | To confirm |
 | **Desert alignment:** identify the reported Jisung / Jimin positions, record their physical point IDs, correct the mounting, retest through the finished table | Open | Engineering Six, carpentry | To confirm |
-| **Battery endurance:** measure preshow USB-battery runtime and cube charging turnaround in real use; set swap intervals. The small LiPo trial failed | Open | Operator | To confirm |
-| **Failed main-show cube:** find the cube that failed in Elliot's 1-of-10 test, record number and MAC, diagnose, reflash or re-register, retest | Open; identity not in the report | Cube desk | Field-reported (Elliot, 22 Sept) |
-| **Cube stock:** count usable, spare, faulty and charging cubes against the audience and show plan | Open | Operator | To confirm |
-| **Cube firmware roll-out:** six cubes (#17, #33, #39, #52, #58, #95) run v1.7.0-USB.1; the rest run v1.4.1-USB.2 and keep playing the compiled-in original show. Decide whether to flash the fleet with the **Flash cubes** page ({{page:X03}}) | Partly done | Cube desk; Elliot to confirm the plan | Bench-verified (six cubes) |
+| **Battery endurance:** measure preshow USB-battery runtime and cube charging turnaround in real use; set swap intervals. The small LiPo trial failed | Open | — | To confirm |
+| **Failed main-show cube:** find the cube that failed in Elliot's 1-of-10 test, record number and MAC, diagnose, reflash or re-register, retest | Open; identity not in the report | — | Field-reported (Elliot, 22 Sept) |
+| **Cube stock:** count usable, spare, faulty and charging cubes against the audience and show plan | Open | — | To confirm |
+| **Cube firmware roll-out:** six cubes (#17, #33, #39, #52, #58, #95) run v1.7.0-USB.1; the rest run v1.4.1-USB.2 and keep playing the compiled-in original show. Decide whether to flash the fleet with the **Flash cubes** page ({{page:X03}}) | Partly done | Elliot to confirm the plan | Bench-verified (six cubes) |
 | **Published main show v6:** watch it play on many cubes across the room with the media cue; decide whether v6 is the site show. The next publish is numbered by the web | Open | Media team, Elliot | Bench-verified (cube reports only) |
 | **Mainshow controller #134:** decide whether to update mainshow-1.2.0 → mainshow-1.3.0 (adds the show clock for late cubes) | Decision needed | Engineering Six, Elliot | To confirm |
 | **Zone database v38 clean-up:** v38 was published by a simulated console run that uploaded fake records (MACs `A4:CF:12:34:56:…`). Check the web inventory, remove the fake records, publish a clean version before distributing ({{page:X08}}) | Open | Elliot (web inventory owner) | Code-checked (`console/TEST_REPORT_2026-09-23.md`) |
-| **Zones behind:** 19 known zone boards out of bench range held older zone databases (v4–v32) on 23 Sept: Preshow Exit 1 v4, Preshow 2 v29, two old Preshow 4 boards v28, Desert 3/4/11/13 v4–v14, Desert 12 v32, the six Pool Radios v32, Mainshow 1 v32, both Reset 1 boards v31/v32. Update by walking the Workstation or over USB | Open | Cube desk | Bench-verified (zone query) |
-| **Other computers:** a laptop running old sync code reverted cube unregistrations twice. Every computer must run current code before it syncs | Open | Engineering team | Field-reported (Elliot's bench computer, 23 Sept) |
+| **Zones behind:** 19 known zone boards out of bench range held older zone databases (v4–v32) on 23 Sept: Preshow Exit 1 v4, Preshow 2 v29, two old Preshow 4 boards v28, Desert 3/4/11/13 v4–v14, Desert 12 v32, the six Pool Radios v32, Mainshow 1 v32, both Reset 1 boards v31/v32. Update by walking the Workstation or over USB | Open | — | Bench-verified (zone query) |
+| **Other computers:** a laptop running old sync code reverted cube unregistrations twice. Every computer must run current code before it syncs | Open | — | Field-reported (Elliot's bench computer, 23 Sept) |
 | **Media handover:** record the TouchDesigner project and version, Serial DAT identity, points 1–4 routing, start-up procedure and main-show cue timing | Open | Media team | To confirm |
-| **Mainshow signal interface:** photograph and document the installed 5 V → controller interface, connector labels, polarity and pinout before any replacement | Open | Engineering Six, media technicians | To confirm |
+| **Mainshow signal interface:** photograph and document the installed 5 V → controller interface, connector labels, polarity and pinout before any replacement | Open | Engineering Six, media team | To confirm |
 | **Pool relay supply:** the fitted SRD-05VDC relays were found fed 12 V on JD-VCC (about 5.7× rated coil power). Target wiring: JD-VCC 5 V from a buck, VCC 3.3 V; confirm it was done. PCA9685 supply never measured | To confirm | Engineering Six, Hojun | Field-reported (`RELAY_BOARD_FINDINGS.md`) |
 | **Pool radio ids:** six pool radios report ids 1, 2, 3, 3, 4, 4. Give each a distinct id 1–6 ({{page:X06}}) | Open | Engineering Six | Field-reported (`RELAY_BOARD_FINDINGS.md`) |
-| **Reset plate names:** two boards both named "Reset 1" (v31, v32); rename and update ({{page:X09}}) | Open | Cube desk | Bench-verified (registry read) |
-| **Release package:** agree one source revision (`main` is at `6b26cdf`, which includes poolcentral-4.2.2; no release tagged) and matching verified builds; reconcile the PoolCentral 40 MHz flash recipe with the aggregate build ({{page:X02}}, {{page:X06}}); record the installed firmware and zone database version per board | Open | Engineering team | Code-checked |
-| **Automatic updates:** agree whether Settings › Automatic updates (all on by default) stay on during opening hours | Decision needed | Operator, Engineering Six | Simulation-verified |
+| **Reset plate names:** two boards both named "Reset 1" (v31, v32); rename and update ({{page:X09}}) | Open | — | Bench-verified (registry read) |
+| **Release package:** agree one source revision (`main` is at `6b26cdf`, which includes poolcentral-4.2.2; no release tagged) and matching verified builds; reconcile the PoolCentral 40 MHz flash recipe with the aggregate build ({{page:X02}}, {{page:X06}}); record the installed firmware and zone database version per board | Open | — | Code-checked |
+| **Automatic updates:** agree whether Settings › Automatic updates (all on by default) stay on during opening hours | Decision needed | Engineering Six | Simulation-verified |
 | **Windows:** if used, run the Windows bring-up checklist (`docs/SETUP.md` §2b) with real boards; WebView2 window and browser fallback untested on Windows hardware | Open if used | Receiving team | Code-checked, Simulation-verified (CI) |
 
 ### Console hardware verification
@@ -89,7 +89,7 @@ Do the walk in a maintenance window with the receiving operator and a technical 
 | Field | Value |
 |---|---|
 | Date and venue | |
-| Receiving operator | |
+| Received by (organisation, name) | |
 | Technical witness | |
 | Source revision (commit) and build manifests | |
 | Console version | |

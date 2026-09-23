@@ -37,7 +37,7 @@ What Kimchi and Chips changed, when, and on what evidence, from 17 to 23 Septemb
 | Wed 23 Sept 04:47 | Pool relays: the 16-channel relay module replaced by three 8-channel modules; frame map re-measured (poolcentral-4.2.2); every slider 1–23 lights its own lamp | Git `5996e10` (Hojun); Field-reported (Hojun) |
 | Wed 23 Sept 04:58 | General Radio and pairing-station firmware merged into one **Workstation** firmware (workstation-1.0.0, arduino-cli build 1,031,248 B, 78 % of app0) with one console role | Git `c955d9f`; Simulation-verified and build only, not flashed |
 
-- No zone board, controller or pairing station was flashed for this documentation, and no installed zone database was changed by it. The 23 Sept cube flashes were cube desk work, recorded here from local flash receipts.
+- No zone board, controller or pairing station was flashed for this documentation, and no installed zone database was changed by it. The 23 Sept cube flashes were bench work, recorded here from local flash receipts.
 - State after 23 Sept: six cubes (#17, #33, #39, #52, #58, #95) on v1.7.0-USB.1 holding show v6; the rest of the fleet on v1.4.1-USB.2. #134 still on mainshow-1.2.0.
 
 ### Git evidence

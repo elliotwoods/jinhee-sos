@@ -42,7 +42,6 @@ MISSING = 'TO_CREATE'
 PAGE_TITLES = {
     'root': 'Operations & Technical Handover v2 — NCT Console',
     'H1': 'Introduction',
-    'H2': 'Daily operation',
     'H3': 'Cube procedures',
     'H4': 'Zone procedures',
     'H5': 'Troubleshooting',

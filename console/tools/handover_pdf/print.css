@@ -21,7 +21,7 @@
 }
 
 /* Running header: small logo + book title left, section right ("H3 · Cube procedures", "Appendix · X06 · …"),
-   hairline under both. Running footer: imprint + date left, page number right. Text lives in build.mjs (per section). */
+   hairline under both. Running footer: imprint + date + build version left, page number right. Text lives in build.mjs (per section). */
 @page {
   size: A4;
   margin: 21mm 17mm 18mm 17mm;
@@ -70,6 +70,7 @@ body { margin: 0; background: #fff; color: var(--ink); font-family: var(--sans);
 .colo-inner p { margin: 0 0 2.5mm; }
 .colo-kr { font-family: var(--kr-font); color: #6d6e71; }
 .colo-small { font-size: 7.4pt; color: #8a8f97; }
+.colo-version { font: 700 8.6pt var(--mono); color: #1b1d21; letter-spacing: 0.02em; }
 .colo-small code { font-family: var(--mono); font-size: 0.95em; }
 
 /* ---------------------------------------------------------------- contents */

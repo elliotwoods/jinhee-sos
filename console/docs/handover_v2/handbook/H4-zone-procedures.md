@@ -1,10 +1,93 @@
 <span color="red">*This document was written by Kimchi and Chips*</span>
 
-> [!INFO] **Who:** cube desk and floor technician · **When:** after registering cubes, before opening, or when a zone or the main show needs a test · **You need:** the console, the Workstation, a known-good registered cube, a USB cable
-> **누가:** 큐브 담당, 현장 기술 담당 · **언제:** 큐브 등록 후, 개장 전, 존이나 메인쇼를 시험할 때 · **준비물:** 콘솔, 워크스테이션, 정상 등록된 큐브, USB 케이블
+This page starts with what the console does by itself. Then come five procedures, A to E; their results are in one table at the end. If a step fails, go to {{page:H5}}.
+<kr>이 페이지는 콘솔이 스스로 하는 일로 시작합니다. 이어서 A부터 E까지 다섯 가지 절차가 있으며, 결과는 끝의 표 하나에 모았습니다. 단계가 실패하면 {{page:H5}}로 갑니다.</kr>
 
-This page has six procedures, A to F. The results of all six are in one table at the end. If a step fails, go to {{page:H5}}.
-<kr>이 페이지에는 A부터 F까지 여섯 가지 절차가 있습니다. 여섯 절차의 결과는 끝의 표 하나에 모았습니다. 단계가 실패하면 {{page:H5}}로 갑니다.</kr>
+## What the console does by itself | 콘솔이 스스로 하는 일
+
+While it is open, the console keeps a lot up to date without a click. It shares the cube list with the web, sends the newest zone database to zone boards, sends the newest main show to cubes, builds firmware, and upgrades boards plugged into this computer by USB.
+<kr>콘솔은 열려 있는 동안 클릭 없이 많은 것을 최신으로 유지합니다. 큐브 목록을 웹과 주고받고, 최신 존 데이터베이스를 존 보드에, 최신 메인쇼를 큐브에 보내고, 펌웨어를 빌드하고, 이 컴퓨터에 USB로 꽂은 보드를 업그레이드합니다.</kr>
+
+It never starts a show, and it never presses a button on a suggestion card for you. Everything it does falls into one of four groups, below.
+<kr>콘솔은 쇼를 시작하지 않으며, 제안 카드의 버튼을 대신 누르지 않습니다. 콘솔이 스스로 하는 일은 아래 네 가지 묶음 중 하나에 속합니다.</kr>
+
+### 1. Always automatic | 1. 항상 자동
+
+| What happens · 하는 일 | What you see · 화면 | How to stop it · 멈추는 법 |
+|---|---|---|
+| A board plugged in by USB is identified without a restart. A cube is pinned and its firmware checked · USB로 꽂은 보드를 재시작 없이 식별. 큐브는 고정되고 펌웨어 확인 | The board appears in the rail under its role · 레일에 역할별로 표시 | Nothing to stop: identifying never changes the board · 멈출 필요 없음: 식별은 보드를 바꾸지 않음 |
+| A live session opens for each identified board · 식별된 보드마다 실시간 세션 열림 | The board's panel shows live status · 보드 패널에 실시간 상태 | Settings › Behaviour › **Open a live session automatically for every identified board** |
+| The selected cube flashes for 1 s through the Workstation, so you can find it · 선택한 큐브가 워크스테이션을 통해 1초 깜빡임 | That cube blinks · 그 큐브가 깜빡임 | Settings › Behaviour › **Preview the selected cube with a 1 s flash (pairing station)** |
+| Suggestion cards appear in **Attention** · **Attention**에 제안 카드 표시 | A card with a button · 버튼이 있는 카드 | Nothing on a card runs until you press its button · 버튼을 누르기 전에는 아무것도 실행되지 않음 |
+| A connected Mainshow controller or Workstation is told the published show's length and version · 연결된 메인쇼 컨트롤러·워크스테이션에 게시된 쇼 길이와 버전 전달 | A **Log** line: "Show vN … sent to the show controller" · **Log** 줄 | Not needed: it starts nothing · 필요 없음: 아무것도 시작하지 않음 |
+
+### 2. Automatic unless you switch it off | 2. 끄지 않으면 자동
+
+These are on by default. Each has a switch in Settings › **Automatic updates**, and the console remembers your choice on this computer.
+<kr>기본으로 켜져 있습니다. 각각 Settings › **Automatic updates**에 스위치가 있으며, 콘솔은 선택을 이 컴퓨터에 저장합니다.</kr>
+
+| What happens · 하는 일 | What you see · 화면 | How to stop it · 멈추는 법 |
+|---|---|---|
+| **Inventory sync:** a change uploads to the web about 5 s later, and changes from other computers download. A new cube gets its number from the web · **인벤토리 동기화:** 변경은 약 5초 뒤 웹에 올라가고 다른 컴퓨터의 변경은 내려받음. 새 큐브는 웹에서 번호를 받음 | Top-bar Sync chip: **✓ Synced**, **⟳ Sync in 5 s**, **Sync · retry in 2 min**, **Sync · offline**, **⟳ Sync · sign in**. Click it to sync at once · 상단 Sync 칩. 누르면 바로 동기화 | Switch **Sync the inventory with the web by itself…** off. Needs the web password · 스위치 끄기. 웹 비밀번호 필요 |
+| **Zone databases over the air:** each Workstation sends the newest zone database to the out-of-date zone boards its radio hears, one radio at a time. It carries on while a show runs · **무선 존 데이터베이스:** 워크스테이션마다 자기 무선이 듣는 뒤처진 존 보드에 최신 존 데이터베이스를 보냄(한 번에 무선 하나). 쇼 재생 중에도 계속함 | Workstation panel › **Zone relay**: "Zone databases vN: X current · Y behind · Z updating" | Switch **Zone databases over the air…** off |
+| **Zone databases over USB:** a configured zone board plugged in that is behind gets the database only. Its firmware and identity are untouched · **USB 존 데이터베이스:** 꽂은 설정 완료 존 보드가 뒤처졌으면 데이터베이스만 씀. 펌웨어와 식별 정보는 그대로 | **Log**: "Automatic zone database update over USB on ‹port›: vA → vB" | Switch **Zone databases over USB…** off |
+| **Main show over the air:** cubes in range with an older show get the newest one (cubes on v1.5.0 or later). It holds while a show runs · **무선 메인쇼:** 범위 안의 오래된 쇼 큐브가 최신 쇼를 받음(v1.5.0 이상). 쇼 재생 중에는 멈춤 | **Show editor**: "Main show vN: X current · Y behind" | Switch **Main show over the air…** off (**Auto update** in the Show editor) |
+| **Web pulls:** a newer zone database (checked every minute) and a newer main show (every 5 min, while a Workstation is connected) are downloaded · **웹에서 받기:** 새 존 데이터베이스(1분마다)와 새 메인쇼(5분마다, 워크스테이션 연결 시) 내려받기 | A **Log** line when something new arrives · 새것이 오면 **Log** 줄 | Switch **Pull a newer zone database and show from the web…** off |
+| **Firmware builds:** when firmware source on this computer changes, it is built, one build at a time. Building never writes to a board · **펌웨어 빌드:** 이 컴퓨터의 펌웨어 소스가 바뀌면 한 번에 하나씩 빌드. 빌드는 보드에 쓰지 않음 | **Automatic updates** panel: **queued**, **building**; **no build tools** if this computer cannot build · 패널 상태 | Switch **Build firmware when its source changes…** off; **Pause** |
+| **Firmware upgrades over USB:** a board plugged in whose firmware differs from this computer's build is flashed (see the warning below) · **USB 펌웨어 업그레이드:** 꽂은 보드의 펌웨어가 이 컴퓨터의 빌드와 다르면 플래시(아래 경고 참고) | **Automatic updates** panel: **Starts in N s**, then **upgrading** · 패널 상태 | **Skip** on its row before it starts; **Pause**; or switch **Upgrade the firmware of USB boards that are out of date…** off |
+
+Zone databases and shows never go backwards: a board or cube accepts only a higher version, and one that holds a newer version is left alone. A zone board marked **Newer / differs** is never overwritten.
+<kr>존 데이터베이스와 쇼는 절대 이전 버전으로 돌아가지 않습니다. 보드와 큐브는 더 높은 버전만 받고, 더 새 버전을 가진 것은 건드리지 않습니다. **Newer / differs**로 표시된 존 보드는 덮어쓰지 않습니다.</kr>
+
+**Pause** in the **Automatic updates** panel stops firmware builds and firmware upgrades for now; zone databases, the show and sync carry on. A restart forgets Pause. To stop anything else, switch it off in Settings › **Automatic updates**.
+<kr>**Automatic updates** 패널의 **Pause**는 펌웨어 빌드와 펌웨어 업그레이드를 잠시 멈춥니다. 존 데이터베이스, 쇼, 동기화는 계속됩니다. 재시작하면 Pause는 풀립니다. 그 밖의 것을 멈추려면 Settings › **Automatic updates**에서 끕니다.</kr>
+
+> [!WARNING] **Plugging a board into this computer is enough to flash it.** About 20 s after a board is identified, the console flashes it without a click if its firmware differs from this computer's build. A zone board keeps its zone, point, name and settings. A cube gets the firmware and the published show (only while **Register** and **Flash** are off). A Mainshow controller or an older Workstation gets the current firmware, and a pairing station or General Radio becomes a Workstation (never the installed pairing station). To keep a board as it is, press **Skip** on its row before it starts, or switch the setting off. (Simulation-verified)
+> **이 컴퓨터에 보드를 꽂기만 해도 플래시됩니다.** 보드가 식별되고 약 20초 뒤, 펌웨어가 이 컴퓨터의 빌드와 다르면 콘솔이 클릭 없이 플래시합니다. 존 보드는 존, 포인트, 이름, 설정을 유지합니다. 큐브는 펌웨어와 게시된 쇼를 받습니다(**Register**와 **Flash**가 꺼져 있을 때만). 메인쇼 컨트롤러나 이전 워크스테이션은 현재 펌웨어를 받고, 등록 스테이션이나 General Radio는 워크스테이션이 됩니다(설치된 등록 스테이션은 제외). 보드를 그대로 두려면 시작 전에 해당 행의 **Skip**을 누르거나 설정을 끕니다. (Simulation-verified)
+
+The console waits while you use a board: after you send it a command (for 60 s), while it relays or sends the show, and while a show runs (Workstation and Mainshow controller).
+<kr>보드를 쓰는 동안에는 기다립니다: 명령을 보낸 뒤(60초), 중계하거나 쇼를 보내는 동안, 쇼 재생 중(워크스테이션과 메인쇼 컨트롤러).</kr>
+
+### 3. Only when you switch it on | 3. 켤 때만
+
+| What happens · 하는 일 | Switch · 스위치 | Remembered? · 저장 |
+|---|---|---|
+| Each cube plugged in is registered: number, tag scan, sync ({{page:H3}}) · 꽂은 큐브마다 등록 | Register › **Register cubes as they are plugged in** | Yes, once on · 켜면 저장 |
+| Each cube plugged in is flashed with the firmware and the show ({{page:H3}}) · 꽂은 큐브마다 펌웨어와 쇼 플래시 | Flash › **Flash cubes as they are plugged in** | No: off at every launch · 아니요: 실행할 때마다 꺼짐 |
+| Each zone board plugged in is flashed · 꽂은 존 보드마다 플래시 | This computer › **Auto-flash zones** | No: off at every launch · 아니요: 실행할 때마다 꺼짐 |
+
+### 4. Never automatic | 4. 자동으로 하지 않는 것
+
+- Firmware for pool radios, the pool central controller and the preshow bridge: listed as **by hand**. The pool radios and the pool central controller are a matched set, upgraded together. <kr>풀 라디오, 풀 중앙 컨트롤러, 프리쇼 브리지 펌웨어: **by hand**로 표시만 합니다. 풀 라디오와 풀 중앙 컨트롤러는 한 세트이므로 함께 업그레이드합니다.</kr>
+- The installed pairing station (3C:0F:02:AD:83:24), and zone boards that are not configured. <kr>설치된 등록 스테이션(3C:0F:02:AD:83:24)과 설정되지 않은 존 보드.</kr>
+- Overwriting a zone database or show with an older one. <kr>존 데이터베이스나 쇼를 이전 버전으로 덮어쓰기.</kr>
+- Starting the main show, and retrying a failed registration (press **Retry**). <kr>메인쇼 시작, 실패한 등록 재시도(**Retry**를 누름).</kr>
+
+### The Automatic updates panel | Automatic updates 패널
+
+The panel sits at the top of the right-hand side, above **Attention**. Its header shows **Pause** / **Resume** and a summary (**Working**, **Paused** or **Off**). **✓ Everything up to date** means nothing is waiting. Under it, the panel lists what still needs a person, such as boards heard over the air with older firmware: plug those in by USB to upgrade them.
+<kr>패널은 오른쪽 위, **Attention** 위에 있습니다. 머리글에 **Pause** / **Resume**과 요약(**Working**, **Paused**, **Off**)이 있습니다. **✓ Everything up to date**는 기다리는 것이 없다는 뜻입니다. 그 아래에는 사람이 할 일이 나옵니다. 예를 들어 무선으로 들린 오래된 펌웨어 보드는 USB로 꽂아 업그레이드합니다.</kr>
+
+Otherwise each build or board has a row with a pill:
+<kr>그 밖에는 빌드나 보드마다 상태 표시가 있는 행이 나옵니다.</kr>
+
+| Pill · 상태 | It means · 뜻 |
+|---|---|
+| **queued**, **building**, **needs build** | Firmware is waiting to be built or being built · 펌웨어 빌드 대기·진행 |
+| **waiting** | It starts when the board and the console are free (**Starts in N s**) · 보드와 콘솔이 비면 시작 |
+| **upgrading**, **checking** | Being flashed, then checked · 플래시 중, 이어서 확인 |
+| **failed** | Did not finish: press **Retry**, or replug · 끝나지 않음: **Retry** 또는 다시 꽂기 |
+| **skipped** | You pressed **Skip**; replug to try again · **Skip**을 누름. 다시 꽂으면 재시도 |
+| **by hand**, **paused**, **off**, **no build tools** | Not done automatically; see {{page:H5}} §11 · 자동으로 하지 않음 |
+
+> [!WARNING] Do not unplug a board whose row shows **upgrading**. Wait until the row disappears or turns **failed**.
+> 행에 **upgrading**이 표시된 보드는 뽑지 않습니다. 행이 사라지거나 **failed**가 될 때까지 기다립니다.
+
+**Recent (n)** lists the last jobs. Automatic jobs appear in **Jobs** only when they fail.
+<kr>**Recent (n)**에 최근 작업이 나옵니다. 자동 작업은 실패했을 때만 **Jobs**에 나옵니다.</kr>
+
+Evidence: USB identification and the show reaching six cubes over the air (v6, 23 September) are Bench-verified. Everything else in this section is Simulation-verified; it has not been run against the installed zone boards. More detail: {{page:X11}}
+<kr>근거: USB 식별과 무선으로 큐브 6개에 쇼 전달(v6, 9월 23일)은 Bench-verified입니다. 이 절의 나머지는 Simulation-verified이며, 설치된 존 보드에서는 실행하지 않았습니다. 자세한 내용: {{page:X11}}</kr>
 
 ## A. Keep zone databases current | A. 존 데이터베이스 최신 유지
 
@@ -22,11 +105,8 @@ flowchart LR
   classDef data fill:#e8f7ee,stroke:#2f855a
 ```
 
-Most days you click nothing. **Settings › Automatic updates** is on by default: every connected Workstation updates the out-of-date zone boards its own radio hears, one radio at a time, and a zone board plugged in by USB gets the database too. A board marked **Newer / differs** is never overwritten: click **Sync** on its red card. (Simulation-verified; not yet run against the installed zone boards.)
-<kr>대부분은 아무것도 누르지 않습니다. **Settings › Automatic updates**는 기본으로 켜져 있습니다. 연결된 워크스테이션마다 자기 무선이 듣는 뒤처진 존 보드를 한 번에 무선 하나씩 업데이트하고, USB로 꽂은 존 보드에도 데이터베이스를 씁니다. **Newer / differs**로 표시된 보드는 덮어쓰지 않습니다. 빨간 카드의 **Sync**를 누릅니다. (Simulation-verified. 설치된 존 보드에서는 아직 실행하지 않았습니다.)</kr>
-
-A configured zone board plugged in by USB with older firmware is also upgraded by itself, keeping its identity (zone, point, name and settings). Pool radios are never upgraded automatically: they and the pool central controller are a matched set, upgraded together by hand. Watch the **Automatic updates** panel (top right). (Simulation-verified)
-<kr>USB로 꽂은, 설정이 끝난 존 보드의 펌웨어가 오래되었으면 식별 정보(존, 포인트, 이름, 설정)를 유지한 채 스스로 업그레이드됩니다. 풀 라디오는 자동으로 업그레이드하지 않습니다. 풀 라디오와 풀 중앙 컨트롤러는 한 세트이므로 함께 수동으로 업그레이드합니다. **Automatic updates** 패널(오른쪽 위)을 봅니다. (Simulation-verified)</kr>
+Most days you click nothing: the console walks the zone database to the boards by itself (see "What the console does by itself" above). A board marked **Newer / differs** is never overwritten: the console first pulls the web's newer version (automatic web pulls usually do this already; its red card's **Sync**, or the Sync chip, does it at once). If the board still differs, the next sync publishes above it. (Simulation-verified; not yet run against the installed zone boards.)
+<kr>대부분은 아무것도 누르지 않습니다. 콘솔이 존 데이터베이스를 스스로 보드에 보냅니다(위의 "콘솔이 스스로 하는 일" 참고). **Newer / differs**로 표시된 보드는 덮어쓰지 않습니다. 콘솔이 먼저 웹의 더 새 버전을 받습니다(보통 자동 웹 받기가 이미 처리하며, 빨간 카드의 **Sync**나 Sync 칩을 누르면 바로 처리). 그래도 다르면 다음 동기화가 그보다 높은 버전을 게시합니다. (Simulation-verified. 설치된 존 보드에서는 아직 실행하지 않았습니다.)</kr>
 
 Do it by hand after a big registration session, for a deliberate check, or when the switches are off:
 <kr>많은 큐브를 등록한 뒤, 의도적으로 점검할 때, 또는 스위치가 꺼져 있을 때는 직접 합니다.</kr>
@@ -81,7 +161,7 @@ Monitor: a tag was read and the cube found / Monitor: 태그를 읽고 큐브를
 2. Nothing in **Monitor**: the reader did not see the tag. Check its position and power. Tag shown but unknown: the board's zone database is behind (procedure A). <kr>**Monitor**에 아무것도 없음: 리더가 태그를 보지 못했습니다. 위치와 전원을 확인합니다. 태그는 보이나 알 수 없음: 존 데이터베이스가 오래되었습니다(절차 A).</kr>
 3. Cube found but the panel stays dark: the light's power, output or wiring. The console cannot see the light. <kr>큐브는 찾았는데 패널이 꺼져 있음: 조명 전원, 출력, 배선 문제입니다. 콘솔은 조명을 볼 수 없습니다.</kr>
 4. The cube should turn yellow within about a second. **No radio ACK** means the cube is off or out of range; **Delivered** only means its radio answered. <kr>큐브가 약 1초 안에 노란색이 되어야 합니다. **No radio ACK**는 큐브가 꺼져 있거나 범위 밖이라는 뜻이고, **Delivered**는 큐브 무선이 응답했다는 뜻일 뿐입니다.</kr>
-5. Every cube fails at one position: reader or mounting. One cube fails everywhere: take it to the cube desk. <kr>한 위치에서 모든 큐브가 실패: 리더나 장착 문제. 한 큐브가 모든 곳에서 실패: 큐브 데스크로 가져갑니다.</kr>
+5. Every cube fails at one position: reader or mounting. One cube fails everywhere: plug that cube in by USB and read its Cube panel ({{page:H3}}). <kr>한 위치에서 모든 큐브가 실패: 리더나 장착 문제. 한 큐브가 모든 곳에서 실패: 그 큐브를 USB로 꽂고 Cube 패널을 읽습니다({{page:H3}}).</kr>
 
 Evidence: working zone Field-reported (Hojun); Monitor and its cards Simulation-verified. More detail: {{page:X05}}
 <kr>근거: 존 동작 Field-reported(Hojun), Monitor와 카드 Simulation-verified. 자세한 내용: {{page:X05}}</kr>
@@ -149,26 +229,8 @@ In the real show the media server's signal arrives through the installed signal 
 Evidence: ① and ② Simulation-verified. The installed controller start is Field-reported (Elliot): one of ten tested cubes failed. More detail: {{page:X07}}
 <kr>근거: ①·② Simulation-verified. 설치된 컨트롤러의 시작은 Field-reported(Elliot)이며 시험한 10개 중 1개가 실패했습니다. 자세한 내용: {{page:X07}}</kr>
 
-## F. Change and send the main show | F. 메인쇼 변경·전송
-
-The **Show editor** changes the animation the cubes play. Only cubes on v1.5.0 or later can receive a new show; older cubes keep the built-in original.
-<kr>**Show editor**는 큐브가 재생하는 애니메이션을 바꿉니다. v1.5.0 이상 큐브만 새 쇼를 받을 수 있고, 이전 큐브는 내장된 원래 쇼를 유지합니다.</kr>
-
-1. Open **Show editor** (top bar, ⌘6). The chips under the title say whether your working copy matches the published show. <kr>**Show editor**를 엽니다(상단 바, ⌘6). 제목 아래 칩이 작업본이 게시된 쇼와 같은지 알려 줍니다.</kr>
-2. Click a cue block on the timeline and change it in the **Cue** panel. Double-click the lane to add a cue. <kr>타임라인의 큐 블록을 클릭해 **Cue** 패널에서 바꿉니다. 레인을 더블클릭하면 큐가 추가됩니다.</kr>
-3. Press Space to play. **Preview cubes** shows several cube numbers. **Send to real cubes** makes v1.7.0 cubes follow the preview (about 16 times a second; a cube returns to normal 0.6 s after the last update). <kr>Space로 재생합니다. **Preview cubes**는 여러 큐브 번호를 보여 줍니다. **Send to real cubes**는 v1.7.0 큐브가 미리보기를 따라가게 합니다(초당 약 16회, 마지막 전송 0.6초 뒤 원래대로).</kr>
-
-{{shot:11-5}}
-Show editor: timeline, previewed cubes and Send to real cubes / Show editor: 타임라인, 미리보기 큐브, Send to real cubes
-
-4. Press **Publish**. The web gives the show its next version number. Nothing is sent to cubes yet. <kr>**Publish**를 누릅니다. 웹이 쇼에 다음 버전 번호를 줍니다. 아직 큐브로 보내지 않습니다.</kr>
-5. In the **Cubes** card, press **Query cubes**, then **Update all to vN**. A cube takes the new show only when it is not playing. With **Auto update** on (the default), cubes update as they come into range. <kr>**Cubes** 카드에서 **Query cubes**, 이어서 **Update all to vN**을 누릅니다. 큐브는 쇼를 재생하지 않을 때만 새 쇼를 받습니다. **Auto update**가 켜져 있으면(기본값) 범위에 들어오는 큐브가 업데이트됩니다.</kr>
-
-> [!INFO] **23 September:** main show **v6** was published at 04:52 KST. By 04:59 the six v1.7.0-USB.1 cubes (#17, #33, #39, #52, #58, #95) reported v6 over the air (Bench-verified, as recorded by the console; LEDs not recorded). The rest of the fleet (v1.4.1-USB.2) plays the built-in original. The next publish is numbered by the web.
-> **9월 23일:** 메인쇼 **v6**을 04:52(KST)에 게시했습니다. 04:59까지 v1.7.0-USB.1 큐브 6개(#17, #33, #39, #52, #58, #95)가 무선으로 v6을 보고했습니다(Bench-verified, 콘솔 기록 기준, LED 미기록). 나머지 큐브(v1.4.1-USB.2)는 내장된 원래 쇼를 재생합니다. 다음 게시 번호는 웹이 정합니다.
-
-Evidence: Show editor screens Simulation-verified. More detail: {{page:X07}}
-<kr>근거: Show editor 화면 Simulation-verified. 자세한 내용: {{page:X07}}</kr>
+The Show editor (change and send the main show) is in {{page:H3}}.
+<kr>Show editor(메인쇼 변경·전송)는 {{page:H3}}에 있습니다.</kr>
 
 ## What success looks like | 성공 확인
 
@@ -179,6 +241,5 @@ Evidence: Show editor screens Simulation-verified. More detail: {{page:X07}}
 | C: panel lights and cube turns yellow · 패널 점등, 큐브 노란색 | Reader, light and radio work · 리더·조명·무선 정상 | Steps 2–5 · 단계 2–5 |
 | D: **saved=true**, right frame for each name · 이름마다 맞는 프레임 | Calibration is stored and correct · 보정 저장·정확 | Re-check the ends · 양 끝 재확인; {{page:H5}} §7 |
 | E: test cube turns yellow-green, then plays · 황록색 후 재생 | Ready and start reach the cube · 준비·시작 도달 | {{page:H5}} §6 |
-| F: editor chips say working copy = published · 작업본 = 게시본 | Cubes get the show you edited · 편집한 쇼가 전달됨 | **Publish**, then **Update all to vN** |
 
 <span color="red">*This document was written by Kimchi and Chips*</span>

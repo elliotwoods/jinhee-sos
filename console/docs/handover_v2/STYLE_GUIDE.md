@@ -9,16 +9,16 @@ the Notion pages (via `console/tools/handover_render.py`) and the printable PDF 
 The handover has two parts. Human readers found the 18-chapter version too long.
 
 **Handbook** (`handbook/H*.md`) is bilingual EN/KR, with screenshots, and about **40 printed A4 pages** in total. It is
-for people: introduction, procedures, troubleshooting, and what Kimchi and Chips fixed. Nothing else goes in it.
+for people: introduction, procedures, troubleshooting, and what Kimchi and Chips fixed. Nothing else goes in it. A daily
+routine (opening/closing checklists, shift log) is out of scope (user, 2026-09-23).
 
 | Key | File | Title (EN · KR) | Budget |
 |---|---|---|---|
 | H0 | handbook/H0-root.md | Operations & Technical Handover v2 — NCT Console · 운영·기술 인수인계 v2 | 2 pp |
 | H1 | handbook/H1-introduction.md | Introduction · 소개 | 5 pp |
-| H2 | handbook/H2-daily-operation.md | Daily operation · 일일 운영 | 4 pp |
 | H3 | handbook/H3-cube-procedures.md | Cube procedures · 큐브 작업 | 10 pp |
-| H4 | handbook/H4-zone-procedures.md | Zone procedures · 존 작업 | 10 pp |
-| H5 | handbook/H5-troubleshooting.md | Troubleshooting · 문제 해결 | 7 pp |
+| H4 | handbook/H4-zone-procedures.md | Zone procedures · 존 작업 (opens with "What the console does by itself") | 12 pp |
+| H5 | handbook/H5-troubleshooting.md | Troubleshooting · 문제 해결 (symptom index + first response) | 8 pp |
 | H6 | handbook/H6-what-we-fixed.md | What Kimchi and Chips fixed · 김치앤칩스 개선 내역 | 4 pp |
 
 Handbook length rules:
@@ -27,8 +27,12 @@ Handbook length rules:
 - No "Engineering detail" toggles and no Sources toggles. End a section with one line such as
   `More detail: {{page:X06}}` / `<kr>자세한 내용: {{page:X06}}</kr>`.
 - Tables only where they replace more text than they add.
-- Keep the steps and the "What success looks like" table. No purpose callout on H0/H1 (user, 2026-09-23); H2–H6 pending the user's decision. Keep evidence levels short, for example
-  "(Bench-verified)".
+- Keep the steps and the "What success looks like" table. No purpose callout (Who / When / You need) on any page, and
+  no "who does this" framing: no reader roles, no staff roles (user, 2026-09-23). Write what to do, not who does it.
+  Named people appear only as sources of evidence, for example "Field-reported (Hojun)". Keep evidence levels short,
+  for example "(Bench-verified)".
+- H2 (Daily operation) was removed on 2026-09-23. Its key stays archived in PAGES.json (`H2_archived`, a Notion stub);
+  never link `{{page:H2}}`. The Procedures part is H3 and H4.
 
 **Extended reference** (`extended/X*.md`) is **English only** and dense. It is for engineers and AI agents, and it holds
 every fact that is not in the handbook. **Nothing from the old chapters may be lost**: a fact cut from the handbook
@@ -64,14 +68,14 @@ Extended pages have no `<kr>`, no screenshots, and no purpose callouts. Callouts
 Mermaid diagrams are only for structure (architecture, state machines, signal paths). Use precise names, exact
 strings and units. Exact console labels stay in bold.
 
-Links: use `{{page:H1}}`…`{{page:H6}}`, `{{page:X01}}`…`{{page:X13}}` and `{{page:XP}}`. The old `{{page:NN}}` keys are gone.
+Links: use `{{page:H1}}`, `{{page:H3}}`…`{{page:H6}}` (no H2), `{{page:X01}}`…`{{page:X13}}` and `{{page:XP}}`. The old `{{page:NN}}` keys are gone.
 Diagrams in the handbook must print at 8 pt or more: at most about 8 nodes, labels of 4 words or fewer per language.
 
 ## Audience and voice
 
-- Readers: floor operators (Korean first language, not engineers), the cube desk, the receiving engineers
-  (Engineering Six) and project management (Amberin). Chapters 03–11 are for operators: write for someone who has
-  never seen the code.
+- The handbook is written for someone who has never seen the code and may read Korean first. The extended reference is
+  for engineers and AI agents. Do not frame pages or steps by reader or staff role (no "floor operators", "cube desk",
+  "duty technician"); say what to do.
 - Short sentences. Active voice. Imperative for steps ("Plug in the cube.").
   One idea per paragraph.
 - Say what the operator sees and does first, and why second. Put engineering detail in chapters 12–15, or in a
@@ -163,11 +167,7 @@ Old → new numbers: 02→03, 03→04, 04→05, 05→12, 06→06, 07→13, 08→
 
 Every chapter from 03 to 11, 13 and 14 follows this shape (skip the parts that don't apply):
 
-1. **Purpose callout**, first thing on the page:
-   ```
-   > [!INFO] **Who:** cube desk · **When:** a new cube arrives · **You need:** the console, the Workstation, the cube's USB cable
-   > **누가:** 큐브 담당 · **언제:** 새 큐브가 들어왔을 때 · **준비물:** 콘솔, 워크스테이션, 큐브 USB 케이블
-   ```
+1. No purpose callout (removed 2026-09-23). Start with one or two plain sentences on what the page covers.
 2. An **At a glance** diagram (mermaid) where a flow or a path exists.
 3. **Steps**: `###` numbered headings or a numbered list, one action each, with `{{shot:ID}}` directly under the step
    it illustrates.

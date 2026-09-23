@@ -1,32 +1,34 @@
 <span color="red">*This document was written by Kimchi and Chips*</span>
 
-> [!INFO] **Who:** floor operators, the cube desk, the duty technician · **When:** something does not respond as expected · **You need:** the console, the Workstation, one known-good registered cube, a USB cable
-> **누가:** 현장 운영자, 큐브 담당, 당직 기술자 · **언제:** 무언가 예상대로 반응하지 않을 때 · **준비물:** 콘솔, 워크스테이션, 정상 등록된 큐브 한 개, USB 케이블
-
 Find the symptom in the index and go to its section. Card titles and buttons are in English, as on screen. Every card and rarer case is in {{page:X11}}.
 <kr>목록에서 증상을 찾아 해당 절로 갑니다. 카드 제목과 버튼은 화면과 같이 영어입니다. 모든 카드와 드문 사례는 {{page:X11}}에 있습니다.</kr>
 
-> [!DANGER] Equipment that is hot, smells, is damaged or has unstable power: stop using it and call the duty technician. A software reset does not repair an electrical fault.
-> 발열, 냄새, 파손, 전원 불안정이 있는 장비는 사용을 중단하고 당직 기술자를 부릅니다. 소프트웨어 리셋으로 전기 고장은 고쳐지지 않습니다.
+> [!DANGER] Equipment that is hot, smells, is damaged or has unstable power: stop using it and have it checked before it is used again. A software reset does not repair an electrical fault.
+> 발열, 냄새, 파손, 전원 불안정이 있는 장비는 사용을 중단하고, 다시 쓰기 전에 점검을 받습니다. 소프트웨어 리셋으로 전기 고장은 고쳐지지 않습니다.
 
-## Symptom index | 증상 목록
+## Symptom index and first response | 증상 목록·초기 대응
 
-| Symptom · 증상 | Likely cause · 추정 원인 | Section · 절 |
+| Symptom · 증상 | First check · 첫 점검 | Section · 절 |
 |---|---|---|
-| A cube is "unknown tag" at a zone · 존에서 큐브가 "unknown tag" | The zone board holds an older zone database · 존 보드의 존 데이터베이스가 오래됨 | 1 |
-| Registration fails · 등록 실패 | Workstation link, its reader, or no answer from the cube · 워크스테이션 연결, 리더, 큐브 무응답 | 2 |
-| A reader reads nothing, even a good cube · 정상 큐브도 리더가 못 읽음 | Reader power, position or wiring · 리더 전원·위치·배선 | 3 |
-| Tag is read but the cube's colour does not change · 태그는 읽지만 큐브 색이 그대로 | Cube off, out of range, or without its number · 큐브 꺼짐, 범위 밖, 번호 없음 | 4 |
-| Cube is red at the preshow, but no butterfly · 프리쇼에서 빨강인데 나비 없음 | Preshow bridge, its USB port, or TouchDesigner · 프리쇼 브리지, USB 포트, 터치디자이너 | 5 |
-| The main show does not start, or only on some cubes · 메인쇼 미시작 또는 일부만 재생 | Cubes not ready, trigger not arriving, controller · 준비 안 됨, 트리거 미도달, 컨트롤러 | 6 |
-| Pool frame lights wrong, flickering or stuck · 풀존 프레임 조명 오류·깜빡임·멈춤 | Pool radio id, calibration, or the Pool central controller · 풀 라디오 id, 보정, 풀 중앙 컨트롤러 | 7 |
-| The console will not start, or a USB board is not identified · 콘솔 미실행 또는 USB 보드 미식별 | Another app holds the inventory or the port · 다른 앱이 인벤토리나 포트를 점유 | 8 |
+| A cube is "unknown tag" at a zone · 존에서 큐브가 "unknown tag" | Sync chip **✓ Synced**? Zone **Current** in **Zone relay**? · Sync 칩 **✓ Synced** 여부, 존 **Current** 여부 | 1 |
+| One cube fails at several good readers · 한 큐브가 여러 리더에서 실패 | That cube: charge, tag, registration, firmware (USB) · 그 큐브: 충전, 태그, 등록, 펌웨어 | Swap test (below), 4 · 교체 시험(아래), 4 |
+| Several good cubes fail at one reader, or it reads nothing · 여러 큐브가 한 리더에서 실패, 또는 아무것도 못 읽음 | That reader: position, power, zone database · 그 리더: 위치, 전원, 존 데이터베이스 | 3 |
+| Registration fails · 등록 실패 | Workstation link, its reader, the cube answering · 워크스테이션 연결, 리더, 큐브 응답 | 2 |
+| **Register** greyed out · **Register** 비활성 | Hover it: the tooltip gives the reason · 툴팁의 이유 | {{page:H3}} B |
+| Tag is read but the cube's colour does not change · 태그는 읽지만 큐브 색이 그대로 | Cube on, in range, holding its number? · 큐브 켜짐, 범위 안, 번호 보유 여부 | 4 |
+| Cube is red at the preshow, but no butterfly · 프리쇼에서 빨강인데 나비 없음 | Bridge port: no other program holding it · 브리지 포트 점유 여부 | 5 |
+| The main show does not start, or only on some cubes · 메인쇼 미시작 또는 일부만 재생 | Were the cubes tagged at the entrance? · 입구 태그 여부 | 6 |
+| Pool frame lights wrong, flickering or stuck · 풀존 프레임 조명 오류·깜빡임·멈춤 | Pool radio id, calibration, pool central controller · 풀 라디오 id, 보정, 풀 중앙 컨트롤러 | 7 |
+| The console will not start, or a USB board is not identified · 콘솔 미실행 또는 USB 보드 미식별 | Another NCT app already open, or another program holds the port · 다른 NCT 앱 실행 중, 또는 다른 프로그램이 포트 점유 | 8 |
 | The Sync chip does not reach **✓ Synced**, or a cube lost its number · Sync 칩이 **✓ Synced**가 안 됨 또는 큐브 번호 사라짐 | Password, network, or a newer change elsewhere · 비밀번호, 네트워크, 다른 곳의 새 변경 | 9 |
-| The console opens in a web browser · 콘솔이 웹 브라우저에서 열림 | Not started with its launcher; WebView2 missing (Windows) · 실행 파일로 시작하지 않음, WebView2 없음(Windows) | 10 |
+| The console opens in a web browser · 콘솔이 웹 브라우저에서 열림 | Started without its launcher; WebView2 missing (Windows) · 실행 파일로 시작하지 않음, WebView2 없음(Windows) | 10 |
 | A row in **Automatic updates** does not finish · **Automatic updates** 행이 끝나지 않음 | Board in use, a failed flash, a pool board, or missing build tools · 사용 중인 보드, 플래시 실패, 풀 보드, 빌드 도구 없음 | 11 |
 
-Before you fix anything, swap in a charged, known-good cube. If it works, the first cube is at fault: take it to the cube desk. If it fails too, the zone board or the path after it is at fault. Don't re-register a batch or start the show on every cube to diagnose one cube.
-<kr>무엇이든 고치기 전에 충전된 정상 큐브로 바꿔 봅니다. 정상 큐브가 동작하면 처음 큐브의 문제이므로 큐브 데스크로 가져갑니다. 정상 큐브도 실패하면 존 보드나 그 뒤 경로의 문제입니다. 큐브 하나를 진단하려고 전체 재등록을 하거나 모든 큐브에 쇼를 시작하지 않습니다.</kr>
+A firmware-difference card in **Attention** is information only. The cube still works with every zone.
+<kr>**Attention**의 펌웨어 차이 카드는 정보일 뿐입니다. 큐브는 모든 존과 계속 동작합니다.</kr>
+
+Before you fix anything, swap in a charged, known-good cube. If it works, the first cube is at fault: plug it in by USB away from visitors and read its Cube panel. If it fails too, the zone board or the path after it is at fault. Don't re-register a batch or start the show on every cube to diagnose one cube.
+<kr>무엇이든 고치기 전에 충전된 정상 큐브로 바꿔 봅니다. 정상 큐브가 동작하면 처음 큐브의 문제이므로 관람객이 없는 곳에서 USB로 꽂고 Cube 패널을 읽습니다. 정상 큐브도 실패하면 존 보드나 그 뒤 경로의 문제입니다. 큐브 하나를 진단하려고 전체 재등록을 하거나 모든 큐브에 쇼를 시작하지 않습니다.</kr>
 
 ## 1. A cube is not recognised at a zone | 1. 존이 큐브를 인식하지 못함
 
@@ -86,7 +88,7 @@ More detail: {{page:X03}}
 | 2 | The tag area still meets the reader · 태그 면이 리더와 맞음 | Re-seat the reader · 리더 위치 재조정 |
 | 3 | Card **NFC reader on "‹zone›" is not responding** · 리더 무응답 카드 | **Ask the plate to recover the reader** |
 | 4 | Recovery does not help · 복구로 해결 안 됨 | Power-cycle the reader and zone board together · 리더와 존 보드를 함께 전원 재시작 |
-| 5 | Still no reads · 여전히 못 읽음 | Duty technician · 당직 기술자 |
+| 5 | Still no reads · 여전히 못 읽음 | Check the reader wiring, or replace the reader ({{page:X09}}) · 리더 배선 점검 또는 리더 교체 |
 
 > [!WARNING] A higher reader sensitivity (**RX gain**) never fixes a missing zone database entry. If the tag is read but "unknown", go to section 1.
 > 리더 감도(**RX gain**)를 올려도 존 데이터베이스 누락은 고쳐지지 않습니다. 태그는 읽지만 "unknown"이면 1절로 갑니다.
@@ -108,8 +110,8 @@ More detail: {{page:X09}}
 | **Cube #n did not acknowledge the plate — it may not hold its ID** | The cube has not stored its number · 큐브가 번호를 저장하지 않음 | **Send the saved mapping to cube #n** |
 | **Plate "‹zone›" addresses cube #n at an old MAC** | The tag moved to another cube · 태그가 다른 큐브로 이전 | **Sync & publish**, then update the zone · 그다음 존 업데이트 |
 
-**Delivered** means only that the cube's radio answered, not that its LEDs changed. If one cube fails everywhere, plug it in at the cube desk; its Cube panel shows its number and firmware ({{page:H3}}).
-<kr>**Delivered**는 큐브 무선이 응답했다는 뜻일 뿐 LED가 바뀌었다는 뜻이 아닙니다. 한 큐브가 모든 곳에서 실패하면 큐브 데스크에서 USB로 꽂습니다. Cube 패널에 번호와 펌웨어가 표시됩니다({{page:H3}}).</kr>
+**Delivered** means only that the cube's radio answered, not that its LEDs changed. If one cube fails everywhere, plug it in by USB; its Cube panel shows its number and firmware ({{page:H3}}).
+<kr>**Delivered**는 큐브 무선이 응답했다는 뜻일 뿐 LED가 바뀌었다는 뜻이 아닙니다. 한 큐브가 모든 곳에서 실패하면 USB로 꽂습니다. Cube 패널에 번호와 펌웨어가 표시됩니다({{page:H3}}).</kr>
 
 More detail: {{page:X11}}
 <kr>자세한 내용: {{page:X11}}</kr>
@@ -165,8 +167,8 @@ More detail: {{page:X07}}
 | A frame stays on with no cube · 큐브 없이 계속 켜짐 | Switch **Override output without a cube** off on the radio's panel, or release the **Pool lamp** on the Workstation panel · 라디오 패널의 오버라이드 끄기 또는 워크스테이션 패널의 **Pool lamp** 해제 |
 | Wrong frame for a name · 이름과 다른 프레임 | Re-check the calibration ends; record it if readings wander · 보정 양 끝 재확인, 값이 흔들리면 기록 |
 
-The pool radios and the Pool central controller are a matched set: update them together. Relays, wiring and driver boards go to the duty technician.
-<kr>풀 라디오와 풀 중앙 컨트롤러는 한 세트이므로 함께 업데이트합니다. 릴레이, 배선, 드라이버 보드는 당직 기술자에게 맡깁니다.</kr>
+The pool radios and the Pool central controller are a matched set: update them together. Relays, wiring and driver boards are electrical repairs, not console fixes.
+<kr>풀 라디오와 풀 중앙 컨트롤러는 한 세트이므로 함께 업데이트합니다. 릴레이, 배선, 드라이버 보드는 전기 수리이며 콘솔로 고칠 수 없습니다.</kr>
 
 More detail: {{page:X06}}
 <kr>자세한 내용: {{page:X06}}</kr>
@@ -181,7 +183,7 @@ More detail: {{page:X06}}
 | "‹App› is already open on this database; close it before starting the NCT Console" | Intentional: the console and the old apps share one inventory. Close the named app (or the other console window), then start the console. Never delete lock files · 의도된 동작. 표시된 앱을 닫고 콘솔 시작. 잠금 파일 삭제 금지 |
 | **‹port› is owned by another application** | Close that program (old app, Arduino Serial Monitor, TouchDesigner), then probe again · 해당 프로그램을 닫고 다시 확인 |
 | **Board on ‹port› is not answering on serial** | Wait a few seconds; probe again on the **Unidentified board** panel · 잠시 후 다시 확인 |
-| **Zone board on ‹port› has no valid identity** | Flash it with its zone profile (engineer) · 존 프로필로 플래시(엔지니어) |
+| **Zone board on ‹port› has no valid identity** | Flash it with its zone profile ({{page:X09}}) · 존 프로필로 플래시 |
 
 A USB port name is not an identity. Never write firmware to "whatever port appeared".
 <kr>USB 포트 이름은 신원이 아닙니다. "새로 나타난 포트"에 펌웨어를 쓰지 않습니다.</kr>
@@ -244,8 +246,8 @@ Read the row's state pill and the reason under it. (Simulation-verified; no real
 | **waiting** (**Starts in N s**, **Waiting: in use…**, **Waiting: Register or Flash is on**) | Normal: it starts when the board and the console are free · 정상: 보드와 콘솔이 비면 시작 | Nothing; or **Skip** · 없음, 또는 **Skip** |
 | **needs build** | The firmware is still being built · 펌웨어 빌드 중 | Wait · 기다림 |
 | **failed** | The upgrade or build did not finish · 업그레이드나 빌드가 끝나지 않음 | **Retry**, or unplug and replug the board; copy the reason if it fails again · **Retry** 또는 다시 꽂기, 반복되면 이유 기록 |
-| **by hand** | Pool radios, pool central controller, preshow bridge, or an unconfigured board: never flashed automatically · 자동 플래시 안 함 | Pool set: upgrade radios and central together by hand (engineer) · 풀 세트는 엔지니어가 함께 수동 업그레이드 |
-| **no build tools** | This computer cannot build firmware · 이 컴퓨터에서 빌드 불가 | Engineer: install arduino-cli with ESP32 core 3.3.11 · 엔지니어: arduino-cli와 ESP32 core 3.3.11 설치 |
+| **by hand** | Pool radios, pool central controller, preshow bridge, or an unconfigured board: never flashed automatically · 자동 플래시 안 함 | Pool set: upgrade radios and central together by hand ({{page:X06}}) · 풀 세트는 함께 수동 업그레이드 |
+| **no build tools** | This computer cannot build firmware · 이 컴퓨터에서 빌드 불가 | Install arduino-cli with ESP32 core 3.3.11 on this computer ({{page:X10}}) · 이 컴퓨터에 arduino-cli와 ESP32 core 3.3.11 설치 |
 | **paused** / **off** | **Pause** was pressed, or the switch is off in Settings › **Automatic updates** · 일시 정지 또는 설정 꺼짐 | **Resume**, or switch it on · **Resume** 또는 켜기 |
 
 Never unplug a board whose row shows **upgrading**. Successful and failed upgrades are listed under **Recent (n)**; only failures appear in Jobs.

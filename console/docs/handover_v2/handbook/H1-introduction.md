@@ -18,7 +18,7 @@ Every cube has a **cube number** on its label. The **zone boards** use the **zon
 
 ```mermaid
 flowchart LR
-  A["Cube desk<br/>큐브 데스크"]
+  A["Receive cube<br/>큐브 받기"]
   B["Preshow<br/>프리쇼"]
   C["Desert<br/>사막"]
   D["Pool / forest<br/>풀·숲"]
@@ -120,11 +120,8 @@ The console: device rail (left), the selected device's panel (centre), Attention
 The **Attention panel** shows **suggestion cards**. Each card says what the console noticed and what to check. A card never blocks your work.
 <kr>**Attention 패널**에는 **제안 카드**가 표시됩니다. 각 카드는 콘솔이 알아챈 내용과 확인할 점을 알려 줍니다. 카드는 작업을 막지 않습니다.</kr>
 
-Above Attention, the **Automatic updates** panel shows what the console is bringing up to date by itself: firmware builds, boards plugged in by USB, and zone databases and the main show over the air. **✓ Everything up to date** means nothing is waiting. (Simulation-verified)
-<kr>Attention 위의 **Automatic updates** 패널은 콘솔이 스스로 최신으로 맞추는 것을 보여 줍니다: 펌웨어 빌드, USB로 꽂은 보드, 무선으로 보내는 존 데이터베이스와 메인쇼. **✓ Everything up to date**는 기다리는 것이 없다는 뜻입니다. (Simulation-verified)</kr>
-
-Otherwise each board or build has a row: port, current → target version, and a state pill (for example **upgrading**, **waiting**, **failed**, **by hand**). **Pause** / **Resume** in the header stops or restarts everything. **Skip** leaves one board alone until it is replugged; **Retry** tries a failed one again.
-<kr>그 밖의 경우 보드나 빌드마다 한 줄이 표시됩니다: 포트, 현재 → 목표 버전, 상태 표시(예: **upgrading**, **waiting**, **failed**, **by hand**). 머리글의 **Pause** / **Resume**은 전체를 멈추거나 다시 시작합니다. **Skip**은 다시 꽂을 때까지 그 보드를 건드리지 않고, **Retry**는 실패한 보드를 다시 시도합니다.</kr>
+Above Attention, the **Automatic updates** panel shows what the console is bringing up to date by itself. What it does, and how to stop it: {{page:H4}}, "What the console does by itself".
+<kr>Attention 위의 **Automatic updates** 패널은 콘솔이 스스로 최신으로 맞추는 것을 보여 줍니다. 하는 일과 멈추는 법: {{page:H4}}의 "콘솔이 스스로 하는 일".</kr>
 
 Every result shows its **result status**: Sent → Delivered → Acknowledged → Verified, or Failed. Only Acknowledged and Verified count as success. Delivered only means the radio got it there.
 <kr>모든 결과에는 **결과 상태**가 표시됩니다: Sent → Delivered → Acknowledged → Verified, 또는 Failed. Acknowledged와 Verified만 성공입니다. Delivered는 무선으로 도착했다는 뜻일 뿐입니다.</kr>
@@ -135,8 +132,8 @@ Risky buttons (for example a broadcast to every cube) need **hold to confirm**: 
 **Language.** Use the **EN | KR** switch at the right of the top bar (also Settings › Appearance). The console remembers the choice on this computer; a console opened in a web browser keeps its own. In Korean mode, buttons also show their English name, so the button names in this handbook match the screen. Suggestion cards, logs and error messages stay in English.
 <kr>**언어.** 상단 바 오른쪽의 **EN | KR** 스위치(또는 Settings › Appearance)를 사용합니다. 선택은 이 컴퓨터의 콘솔에 저장됩니다. 웹 브라우저로 연 콘솔은 따로 저장합니다. 한국어 모드에서도 버튼에 영어 이름이 함께 표시되므로 이 핸드북의 버튼 이름과 화면이 일치합니다. 제안 카드, 로그, 오류 메시지는 영어로 유지됩니다.</kr>
 
-More detail: {{page:H2}} · {{page:X11}}
-<kr>자세한 내용: {{page:H2}} · {{page:X11}}</kr>
+More detail: {{page:H4}} · {{page:X11}}
+<kr>자세한 내용: {{page:H4}} · {{page:X11}}</kr>
 
 ## The 12 most important names | 가장 중요한 이름 12개
 

@@ -1,8 +1,5 @@
 <span color="red">*This document was written by Kimchi and Chips*</span>
 
-> [!INFO] **Who:** Amberin, Engineering Six · **When:** to see what changed and what is still open · **You need:** nothing
-> **누가:** 앰버린, 엔지니어링식스 · **언제:** 무엇이 바뀌었고 무엇이 남았는지 확인할 때 · **준비물:** 없음
-
 Engineering Six developed the exhibition. Kimchi and Chips joined on Thursday 17 September 2026, at Amberin's request, to help solve technical problems. This page lists what we fixed, area by area, and how sure we are.
 <kr>엔지니어링식스가 전시를 개발했습니다. 김치앤칩스는 2026년 9월 17일 목요일 앰버린의 요청으로 기술 문제 해결을 돕기 시작했습니다. 이 페이지는 영역별로 무엇을 고쳤는지, 얼마나 확실한지 정리합니다.</kr>
 
@@ -84,18 +81,18 @@ More detail: {{page:X11}}
 
 ## Still open | 남은 항목
 
-| Item · 항목 | Owner · 담당 | Evidence · 근거 |
-|---|---|---|
-| Pool printed names: cover or treat them · 풀존 인쇄 이름 처리 | Amberin / Lotte decide · 앰버린·롯데 결정 | To confirm |
-| Desert Jisung / Jimin alignment · 사막 지성/지민 정렬 | Engineering Six, carpentry · 엔지니어링식스·목공 | To confirm |
-| Battery runtime (preshow, cubes) · 배터리 지속 시간 | Operator · 운영사 | To confirm |
-| Find and fix the one failed main-show cube · 메인쇼 실패 큐브 1개 | Cube desk · 큐브 담당 | Field-reported (Elliot) |
-| Zone database v38 holds fake test records; publish a clean version · 존 DB v38 가짜 기록 정리 | Elliot | Code-checked |
-| 19 zones hold older zone databases · 존 19개 이전 DB 보유 | Cube desk · 큐브 담당 | Bench-verified |
-| Every computer must run current code before it syncs · 모든 컴퓨터 최신 코드 필요 | Engineering team · 기술팀 | Field-reported (Elliot) |
-| Pool relay power supply; duplicate pool radio ids · 풀 릴레이 전원, 풀 라디오 id 중복 | Engineering Six, Hojun | Field-reported |
-| Media records: TouchDesigner, 5 V show signal interface · 미디어 기록: TouchDesigner, 5 V 신호부 | Media team, Engineering Six · 미디어팀·엔지니어링식스 | To confirm |
-| Console hardware checks; flash the Workstation firmware · 콘솔 실물 점검, 워크스테이션 펌웨어 설치 | Engineering team · 기술팀 | Simulation-verified |
+| Item · 항목 | Evidence · 근거 |
+|---|---|
+| Pool printed names: cover or treat them (client decision) · 풀존 인쇄 이름 처리(클라이언트 결정) | To confirm |
+| Desert Jisung / Jimin alignment · 사막 지성/지민 정렬 | To confirm |
+| Battery runtime (preshow, cubes) · 배터리 지속 시간 | To confirm |
+| Find and fix the one failed main-show cube · 메인쇼 실패 큐브 1개 | Field-reported (Elliot) |
+| Zone database v38 holds fake test records; publish a clean version · 존 DB v38 가짜 기록 정리 | Code-checked |
+| 19 zones hold older zone databases · 존 19개 이전 DB 보유 | Bench-verified |
+| Every computer must run current code before it syncs · 모든 컴퓨터 최신 코드 필요 | Field-reported (Elliot) |
+| Pool relay power supply; duplicate pool radio ids · 풀 릴레이 전원, 풀 라디오 id 중복 | Field-reported (Hojun) |
+| Media records: TouchDesigner, 5 V show signal interface · 미디어 기록: TouchDesigner, 5 V 신호부 | To confirm |
+| Console hardware checks; flash the Workstation firmware · 콘솔 실물 점검, 워크스테이션 펌웨어 설치 | Simulation-verified |
 
 The full list, the acceptance walk and the sign-off form: {{page:X13}}
 <kr>전체 목록, 인수 검수 순회, 서명 양식: {{page:X13}}</kr>

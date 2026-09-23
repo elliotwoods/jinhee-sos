@@ -16,8 +16,8 @@ Version 1 ({{v1-root}}) is unchanged. It describes the older separate apps, whic
 
 ## This handover has two parts | 이 문서는 두 부분으로 되어 있습니다
 
-**The Handbook** (this part) is for people. It is bilingual, with screenshots: introduction, daily operation, procedures, troubleshooting and what Kimchi and Chips fixed.
-<kr>**핸드북**(이 부분)은 사람을 위한 문서입니다. 영어·한국어 병기와 스크린샷이 있으며, 소개, 일일 운영, 작업 절차, 문제 해결, 김치앤칩스 개선 내역을 담습니다.</kr>
+**The Handbook** (this part) is for people. It is bilingual, with screenshots: introduction, procedures, troubleshooting and what Kimchi and Chips fixed.
+<kr>**핸드북**(이 부분)은 사람을 위한 문서입니다. 영어·한국어 병기와 스크린샷이 있으며, 소개, 작업 절차, 문제 해결, 김치앤칩스 개선 내역을 담습니다.</kr>
 
 **The Extended reference** ({{page:XP}}) is in English only. It is for engineers and AI agents. It holds every detail left out of the Handbook: versions, pins, protocols, file paths and sources.
 <kr>**확장 참조**({{page:XP}})는 영어로만 작성되었습니다. 기술자와 AI 에이전트를 위한 문서입니다. 핸드북에서 뺀 모든 세부 정보(버전, 핀, 프로토콜, 파일 경로, 출처)를 담습니다.</kr>
@@ -34,7 +34,6 @@ This handover is not a hardware acceptance certificate. It does not move cube as
 ## Pages | 페이지 목록
 
 {{page:H1}}
-{{page:H2}}
 {{page:H3}}
 {{page:H4}}
 {{page:H5}}

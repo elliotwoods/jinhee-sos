@@ -98,7 +98,7 @@ On the 23 Sep bench pass desert boards answered at −78…−96 dBm (preshow bo
 1. With the panel working, the cube must change colour within ≈1 s.
 2. Read the Monitor delivery pill. **No radio ACK** raises **Cube #… did not acknowledge plate "…"**: cube off, out of range or wrong channel. **Delivered** only means the cube's radio answered.
 3. Swap: a second cube on the same position; the same cube on a second position.
-4. One position fails with every cube → reader or mounting fault. One cube fails everywhere → cube desk, USB, Cube panel (registration, firmware) ({{page:X03}}).
+4. One position fails with every cube → reader or mounting fault. One cube fails everywhere → plug it in over USB, Cube panel (registration, firmware) ({{page:X03}}).
 
 ### Maintenance boundaries
 
