@@ -103,6 +103,12 @@ class WindowsBranchTests(unittest.TestCase):
         self.assertEqual(hostos.venv_site_packages(env), env / 'Lib' / 'site-packages')
         with patch.dict(os.environ, LOCALAPPDATA=self.tmp.name, ProgramFiles=str(Path(self.tmp.name) / 'pf')):
             self.assertEqual(hostos.arduino_data_dir(), Path(self.tmp.name) / 'Arduino15')
+            installed = Path(self.tmp.name) / 'pf/Arduino CLI/arduino-cli.exe'
+            with patch.object(hostos.shutil, 'which', return_value=None):
+                self.assertIsNone(hostos.arduino_cli())
+                installed.parent.mkdir(parents=True)
+                installed.touch()
+                self.assertEqual(hostos.arduino_cli(), str(installed))
             with patch.object(hostos.shutil, 'which', return_value='on-path'):
                 self.assertEqual(hostos.arduino_cli(), 'on-path')
                 bundled = Path(self.tmp.name) / 'Programs/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe'

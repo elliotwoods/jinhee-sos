@@ -122,9 +122,12 @@ class Hub:
         self.locks_held = {}
         self.own_locks = ()            # lock suffixes this process holds (set by app.py from InstanceLocks.held)
         # Persisted in metadata `console_settings`. The auto_* keys keep every database current everywhere:
-        # zone databases over the air (one relay walks) and over USB, the main show over the air, web pulls.
+        # zone databases over the air (one relay walks) and over USB, the main show over the air, web pulls,
+        # and firmware builds (auto_build: rebuild what is missing or older than its source; no uploads).
         self.settings = dict(auto_sessions=True, preview_flash=True, audio=True, auto_zone_db_radio=True,
-                             auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_register=False)
+                             auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_register=False,
+                             auto_build=True)
+        self.auto_build_failed = set()   # targets whose automatic build failed this run (not retried by itself)
         self.auto_errors = {}      # auto-mode name -> last error text (logged once per change)
         self.auto_pulled = set()   # web zone database versions already pulled automatically
         self.pinned_mac = None
@@ -299,6 +302,8 @@ class Hub:
                 self.dirty.add('locks')
         if self.every('builds', 60.0, now):
             self.refresh_builds()
+            if self.workers and not self.simulate:
+                self.auto_build_step()
         if self.every('sync_status', 60.0, now) and self.workers and not self.simulate:
             self.check_sync_status()
         if self.every('auto_modes', 1.0, now):
@@ -339,6 +344,54 @@ class Hub:
         if self.showedit and self.showedit.registry.walkaround != bool(self.settings['auto_show']):
             self.showedit.registry.set_walkaround(bool(self.settings['auto_show']))
             self.dirty.add('showedit')
+
+    def stale_builds(self):
+        """[(target, label, start)] for every firmware build the console flashes that needs building."""
+        from jobs.build import cube_build_job, dongle_build_job, zone_build_job
+        out = []
+        if (self.builds.get('cube') or {}).get('error'):
+            out.append(('cube', 'cube firmware', lambda: cube_build_job(self)))
+        for sketch, info in sorted((self.builds.get('zones') or {}).items()):
+            if info.get('error'):
+                out.append((sketch, sketch, lambda sketch=sketch: zone_build_job(self, sketch)))
+        for name in ('workstation', 'mainshow'):
+            info = self.builds.get(name) or {}
+            if info.get('state') in ('missing', 'stale'):
+                out.append((name, info.get('label') or name, lambda name=name: dongle_build_job(self, name)))
+        return out
+
+    def auto_build_step(self):
+        """Build one stale firmware at a time (Settings › Automatic updates › auto_build).
+
+        Needs the Arduino tools; never while a build or any hardware job runs (a flash may be reading the
+        build folder). A failed target is not retried by itself this run: the build.stale card offers it.
+        """
+        tools = self.builds.get('tools') or {}
+        if not self.settings.get('auto_build') or not (tools.get('arduino_cli') and tools.get('core_ok')):
+            return None
+        if any(j.state in ('queued', 'running') and (j.hardware or j.kind.startswith('build'))
+               for j in self.jobs.jobs.values()):
+            return None
+        pending = [t for t in self.stale_builds() if t[0] not in self.auto_build_failed]
+        if not pending:
+            return None
+        target, label, start = pending[0]
+        self.log(f'Automatic firmware build: {label} (missing or older than its source)', source='auto')
+        try:
+            job = start()
+        except Exception as exc:
+            self.auto_build_failed.add(target)
+            self.auto_error(f'build {label}', str(exc))
+            return None
+
+        def finished(job, target=target, label=label):
+            if job.state != 'done':
+                self.auto_build_failed.add(target)
+                self.auto_error(f'build {label}', job.error or job.state)
+            self.timers.pop('builds', None)   # look for the next stale build on the next tick
+        previous = job.on_done
+        job.on_done = (lambda j: (previous(j), finished(j))) if previous else finished
+        return job
 
     def auto_error(self, name, text):
         """Log an automatic-update failure once per distinct text (None clears it)."""

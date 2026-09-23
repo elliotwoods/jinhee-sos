@@ -228,18 +228,35 @@ class FakeStation(FakeBoard):
         self.identify = None
         self.register = None
         self.sent = []                 # every command the host sent, so tests can assert what a legacy board never sees
+        self.reader_uid = None         # the tag lying on the reader (place_tag / lift_tag)
+        self.last_uid = None           # the firmware's lastUid: kept after the tag leaves, as nfc_poll_result reports it
 
     def hello(self, request_id):
         return dict(event='hello', id=request_id, protocol=1, firmware=self.firmware, zones=1, mac=self.mac, channel=2,
                     radio_ok=True, nfc_ok=self.nfc_ok, nfc_polling=self.nfc_ok, nfc_firmware='00000132',
-                    nfc_i2c_status=0 if self.nfc_ok else 5, tag_present=False)
+                    nfc_i2c_status=0 if self.nfc_ok else 5, tag_present=self.reader_uid is not None)
 
     def probe_lines(self):
         return [json.dumps(self.hello('boot'))]
 
+    # ---- a tag on the reader, as the firmware reports it outside an identify: tag_state only, no UID ----
+    def place_tag(self, uid):
+        self.reader_uid = self.last_uid = uid
+        self.emit(dict(event='tag_state', id='', present=True))
+
+    def lift_tag(self):
+        self.reader_uid = None
+        self.emit(dict(event='tag_state', id='', present=False))
+
     def handle_json(self, message):
         cmd, rid = message.get('cmd'), message.get('id', '')
         self.sent.append(cmd)
+        if cmd == 'nfc_poll' and self.nfc_ok:
+            if self.identify:
+                return [dict(event='error', id=rid, detail='Stop before reader diagnostics')]
+            out = dict(event='nfc_poll_result', id=rid, ready=True, enabled=bool(message.get('enabled')), polls=1, found=1,
+                       duration_ms=80, tag_present=self.reader_uid is not None)
+            return [dict(out, uid=self.last_uid) if self.last_uid else out]
         if cmd == 'hello':
             return [self.hello(rid)]
         if cmd == 'ping':

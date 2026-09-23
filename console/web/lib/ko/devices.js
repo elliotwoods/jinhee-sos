@@ -46,6 +46,7 @@ export default {
   'Zone databases over USB: database-only update for any configured zone board plugged in that is behind': 'USB 존 데이터베이스: 꽂힌 설정 완료 존 보드의 데이터베이스가 뒤처져 있으면 데이터베이스만 업데이트',
   'Main show over the air: cubes in range on an older show are updated (a Workstation or General Radio; never mid-show)': '무선 메인쇼: 범위 안에서 이전 쇼를 가진 큐브를 업데이트 (Workstation 또는 General Radio, 쇼 진행 중에는 안 함)',
   'Pull a newer zone database and show from the web (needs the web password)': '웹에서 더 새로운 존 데이터베이스와 쇼를 받아오기 (웹 비밀번호 필요)',
+  'Firmware builds: rebuild any cube, zone or dongle firmware that is missing or older than its source (needs the Arduino tools; never uploads)': '펌웨어 빌드: 없거나 소스보다 오래된 큐브·존·동글 펌웨어를 다시 빌드 (Arduino 도구 필요, 업로드는 하지 않음)',
   'Saved on this computer; on by default.': '이 컴퓨터에 저장되며 기본값은 켜짐입니다.',
   'Keyboard': '키보드',
   'close a tooltip, else stop every active operation': '툴팁 닫기, 없으면 진행 중인 모든 작업 중지',

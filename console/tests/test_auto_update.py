@@ -99,6 +99,39 @@ class AutoUpdateTests(unittest.TestCase):
             self.assertIsNone(self.hub.auto_zone_pull(34))
             self.assertEqual(pull.call_count, 1)
 
+    def test_auto_build_one_stale_target_at_a_time_and_no_retry_after_failure(self):
+        self.assertTrue(self.hub.settings['auto_build'])
+        stale = dict(tools=dict(arduino_cli='arduino-cli', core_ok=True), cube=dict(error=None),
+                     zones=dict(DesertZone=dict(error='Firmware source changed'), PoolZone=dict(error='No firmware build yet'),
+                                PreshowZone=dict(error=None)),
+                     workstation=dict(state='current'), mainshow=dict(state='current'))
+        built = []
+
+        def fake_build(sketch, runner):
+            built.append(sketch)
+            if sketch == 'DesertZone':
+                raise RuntimeError('compile error')
+            return dict(version='test')
+
+        with mock.patch.object(self.hub, 'refresh_builds'), mock.patch('jobs.build.zone_build.build', side_effect=fake_build):
+            self.hub.builds = dict(stale, tools=dict(arduino_cli=None, core_ok=True))
+            self.assertIsNone(self.hub.auto_build_step(), 'no Arduino tools: nothing starts')
+            self.hub.builds = stale
+            self.hub.settings['auto_build'] = False
+            self.assertIsNone(self.hub.auto_build_step())
+            self.hub.settings['auto_build'] = True
+            first = self.hub.auto_build_step()
+            self.assertEqual(first.title, 'Build DesertZone')
+            self.assertIsNone(self.hub.auto_build_step(), 'one build at a time')
+            self.assertTrue(tick_until(self.hub, lambda: first.state == 'failed'))
+            self.assertIn('DesertZone', self.hub.auto_build_failed)
+            second = self.hub.auto_build_step()
+            self.assertEqual(second.title, 'Build PoolZone')
+            self.assertTrue(tick_until(self.hub, lambda: second.state == 'done'))
+            stale['zones']['PoolZone']['error'] = None   # what refresh_builds would now report
+            self.assertIsNone(self.hub.auto_build_step(), 'the failed target is not retried by itself')
+        self.assertEqual(built, ['DesertZone', 'PoolZone'])
+
 
 if __name__ == '__main__':
     unittest.main()

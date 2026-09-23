@@ -60,7 +60,7 @@ class UiSmokeTests(unittest.TestCase):
             with patch.object(pairing_app.subprocess, 'Popen') as popen:
                 app.open_zones()
             args = popen.call_args[0][0]
-            self.assertTrue(args[1].endswith('zones/dbmanager/app.py'))
+            self.assertTrue(Path(args[1]).as_posix().endswith('zones/dbmanager/app.py'))
             self.assertEqual(args[2:], ['--database', str(app.db.path)])
         finally:
             app.closing = True

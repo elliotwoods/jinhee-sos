@@ -69,8 +69,12 @@ Setup creates `pairing_station/.venv`, installs the pinned flasher dependencies
 (currently pyserial 3.5 and esptool 5.3.1, also sufficient for the other Python
 apps) and the NCT Console's pywebview (`console/requirements.txt`; on Windows also pythonnet, and
 the WebView2 runtime that ships with Edge is used for the window), validates the bundled cube manifest/binary hashes, and synchronizes the
-shared inventory. It needs network access for package installation. It does not
-flash connected hardware.
+shared inventory. It then sets up the firmware toolchain of section 6 (Arduino CLI through winget on
+Windows or Homebrew on macOS when neither it nor Arduino IDE 2 is installed, ESP32 core 3.3.11, the
+pinned libraries, machine-local library configs) and builds every firmware target that is missing or
+older than its source (`scripts/build_all_firmware.py --stale`). A toolchain or build failure is
+reported as a warning and does not fail setup; `--no-firmware` skips that part. It needs network
+access for package installation. It does not flash connected hardware.
 
 Check the environment:
 
@@ -99,7 +103,8 @@ If inventory sync reports conflicts, follow section 4 instead of deleting the DB
    CP210x/CH340 adapter boards need the vendor driver. Close Arduino Serial Monitor first: Windows
    serial ports are always exclusive.
 5. Firmware builds look for Arduino IDE 2's bundled `arduino-cli.exe` (per-user or Program Files install),
-   then `arduino-cli` on PATH; the ESP32 core is expected in `%LOCALAPPDATA%\Arduino15`.
+   then `arduino-cli` on PATH, then `%ProgramFiles%\Arduino CLI\arduino-cli.exe` (the winget/MSI install
+   that `Setup.bat` performs); the ESP32 core is expected in `%LOCALAPPDATA%\Arduino15`.
 6. Host firmware simulations need a `g++` or `clang++` on PATH (MinGW-w64 or LLVM), or set `CXX`.
    They run without sanitizers on Windows.
 7. Secrets: the stored web password and the local API token are owner-only (0600) on macOS. Windows has
@@ -300,6 +305,9 @@ READMEs; do not substitute a raw erase/write command for the validated pipelines
 
 ## 6. Install the Arduino build toolchain
 
+`scripts/setup.py` performs every step of this section automatically (rerun it to repair or update;
+`--no-firmware` skips it). The manual commands below remain the reference.
+
 This is optional when only running apps or flashing verified bundled cube binaries.
 A clean clone excludes `live files/libraries/`, `pairing_station/.arduino/`, most
 build outputs, and the entire machine's Arduino package installation. Recreate them.
@@ -363,7 +371,13 @@ Then build:
 
 ```sh
 pairing_station/.venv/bin/python scripts/build_all_firmware.py
+pairing_station/.venv/bin/python scripts/build_all_firmware.py --stale   # only missing/out-of-date builds
 ```
+
+`--stale` checks the cube and zone manifests (source hashes) and, for the other targets, whether any
+sketch or library file is newer than the build output. The NCT Console also rebuilds the builds it
+flashes (cube, zones, Workstation, Mainshow controller) on its own while Settings › Automatic updates ›
+Firmware builds is on (default), one at a time and never during a hardware job.
 
 Or choose **Build all firmwares** in VS Code and press F5. Fourteen targets are included (the
 `--dry-run` output is the authoritative list); the zone and diagnostic rows below are the main ones:
