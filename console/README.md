@@ -105,6 +105,10 @@ the device database, metadata `console_settings`; `console.settings` / Settings 
   identity and firmware untouched), once per board and publication, independent of Auto-flash zones. The zone's
   Firmware & database tab shows the result.
 - **Main show over the air** (`auto_show`): the show registry's walk-around (Show editor › Auto update).
+- **Firmware builds** (`auto_build`): `hub.auto_build_step()` (every 60 s with the build check) starts one build
+  job for the first cube, zone, Workstation or Mainshow build that is missing or older than its source, only when
+  the Arduino tools are present and no build or hardware job is running. A failed target is not retried by itself
+  during that run (the `build.stale` card still offers it). Builds never upload.
 - **Web pulls** (`auto_pull`, needs the web password): a status check that reports a newer zone database pulls
   it (each web version once per run); a newer published show is pulled every 5 min while a show relay is
   connected (silent while none is published; a new one logs "Pulled show vN"). Failures are logged once per

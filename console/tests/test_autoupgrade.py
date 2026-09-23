@@ -172,6 +172,78 @@ class AutoUpgradeTests(unittest.TestCase):
         self.auto.fingerprints['zone:DesertZone'] = 'edited'       # the source changed: try again
         self.assertTrue(self.tick_until(lambda: len(calls) == 2))
 
+    def stale_zones(self, *sketches):
+        for sketch in sketches:
+            self.hub.builds['zones'][sketch]['error'] = 'Firmware source changed since the last build'
+        self.auto.targets = self.auto.target_list()
+
+    def test_no_build_without_arduino_tools_or_with_the_setting_off(self):
+        self.stale_zones('DesertZone')
+        self.hub.settings['auto_build'] = True
+        self.hub.simulate = False              # simulation builds without arduino-cli; the real console does not
+        try:
+            self.hub.builds['tools'] = dict(arduino_cli=None, core_ok=True)
+            self.assertIsNone(self.auto.next_build(set()))
+            self.hub.builds['tools'] = dict(arduino_cli='arduino-cli', core_ok=False)
+            self.assertIsNone(self.auto.next_build(set()))
+            self.hub.builds['tools'] = dict(arduino_cli='arduino-cli', core_ok=True)
+            self.assertEqual(self.auto.next_build(set())['target'], 'zone:DesertZone')
+            self.hub.settings['auto_build'] = False
+            self.assertIsNone(self.auto.next_build(set()))
+        finally:
+            self.hub.simulate = True
+
+    def gated_build(self, calls, release, fail=()):
+        from jobs.base import Job
+
+        def build(hub, target):
+            job = Job('build.sim', 'build', f'Build {target}')
+            calls.append(target)
+
+            def work(emit, cancel):
+                release.wait(10)
+                if target in fail:
+                    raise RuntimeError('compile error')
+            hub.jobs.start(job, work)
+            return job
+        return build
+
+    def test_one_build_at_a_time_then_the_next_and_a_failure_is_not_retried(self):
+        import threading
+        self.stale_zones('DesertZone', 'PoolZone')
+        calls, release = [], threading.Event()
+        self.hub.fake_build = self.gated_build(calls, release, fail=('zone:DesertZone',))
+        self.hub.settings['auto_build'] = True
+        self.assertTrue(self.tick_until(lambda: calls))
+        self.tick_until(lambda: False, timeout=2.5)
+        self.assertEqual(len(calls), 1, 'one build at a time')
+        release.set()
+        self.assertTrue(self.tick_until(lambda: len(calls) == 2 and not self.auto.running(), timeout=10))
+        self.tick_until(lambda: False, timeout=2.5)
+        self.assertEqual(sorted(calls), ['zone:DesertZone', 'zone:PoolZone'], 'the failed target is not retried by itself')
+        self.assertFalse(self.flash_overlap)
+        self.assertFalse(self.auto.builds['zone:DesertZone']['ok'])
+        commands.run(self.hub, 'autoupgrade.retry', dict(target='zone:DesertZone'))
+        self.assertTrue(self.tick_until(lambda: len(calls) == 3), 'the operator can retry')
+
+    def test_no_build_while_a_hardware_job_runs(self):
+        import threading
+        from jobs.base import Job
+        self.stale_zones('DesertZone')
+        calls, hold = [], threading.Event()
+        self.hub.fake_build = self.gated_build(calls, threading.Event())
+        self.hub.settings['auto_build'] = True
+        flash = Job('cube.flash', '/dev/sim.other', 'Flash by hand', hardware=True)
+        self.hub.jobs.start(flash, lambda emit, cancel: hold.wait(10))
+        try:
+            self.hub.idle_flag.set()     # as if the flash started earlier in this same hub tick
+            self.auto.last = -1e9
+            self.auto.tick()
+            self.assertEqual(calls, [], 'a flash may be reading the build folder')
+        finally:
+            hold.set()
+        self.assertTrue(self.tick_until(lambda: calls))
+
     def test_panel_section(self):
         self.on()
         self.assertTrue(self.tick_until(lambda: (section(self.hub, 'autoupdate') or {}).get('devices')))

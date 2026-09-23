@@ -318,6 +318,52 @@ class WorkstationBesideLegacyTests(unittest.TestCase):
         run_ticks(self.hub, 2)
         self.assertIn('set_zone', self.workstation.sent)
 
+    def test_tag_on_the_reader_is_read_back_and_resolved(self):
+        session = self.session(self.workstation)
+        uid = '04:A2:2B:1C:53:80:01'
+        self.hub.db.reserve(CUBE, source='test')
+        self.hub.db.rename(CUBE, 44)
+        self.hub.db.prepare(CUBE, uid, take_over=True)
+        self.assertIsNone(session.snapshot()['reader_tag']['uid'])
+        self.workstation.sent.clear()
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == uid))
+        self.assertIn('nfc_poll', self.workstation.sent, 'tag_state carries no UID; the reader is asked for it')
+        snap = session.snapshot()
+        self.assertEqual((snap['reader_tag']['present'], snap['reader_history'][0]['cube_id'], snap['reader_history'][0]['mac']),
+                         (True, 44, CUBE))
+        self.assertTrue(logs(self.hub, f'Tag {uid} on the Workstation reader: cube #44'))
+        run_ticks(self.hub, 20, dt=0.1)
+        self.assertEqual(self.workstation.sent.count('nfc_poll'), 1, 'asked once, not every tick')
+        self.workstation.lift_tag()
+        run_ticks(self.hub, 2)
+        self.assertEqual((session.reader['present'], session.reader['uid']), (False, None))
+        self.assertIsNotNone(session.reader_history[0]['held_ms'])
+        # An unknown tag is shown as such; nothing is written to the inventory.
+        self.workstation.place_tag('04:11:22:33')
+        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == '04:11:22:33'))
+        self.assertEqual((session.reader_history[0]['mac'], session.reader_history[0]['cube_id']), (None, None))
+        self.assertNotIn('nfc_seen', [r[0] for r in self.hub.db.conn.execute('SELECT action FROM events')])
+        # The primary legacy station's reader works the same way (nfc_poll is a station command).
+        station = self.session(self.station)
+        self.station.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: station.reader['uid'] == uid))
+        self.assertEqual(station.snapshot()['reader_history'][0]['cube_id'], 44)
+
+    def test_identify_does_not_invent_a_tag(self):
+        session = self.session(self.workstation)
+        self.hub.db.reserve(CUBE, source='test')
+        commands.run(self.hub, 'radio.identify', dict(device=self.workstation.mac, macs=[CUBE]))
+        self.workstation.emit(dict(event='tag_state', id='', present=True))   # the firmware's synthetic clear-interval start
+        run_ticks(self.hub, 5)
+        self.assertFalse(session.reader['present'])
+        self.assertNotIn('nfc_poll', self.workstation.sent, 'nfc_poll is refused while the reader is identifying')
+        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
+        run_ticks(self.hub, 2)
+
+    def test_general_radio_has_no_reader_view(self):
+        self.assertIsNone(self.session(self.radio).snapshot()['reader_tag'])
+
     def test_pool_beacon_from_a_central_is_kept(self):
         session = self.session(self.radio)
         commands.run(self.hub, 'radio.status', dict(device=self.radio.mac))

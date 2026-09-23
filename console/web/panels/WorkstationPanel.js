@@ -11,7 +11,7 @@ import { ActionButton, HoldButton } from '../components/actions.js';
 import { DataTable, LogPane } from '../components/data.js';
 import { LedRing, MemberGrid } from '../components/canvas.js';
 import { DeviceHeader, sessionOf, RawConsole, JobHistory, rowByMac } from './common.js';
-import { StationBanner, CubeDetail, registrationPill, cubeLevel } from './CubePanel.js';
+import { StationBanner, CubeDetail, registrationPill, cubeLevel, statusLabel } from './CubePanel.js';
 import { ShowControl } from './ShowSection.js';
 import { goDevice } from '../router.js';
 import { hhmmss, crc, ago, signalBars } from '../lib/format.js';
@@ -210,6 +210,65 @@ function StationPairing({ st, caps }) {
     </div>`;
 }
 
+// The cube lying on this board's reader, as a zone plate's Monitor shows the cube on the plate. The hub reads the tag's
+// UID back from the reader (s.reader_tag, s.reader_history); the inventory says whose tag it is (committed first, then
+// pending); the actions go out over this board's own radio. Nothing here writes the inventory.
+function ownerOf(uid) {
+  const rows = (section('inventory') || {}).rows || [];
+  const row = uid ? rows.find((r) => r.uid === uid) || rows.find((r) => r.pending_uid === uid) || null : null;
+  return { row, pending: !!row && row.uid !== uid };
+}
+
+function ReaderCube({ device, s, caps }) {
+  useSections(['inventory']);
+  const [selected, setSelected] = useState(null);
+  const tag = s.reader_tag || {};
+  const history = s.reader_history || [];
+  const key = (h) => `${h.time}:${h.uid}`;
+  const picked = !tag.present && selected ? history.find((h) => key(h) === selected) : null;
+  const uid = tag.present ? tag.uid : picked ? picked.uid : null;
+  const { row, pending } = ownerOf(uid);
+  const mac = row ? row.mac : null;
+  const number = row && row.cube_id != null ? `#${row.cube_id}` : null;
+  const sent = mac ? (s.colour_sends || []).find((c) => c.mac === mac) : null;
+  const zc = sent && s.zone_colors ? s.zone_colors[sent.zone] : null;
+  const ring = zc ? { colour: zc[1], sub: t(zc[0]) } : { colour: ledToken(row), sub: row ? statusLabel(row.status) : uid ? t('Unknown tag') : '—' };
+  const live = device.state === 'session' && s.connected;
+  const busy = !!s.mode;
+  const off = !live || !mac || busy;
+  const readout = tag.present ? (!tag.uid ? t('Reading the tag…') : number || (row ? t('no number') : t('Unknown tag'))) : picked ? number || (row ? t('no number') : t('Unknown tag')) : t('No cube on the reader');
+  const held = (h) => (h.held_ms == null ? t('on the reader') : `${(h.held_ms / 1000).toFixed(1)} s`);
+  const columns = [
+    { key: 'time', label: t('Time'), render: (h) => hhmmss(h.time) },
+    { key: 'cube_id', label: t('Cube'), render: (h) => { const o = ownerOf(h.uid).row; return o && o.cube_id != null ? `#${o.cube_id}` : o ? t('no number') : t('unknown'); } },
+    { key: 'uid', label: 'UID', mono: true },
+    { key: 'held_ms', label: t('Held'), render: held },
+    { key: 'registry', label: t('Inventory'), render: (h) => { const o = ownerOf(h.uid); return o.row ? `${statusLabel(o.row.status)}${o.pending ? ' · ' + t('pending tag') : ''}` : t('unknown to this computer'); } },
+  ];
+  const zoneButton = (z, label, hazard) => html`<${ActionButton} name="radio.set_zone" args=${{ device: device.id, mac, zone: z }} label=${label} className="btn small" disabled=${off || !caps.show_verbs} hazard=${hazard} />`;
+  return html`<div class="card" data-doc="workstation.reader"><h3>${t('On the reader')}</h3>
+    ${!s.reader_ok && html`<div class="row"><${Pill} status="nfc.bad" /></div>`}
+    <div class="grid2"><div>
+      <${LedRing} colour=${ring.colour} label=${number || '—'} sub=${ring.sub} size=${140} blink=${row && row.telemetry && row.telemetry.command === 'identify'} /></div>
+      <div class="stack"><div class=${number ? 'readout' : 'readout medium'}>${readout}</div>
+      ${uid && html`<${KeyValue} items=${[['NFC UID', uid],
+        ['MAC', mac ? html`<a href="#" onClick=${(e) => { e.preventDefault(); goDevice('cube:' + mac); }}>${mac}</a>` : '—'],
+        [t('Inventory'), row ? html`${registrationPill(row)} ${pending ? t('pending tag of this cube (not yet acknowledged)') : ''}` : t('unknown to this computer')],
+        [t('Colour sent'), sent ? t("{name} → {zone}: {delivered}/{sent} frames acknowledged by the cube's radio", { name: sent.name, zone: sent.zone_name, delivered: sent.delivered, sent: sent.sent }) : '—'],
+        [t('On the reader'), tag.present && tag.since ? t('since {time}', { time: hhmmss(tag.since) }) : picked ? `${hhmmss(picked.time)} · ${held(picked)}` : '—']]} />`}
+      ${uid && !row && html`<div class="warn-text">${t('No device in the inventory owns this tag. Register the cube to give it this tag.')}</div>`}
+      </div></div>
+    <div class="row"><span class="note">${number ? t('Actions apply to cube #{n}', { n: row.cube_id }) : t('Actions apply to the cube on the reader, or to a selected history row')}</span></div>
+    <div class="row">
+      <${ActionButton} name="radio.identify" args=${{ device: device.id, macs: [mac], sequential: true }} label=${t('Flash 2 s')} className="btn small" disabled=${off} hazard=${t('A two-second blue/red flash on the cube, then idle.')} />
+      ${zoneButton(0, t('Clear (idle white)'), t('Sends SET_ZONE 0 to the cube.'))}
+      ${ZONES.slice(1).map(([z, name]) => zoneButton(z, t(name), t('Sends SET_ZONE {zone} ({name}) to the cube.', { zone: z, name: t(name) })))}
+      <${ActionButton} name="radio.stop" args=${{ device: device.id }} label=${t('Stop')} className="btn small danger" disabled=${!live} />
+      ${mac && html`<button class="btn small" onClick=${() => goDevice('cube:' + mac)}>${t('Open cube page')}</button>`}</div>
+    ${history.length > 0 && html`<${DataTable} columns=${columns} rows=${history} keyOf=${key} selected=${selected} onSelect=${(k) => setSelected(k === selected ? null : k)} maxRows=${5} />`}
+  </div>`;
+}
+
 // Before a session opens (or with a hub that predates s.capabilities) the hello tells the same story.
 function capsOf(s, device) {
   if (s.capabilities) return s.capabilities;
@@ -269,8 +328,9 @@ export function WorkstationPanel({ device }) {
   const body = (id, content) => (off.has(id) ? html`<div class="card"><div class="note">${t('Not on this board: {why}', { why: whyNot(id, label) })}</div></div>` : content());
   return html`<div>
     <${DeviceHeader} device=${device} title=${label} pills=${pills} kv=${kv} />
-    <${Explainer} id="workstation" />
     ${s.problem && html`<${Banner} kind="bad" title=${s.fatal ? t('The radio driver stopped answering') : t('Radio problem')} detail=${`${s.problem}. ${s.fatal ? t('Every radio operation is refused until the board is power-cycled; its own leases release anything it held. Unplug and replug it, then probe again.') : ''}`} />`}
+    ${caps.reader && s.reader_tag && html`<${ReaderCube} device=${device} s=${s} caps=${caps} />`}
+    <${Explainer} id="workstation" />
     ${isPrimary && html`<${StationBanner} />`}
     <${Tabs} tabs=${TABS.map(([id, name]) => [id, t(name)])} current=${tab} onChange=${setTab} disabled=${off} />
     ${tab === 'station' && (isPrimary

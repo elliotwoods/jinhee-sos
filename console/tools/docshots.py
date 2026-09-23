@@ -200,6 +200,10 @@ def main(argv=None):
     parser.add_argument('--python', default=sys.executable)
     parser.add_argument('--keep', action='store_true', help='keep the console running after the last capture')
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        # Scenario titles contain '›' and '→': a Windows cp949/cp1252 console cannot encode them.
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     if args.list:
         for s in docscenes.SCENARIOS:
             print(f'{s["id"]:5} ch{s["chapter"]:02d} step {s["step"]}  {s["en"]}')

@@ -170,4 +170,16 @@ export default {
   'the cube acknowledged; remove the tag': '큐브가 확인 응답함. 태그를 치우세요',
   'no acknowledgment: Retry or Skip': '확인 응답 없음: 재시도 또는 건너뛰기',
   'identify': '식별',
+  // WorkstationPanel.js: the cube on the reader
+  'On the reader': '리더 위',
+  'on the reader': '리더 위',
+  'Reading the tag…': '태그 읽는 중…',
+  'No cube on the reader': '리더에 큐브 없음',
+  'pending tag': '대기 중 태그',
+  'pending tag of this cube (not yet acknowledged)': '이 큐브의 대기 중 태그 (아직 확인 응답 없음)',
+  'Colour sent': '보낸 색',
+  'since {time}': '{time}부터',
+  'No device in the inventory owns this tag. Register the cube to give it this tag.': '인벤토리에 이 태그를 가진 장치가 없습니다. 큐브를 등록하면 이 태그가 지정됩니다.',
+  'Actions apply to the cube on the reader, or to a selected history row': '동작 대상: 리더 위의 큐브 또는 선택한 이력 행',
+  'Open cube page': '큐브 페이지 열기',
 };

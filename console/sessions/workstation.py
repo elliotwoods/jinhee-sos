@@ -29,12 +29,20 @@ driver stopped answering: every later send is refused until the board is power-c
 `watchdog` (the held cube was returned to idle) are noted here in the radio's words, then handed to
 the pairing Controller, which treats them as a lost link and re-handshakes. Show frames
 (`show_sent` / `show_frame`) belong to the show editor's registry (showedit.py).
+
+The tag on the reader (`reader`, `reader_history`): the page's view of the cube lying on this board's
+reader, as a zone plate's Monitor shows the cube on the plate. `tag_state` says only present/absent, so
+once the link is idle the UID is read back with `nfc_poll enabled:true` (it answers `tag_present` and the
+last UID; polling stays on, as the Controller already asked). An identify's `tag` event carries it too.
+Observation only: nothing is written to the database (not an `nfc_seen` scan) and the Controller still
+sees every one of these events.
 """
 import paths  # noqa: F401
 import re
 import uuid
 
 from controller import Controller
+from database import hex_bytes
 from zone_registry import ZoneRegistry
 import dongle
 import zonedb
@@ -50,6 +58,8 @@ ZONE_NAMES = {0: 'idle', 1: 'preshow', 2: 'desert', 3: 'pool', 4: 'mainshow'}
 COLOUR_REPEATS = 3  # the firmware sends a colour three times, as the tag plates do
 FATAL_TEXT = 'Radio driver stopped answering; unplug and replug the board'
 LIVE_GENERAL = (1, 2, 0)  # the first General Radio that knows SHOW_LIVE (the page gates the mirror on this too)
+READER_EVENTS = {'tag_state', 'tag', 'nfc_poll_result'}
+READER_HISTORY = 20
 
 
 def _at_least(firmware, prefix, minimum):
@@ -63,6 +73,7 @@ class WorkstationSession(Session):
     PING, HELLO_RETRY = 1.0, 3.0
     TOUCH = 0.6
     STATUS_EVERY = 5.0
+    READER_QUERY = 1.0            # ask the reader for an unknown tag's UID at most once a second
 
     def __init__(self, hub, device):
         super().__init__(hub, device)
@@ -88,6 +99,10 @@ class WorkstationSession(Session):
         self.recent_acks = []
         self.colour_sends = {}        # mac -> dict(name, zone, zone_name, sent, delivered, at): the last colour per cube
         self.fatal = None             # the radio's `fatal` detail until it answers a hello again
+        self.reader = self._no_tag()  # the tag on this board's reader (see the module docstring)
+        self.reader_history = []      # newest first: dict(time, uid, mac, cube_id, held_ms)
+        self.reader_query = None      # the outstanding nfc_poll request id
+        self.last_reader_query = 0.0
 
     # ---- what the board is, from its hello ----
     @property
@@ -291,6 +306,8 @@ class WorkstationSession(Session):
             self.last_rx = self.clock()
             self.events += 1
             kind = event.get('event')
+            if kind in READER_EVENTS:
+                self.reader_event(event)   # observed only; routed on below as before
             if kind == 'disconnected':
                 self.last_disconnect = event.get('detail', 'Disconnected')
                 self.hub.log(f'{self.label} link lost: {self.last_disconnect}', 'warn', self.device.id)
@@ -326,6 +343,7 @@ class WorkstationSession(Session):
             self.fatal = None  # the board came back (power-cycled)
             self.hub.log(f'{self.label} answers again; its radio is up', 'ok', self.device.id, source='radio')
         self.status = dict(event)
+        self._tag_left()  # a (re-)handshake: whatever lies on the reader now is read back from scratch
         self.pool = dict(event.get('pool') or {})
         self.preshow = dict(event.get('preshow') or {})
         if event.get('mac'):
@@ -356,7 +374,7 @@ class WorkstationSession(Session):
             name = self.names.get(e.get('mac'), e.get('mac'))
             zone = ZONE_NAMES.get(e.get('zone'), e.get('zone'))
             delivered = e.get('status') == 'delivered'
-            self.colour_sends[e.get('mac')] = dict(name=name, zone=e.get('zone'), zone_name=zone, sent=1, delivered=int(delivered),
+            self.colour_sends[e.get('mac')] = dict(mac=e.get('mac'), name=name, zone=e.get('zone'), zone_name=zone, sent=1, delivered=int(delivered),
                                                    repeats=e.get('repeats') or COLOUR_REPEATS, at=self.hub.wall())
             if len(self.colour_sends) > 8:
                 del self.colour_sends[next(iter(self.colour_sends))]
@@ -423,6 +441,82 @@ class WorkstationSession(Session):
             self.hub.log(f'{self.label} refused {sent.get("cmd") if sent else "a command"}: {e.get("detail")}', 'warn', self.device.id,
                          source='radio')
 
+    # ---- the tag on the reader ----
+    @staticmethod
+    def _no_tag():
+        return dict(present=False, uid=None, since=None, confirmed=True)
+
+    def reader_event(self, e):
+        kind, r = e.get('event'), self.reader
+        if kind == 'tag_state':
+            if not e.get('present'):
+                self._tag_left()
+            elif not (self.controller.mode and not r['present']):
+                # An identify opens with a synthetic present:true (the reader must see a clear interval);
+                # while an operation runs only a real `tag` event says a tag arrived.
+                if not r['present']:
+                    r['since'] = self.hub.wall()
+                r.update(present=True, confirmed=False)  # arrived or changed: read the UID once idle
+        elif kind == 'nfc_poll_result':
+            if e.get('id') == self.reader_query:
+                self.reader_query = None
+            if e.get('tag_present'):
+                self._tag_seen(e.get('uid'))
+            else:
+                self._tag_left()
+        elif kind == 'tag' and e.get('uid'):
+            self._tag_seen(e['uid'])
+
+    def _tag_seen(self, uid):
+        r = self.reader
+        try:
+            uid = hex_bytes(str(uid), {4, 7}) if uid else None
+        except ValueError:
+            uid = None
+        if uid and uid != r['uid']:
+            fresh = bool(r['uid']) or not r['present']
+            if r['uid']:
+                self._tag_left()  # another tag replaced it without a clear interval
+            r = self.reader
+            if fresh or not r['since']:
+                r['since'] = self.hub.wall()
+            r['uid'] = uid
+            self._tag_placed(uid, r['since'])
+        elif not r['present']:
+            r['since'] = self.hub.wall()
+        r.update(present=True, confirmed=True)
+
+    def _tag_placed(self, uid, since):
+        mac, cube_id = self.cube_for_uid(uid)
+        self.reader_history.insert(0, dict(time=since, uid=uid, mac=mac, cube_id=cube_id, held_ms=None))
+        del self.reader_history[READER_HISTORY:]
+        who = f'cube #{cube_id}' if cube_id is not None else mac or 'a tag the inventory does not know'
+        self.hub.log(f'Tag {uid} on the {self.label} reader: {who}', 'info', self.device.id, source='reader')
+
+    def _tag_left(self):
+        r, history = self.reader, self.reader_history
+        if r['present'] and r['uid'] and history and history[0]['uid'] == r['uid'] and history[0]['held_ms'] is None:
+            history[0]['held_ms'] = int(max(0.0, self.hub.wall() - (r['since'] or self.hub.wall())) * 1000)
+        self.reader = self._no_tag()
+
+    def cube_for_uid(self, uid):
+        """(mac, cube_id) of the device owning this tag: its committed tag first, else a pending one."""
+        row = self.hub.db.conn.execute('SELECT mac, cube_id FROM devices WHERE uid=? OR pending_uid=? ORDER BY uid=? DESC LIMIT 1',
+                                       (uid, uid, uid)).fetchone()
+        return (row[0], row[1]) if row else (None, None)
+
+    def reader_tick(self, now):
+        """Read back the UID of a tag reported without one, once the link is idle (the reader refuses nfc_poll otherwise)."""
+        c, r = self.controller, self.reader
+        if not (self.has_reader and c.reader_ok) or c.mode:
+            return
+        if not ((r['present'] and not r['confirmed']) or (c.tag_present and not r['present'])):
+            return
+        if now - self.last_reader_query < (3 if self.reader_query else 1) * self.READER_QUERY:
+            return
+        self.last_reader_query = now
+        self.reader_query = c.emit('nfc_poll', enabled=True)
+
     def tick(self, now):
         c = self.controller
         if self.transport.port and c.connected and now - self.last_ping >= self.PING:
@@ -452,6 +546,7 @@ class WorkstationSession(Session):
             point, self.preshow_held = self.preshow_held, 0
             self._request('preshow', point=point, state=0)
             self.hub.log(f'Preshow cue {point} turned off: the page stopped holding it', 'info', self.device.id, source='radio')
+        self.reader_tick(now)
         # Only a board with roles knows `status`; a legacy station would answer "Unknown command" every 5 s.
         if self.roles and now - self.last_status >= self.STATUS_EVERY and not c.mode:
             self.last_status = now
@@ -480,7 +575,9 @@ class WorkstationSession(Session):
                     colour_sends=list(self.colour_sends.values()), fatal=self.fatal,
                     show=dict(elapsed_s=round(show[0], 1), segment=show[1], length_ms=mainshow_app.SHOW_LENGTH_MS,
                               **{k: v for k, v in self.show.items() if k != 'started'}) if show else None,
-                    timeline=mainshow_app.TIMELINE, usable=self.usable(), info=st, problem=self.problem())
+                    timeline=mainshow_app.TIMELINE, usable=self.usable(), info=st, problem=self.problem(),
+                    reader_tag=dict(self.reader) if self.has_reader else None, reader_history=self.reader_history,
+                    zone_colors=zonedb.ZONE_COLORS)
 
     def registry_snapshot(self):
         snap = self.zones.snapshot()

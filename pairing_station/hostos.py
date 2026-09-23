@@ -107,17 +107,25 @@ def esp32_core(version='3.3.11'):
 
 
 def arduino_cli():
-    """The CLI bundled with Arduino IDE 2 when installed, else arduino-cli on PATH, else None."""
+    """The CLI bundled with Arduino IDE 2 when installed, else arduino-cli on PATH, else None.
+
+    On Windows the Arduino CLI installer's folder is also checked (last): a process started
+    before the installer ran still has the old PATH.
+    """
     bundled = 'resources/app/lib/backend/resources/arduino-cli'
+    fallbacks = []
     if MAC:
         candidates = [Path('/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli')]
     elif WINDOWS:
         roots = [Path(os.environ[name]) / folder for name, folder in
                  (('LOCALAPPDATA', 'Programs/Arduino IDE'), ('ProgramFiles', 'Arduino IDE')) if os.environ.get(name)]
         candidates = [root / (bundled + '.exe') for root in roots]
+        if os.environ.get('ProgramFiles'):
+            fallbacks = [Path(os.environ['ProgramFiles']) / 'Arduino CLI/arduino-cli.exe']
     else:
         candidates = []
-    return next((str(path) for path in candidates if path.exists()), None) or shutil.which('arduino-cli')
+    found = next((str(path) for path in candidates if path.exists()), None) or shutil.which('arduino-cli')
+    return found or next((str(path) for path in fallbacks if path.exists()), None)
 
 
 # The esptool that ESP32 core 3.3.11 builds with (build manifests record it); setup pins the same

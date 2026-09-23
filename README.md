@@ -21,7 +21,7 @@ On **Windows**: install Python 3.14 from python.org (with tcl/tk) and Git, clone
 [docs/SETUP.md section 2b](docs/SETUP.md#2b-prepare-a-windows-pc). Wherever this page says
 `pairing_station/.venv/bin/python`, use `pairing_station\.venv\Scripts\python.exe`.
 
-Setup creates a local Python environment, installs pinned dependencies, and verifies the included firmware hashes. An internet connection is needed for setup. Arduino is **not required** to flash the included cube firmware.
+Setup creates a local Python environment, installs pinned dependencies, and verifies the included firmware hashes. An internet connection is needed for setup. Setup also installs the Arduino firmware toolchain (Arduino CLI, ESP32 core 3.3.11, pinned libraries) and rebuilds any firmware that is missing or out of date; that part is optional (`--no-firmware` skips it) and Arduino is **not required** to flash the included cube firmware.
 
 1. Connect a Neocore cube using a USB data cable.
 2. Check the detected device and its prominently displayed database/original number.

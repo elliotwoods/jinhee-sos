@@ -384,8 +384,10 @@ class AutoUpgrade:
                     self.failed[plan['key']] = f'Could not start: {exc}'
                     plan['state'], plan['reason'] = 'failed', self.failed[plan['key']]
                     hub.log(f'Automatic firmware upgrade on {plan["port"]}: {exc}', 'warn', plan['device'], source='auto')
+        # never while any hardware job runs (a flash may be reading a build folder): the idle flag is only
+        # refreshed at the end of a hub tick, so a flash started earlier in this tick is checked directly
         if not busy and not started and hub.idle_flag.is_set() and not self.paused and \
-                not any(j.kind.startswith('build') for j in hub.jobs.running()):
+                not any(j.kind.startswith('build') or j.hardware for j in hub.jobs.running()):
             target = self.next_build(needed)
             if target:
                 try:
