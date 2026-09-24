@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build, sign and notarize the standalone NCT Console for macOS (Apple Silicon).
 
-  pairing_station/.venv/bin/python packaging/build_mac.py [--no-notarize] [--skip-firmware]
+  pairing_station/.venv/bin/python packaging/build_mac.py [--no-notarize] [--skip-firmware] [--resume ID]
 
 Steps, each refusing to continue on failure:
   1. firmware   every maintained build current (scripts/build_all_firmware.py --stale compiles what is not;
@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -134,26 +135,56 @@ def verify(sign):
     print('Every shipped firmware build is current inside the app.')
 
 
-def notarize(path, profile):
-    result = subprocess.run(['xcrun', 'notarytool', 'submit', path, '--keychain-profile', profile, '--wait',
-                             '--timeout', '3h', '--output-format', 'json'], capture_output=True, text=True)
+def notary(args, profile):
+    """One notarytool call with JSON output; None on a network failure (the caller retries)."""
+    result = subprocess.run(['xcrun', 'notarytool', *map(str, args), '--keychain-profile', profile,
+                             '--output-format', 'json'], capture_output=True, text=True)
     try:
-        submission = json.loads(result.stdout)
+        return json.loads(result.stdout)
     except ValueError:
+        if 'NSURLErrorDomain' in result.stdout + result.stderr:
+            return None
         raise SystemExit(f'notarytool failed: {result.stdout}{result.stderr}')
-    print(f'Notarization of {path.name}: {submission.get("status")} ({submission.get("id")})', flush=True)
-    if submission.get('status') != 'Accepted':
-        if submission.get('id'):
-            run(['xcrun', 'notarytool', 'log', submission['id'], '--keychain-profile', profile])
-        raise SystemExit(f'Notarization {submission.get("status")}: {path.name}')
 
 
-def package(short, profile):
+def notarize(path, profile, submission=None):
+    """Submit `path` (unless `submission` is an id already submitted) and wait for Apple's answer. Apple can take
+    hours on a team's first submissions; a dropped network connection only pauses the wait."""
+    if not submission:
+        for attempt in range(5):
+            answer = notary(['submit', path], profile)
+            if answer:
+                break
+            print('Network unavailable; retrying the upload in 60 s', flush=True)
+            time.sleep(60)
+        else:
+            raise SystemExit(f'Could not upload {path.name} for notarization')
+        submission = answer['id']
+    print(f'Notarization of {path.name}: submitted as {submission}; waiting for Apple', flush=True)
+    deadline = time.monotonic() + 6 * 3600
+    while True:
+        answer = notary(['wait', submission, '--timeout', '30m'], profile)
+        status = (answer or {}).get('status')
+        if status in ('Accepted', 'Invalid', 'Rejected'):
+            break
+        if time.monotonic() > deadline:
+            raise SystemExit(f'Notarization still {status or "unreachable"} after 6 h; resume with --resume {submission}')
+        if answer is None:
+            print('Network unavailable; still waiting', flush=True)
+            time.sleep(60)
+    print(f'Notarization of {path.name}: {status}', flush=True)
+    if status != 'Accepted':
+        run(['xcrun', 'notarytool', 'log', submission, '--keychain-profile', profile])
+        raise SystemExit(f'Notarization {status}: {path.name}')
+
+
+def package(short, profile, resume=None):
     step('Notarize the app')
     archive = BUILD / 'NCT Console.zip'
-    archive.unlink(missing_ok=True)
-    run(['ditto', '-c', '-k', '--keepParent', APP, archive])
-    notarize(archive, profile)
+    if not resume:
+        archive.unlink(missing_ok=True)
+        run(['ditto', '-c', '-k', '--keepParent', APP, archive])
+    notarize(archive, profile, resume)
     run(['xcrun', 'stapler', 'staple', APP])
     step('Disk image')
     image = DIST / f'NCT-Console-{short}.dmg'
@@ -179,6 +210,8 @@ def main():
     parser.add_argument('--no-sign', action='store_true', help='unsigned test build (implies --no-notarize)')
     parser.add_argument('--no-notarize', action='store_true', help='sign but do not notarize or make the disk image')
     parser.add_argument('--profile', default='notary', help='notarytool keychain profile (default: notary)')
+    parser.add_argument('--resume', metavar='ID', help='continue with the app already built in packaging/dist and submitted '
+                        'for notarization as ID (after an interrupted run); no rebuild')
     options = parser.parse_args()
     if sys.platform != 'darwin':
         raise SystemExit('macOS only')
@@ -186,6 +219,9 @@ def main():
     if sign and IDENTITY not in output(['security', 'find-identity', '-v', '-p', 'codesigning']):
         raise SystemExit(f'Signing identity not in the keychain: {IDENTITY}')
     short, count = version()
+    if options.resume:
+        verify(True)
+        return package(short, options.profile, options.resume)
     firmware(options.skip_firmware)
     python = venv()
     freeze(python, short, count, sign)
