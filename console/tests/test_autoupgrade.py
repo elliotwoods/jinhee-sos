@@ -94,6 +94,39 @@ class AutoUpgradeTests(unittest.TestCase):
         self.on()
         self.assertTrue(self.tick_until(lambda: plate.firmware == autoupgrade.source_version('PreshowZone'), timeout=20))
 
+    def test_versions_are_ordered(self):
+        c = autoupgrade.compare_versions
+        self.assertEqual([c('desert-2.3.0', 'desert-2.4.0'), c('desert-2.4.0', 'desert-2.4.0'), c('pool-3.10.0', 'pool-3.9.0')], [-1, 0, 1])
+        self.assertEqual([c('v1.4.1-USB.2', 'v1.7.0-USB.1'), c('v1.7.0-USB.2', 'v1.7.0-USB.1'), c('mainshow-1.2.0', 'mainshow-1.3.0')], [-1, 1, -1])
+        self.assertEqual([c('tagplate-1.0.0', 'preshow-3.4.0'), c('garbage', 'desert-2.4.0'), c('v1.7.0-RC.1', 'v1.7.0-USB.1')], [None, None, None])
+
+    def test_newer_boards_are_listed_never_downgraded(self):
+        simdocs.seed_publication(self.hub, 32)
+        plate, cube = self.sim['plate'], self.sim['cube']
+        plate.firmware, cube.firmware = 'preshow-99.0.0', 'v99.0.0-USB.1'
+        self.on()
+        for port in ('/dev/sim.preshow1', '/dev/sim.cube'):
+            self.reprobe(port)
+        self.assertTrue(self.tick_until(lambda: all((self.plan(p) or {}).get('state') == 'report' for p in ('/dev/sim.preshow1', '/dev/sim.cube'))),
+                        section(self.hub, 'autoupdate'))
+        self.assertIn('not downgraded', self.plan('/dev/sim.preshow1')['reason'])
+        self.assertIn('not downgraded', self.plan('/dev/sim.cube')['reason'])
+        self.tick_until(lambda: False, timeout=3)
+        self.assertEqual((plate.firmware, cube.firmware), ('preshow-99.0.0', 'v99.0.0-USB.1'))
+        self.assertFalse(self.auto_jobs('flash'))
+
+    def test_newer_workstation_and_unordered_plate_are_left_alone(self):
+        simdocs.seed_publication(self.hub, 32)
+        station, plate = self.sim['station'], self.sim['plate']
+        station.firmware, plate.firmware = 'workstation-9.0.0', 'preshow-3.4.0-beta'
+        self.reprobe('/dev/sim.preshow1')
+        device = next(d for d in self.hub.devices.values() if d.role == 'workstation' and d.mac == station.mac)
+        self.reprobe(device.id)
+        self.assertTrue(self.tick_until(lambda: (self.auto.plan(device) or {}).get('action') == 'report'
+                                        and (self.plan('/dev/sim.preshow1') or {}).get('state') == 'report'), section(self.hub, 'autoupdate'))
+        self.assertIn('not downgraded', self.auto.plan(device)['reason'])
+        self.assertIn('Cannot tell whether preshow-3.4.0-beta', self.plan('/dev/sim.preshow1')['reason'])
+
     def test_pool_radio_is_only_reported(self):
         pool = self.sim['pool']
         pool.firmware = 'pool-3.0.0'

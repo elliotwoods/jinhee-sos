@@ -3,9 +3,13 @@
 Two settings, both on by default (Settings › Automatic updates):
   auto_build         rebuild a firmware target whose source changed (cube, the zone sketches, the Workstation,
                      the Mainshow controller), one build at a time, before anything is flashed from it
-  auto_firmware_usb  flash a USB board whose firmware differs from the source version: zone plates (keeping the
+  auto_firmware_usb  flash a USB board whose firmware is older than the source version: zone plates (keeping the
                      identity the board reports), a legacy pairing station / General Radio (to the Workstation),
                      an old Workstation or Mainshow controller, and cubes while Register and Flash are off
+
+Only upgrades, never downgrades: a board flashed from newer code on another computer is listed and left alone, and
+so is a board whose version cannot be ordered against this build (an unparseable or different version string).
+The one crossing between families is on purpose: a legacy pairing station / General Radio becomes a Workstation.
 
 Pool radios, the pool central and the preshow bridge are reported, never flashed here: the pool radios and
 the central are a matched set, and the last two have no flash pipeline. The installed pairing station is
@@ -19,6 +23,7 @@ board is tried once per plug-in and target version; Skip and Retry are the panel
 Runs on the owner thread from Hub.tick; it only starts jobs through the existing job modules.
 """
 import paths  # noqa: F401
+import re
 from collections import deque
 
 import core
@@ -30,6 +35,46 @@ from jobs import build as build_jobs, cube as cube_jobs, dongle as dongle_jobs, 
 
 REPORT_SKETCHES = {'poolcentral': 'PoolCentral', 'preshowbridge': 'PreshowBridge'}
 MATCHED_SET = 'Pool radios and the pool central are a matched set: upgrade them together by hand'
+
+
+_VERSION = re.compile(r'([A-Za-z-]*?)v?(\d+(?:\.\d+)*)(?:-([A-Za-z]+)\.?(\d+(?:\.\d+)*))?')
+
+
+def _version_key(version):
+    """(family prefix, numbers, suffix label, suffix numbers) of 'desert-2.4.0' / 'v1.7.0-USB.1', or None."""
+    match = _VERSION.fullmatch(str(version or '').strip())
+    if not match:
+        return None
+    prefix, numbers, label, suffix = match.groups()
+    return prefix, tuple(int(n) for n in numbers.split('.')), label or '', tuple(int(n) for n in (suffix or '').split('.') if n)
+
+
+def compare_versions(running, target):
+    """-1 when `running` is older than `target`, 0 the same, 1 newer; None when the two cannot be ordered."""
+    if running == target:
+        return 0
+    a, b = _version_key(running), _version_key(target)
+    if a is None or b is None or a[0] != b[0] or (a[2] and b[2] and a[2] != b[2]):
+        return None
+    width = max(len(a[1]), len(b[1]))
+    left, right = a[1] + (0,) * (width - len(a[1])), b[1] + (0,) * (width - len(b[1]))
+    if left == right:
+        left, right = a[3], b[3]
+    return (left > right) - (left < right) if left != right else None
+
+
+def not_older(plan, running, version):
+    """The plan for a board that is not older than this computer's build: None when current, else a report."""
+    order = compare_versions(running, version)
+    if order == 0:
+        return None
+    if order is None:
+        return dict(plan, action='report', reason=f'Cannot tell whether {running} is older than {version}; not flashed automatically (flash it by hand if it should change)')
+    return dict(plan, action='report', reason=f'Newer than this computer\'s build ({version}); not downgraded')
+
+
+def older(running, version):
+    return compare_versions(running, version) == -1
 
 
 def sketch_for(firmware):
@@ -181,6 +226,8 @@ class AutoUpgrade:
             if not version or firmware == version:
                 return None
             base.update(label=details.get('name') or base['label'], target=f'zone:{sketch}', version=version)
+            if not older(firmware, version):
+                return not_older(base, firmware, version)
             profile = zone_build.profile_for(firmware, details.get('zone_type'))
             if profile == 'pool':
                 return dict(base, action='report', reason=MATCHED_SET)
@@ -212,6 +259,8 @@ class AutoUpgrade:
                 return None
             base.update(current=dongle._firmware(hello) or device.firmware, target=which, version=firmware.version,
                         label=dongle.label(hello) if isinstance(hello, dict) else base['label'])
+            if family in ('workstation', 'mainshow') and not older(dongle._firmware(hello), firmware.version):
+                return not_older(base, dongle._firmware(hello), firmware.version)
             if device.mac:
                 known = dongle.known_boards(self.hub.db, self.hub.store.zones())
                 if which == 'workstation':
@@ -228,6 +277,8 @@ class AutoUpgrade:
                 return None
             base.update(current=status['version'], target='cube', version=core.VERSION,
                         label=device.presumed.get('label') or base['label'])
+            if not older(status['version'], core.VERSION):
+                return not_older(base, status['version'], core.VERSION)
             return dict(base, action='cube')
         if role in REPORT_SKETCHES:
             sketch = REPORT_SKETCHES[role]
@@ -236,6 +287,8 @@ class AutoUpgrade:
             if not version or not running or running == version:
                 return None
             base.update(current=running, target=None, version=version)
+            if not older(running, version):
+                return not_older(base, running, version)
             return dict(base, action='report', reason='No automatic flash for this board; upload it from its sketch by hand'
                         + (f' ({MATCHED_SET.lower()})' if role == 'poolcentral' else ''))
         return None
@@ -461,7 +514,7 @@ class AutoUpgrade:
             for z in rows:
                 sketch = sketch_for(z.get('firmware'))
                 version = sketch and source_version(sketch)
-                if version and z.get('firmware') != version and (z.get('age_s') or 0) <= self.RECENT:
+                if version and z.get('firmware') and compare_versions(z['firmware'], version) in (-1, None) and (z.get('age_s') or 0) <= self.RECENT:
                     out['firmware'].append(dict(kind='zone', mac=z['mac'], label=z.get('name') or z['mac'],
                                                 current=z.get('firmware'), version=version))
         if hub.showedit:
@@ -473,7 +526,7 @@ class AutoUpgrade:
                                publishing=bool(registry.publication), relay=relay.device.id if relay else None,
                                auto=bool(hub.settings.get('auto_show')))
             for c in rows:
-                if c.get('fw') and c['fw'] != core.VERSION and (c.get('age_s') or 0) <= self.RECENT:
+                if c.get('fw') and compare_versions(c['fw'], core.VERSION) in (-1, None) and (c.get('age_s') or 0) <= self.RECENT:
                     out['firmware'].append(dict(kind='cube', mac=c['mac'], label=f'Cube #{c["number"]}' if c.get('number') else c['mac'],
                                                 current=c['fw'], version=core.VERSION))
         return out
