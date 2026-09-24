@@ -29,8 +29,8 @@ The Show step writes the published show only when it is newer than the cube's. O
 With the Register page also on, each new cube is flashed first and then registered.
 <kr>Register 페이지도 켜 두면 새 큐브를 먼저 플래시한 뒤 등록합니다.</kr>
 
-When both Register and Flash are off, a plugged-in cube with older firmware is also upgraded by itself, with the same steps. See "What the console does by itself" in {{page:H4}}.
-<kr>Register와 Flash가 모두 꺼져 있을 때도, 꽂은 큐브의 펌웨어가 오래되었으면 같은 단계로 스스로 업그레이드됩니다. {{page:H4}}의 "콘솔이 스스로 하는 일"을 봅니다.</kr>
+When both Register and Flash are off, a plugged-in cube with older firmware is also upgraded by itself, with the same steps. A cube with newer firmware than this computer's build is left alone. See "What the console does by itself" in {{page:H4}}.
+<kr>Register와 Flash가 모두 꺼져 있을 때도, 꽂은 큐브의 펌웨어가 오래되었으면 같은 단계로 스스로 업그레이드됩니다. 이 컴퓨터의 빌드보다 새 펌웨어를 가진 큐브는 건드리지 않습니다. {{page:H4}}의 "콘솔이 스스로 하는 일"을 봅니다.</kr>
 
 Evidence: the Flash page is Bench-verified on six cubes (23 September: firmware verified, boot confirmed, registration kept, show written and read back).
 <kr>근거: Flash 페이지는 큐브 6개로 Bench-verified(9월 23일: 펌웨어 검증, 부팅 확인, 등록 유지, 쇼 쓰기·읽기 확인).</kr>

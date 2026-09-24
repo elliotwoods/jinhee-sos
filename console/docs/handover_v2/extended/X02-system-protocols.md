@@ -18,6 +18,7 @@ loopback API, open release discrepancies, what changed from v1 and how evidence 
 - Handover: version 2, Kimchi and Chips → Amberin / Engineering Six.
 - Describes: repository of 23 September 2026 (KST), NCT Console `0.1.0` (`console/state.py` `CONSOLE_VERSION`), baseline commit `c955d9f`.
 - Repository `main` (pushed to GitHub): `6b26cdf` (Elliot Woods, 23 Sept 18:52 KST, handover restructure and automatic firmware updates), on top of `5996e10` (hojun, 23 Sept 04:47 KST, "PoolCentral 4.2.2: re-measured frame map for three 8-channel relay modules"). `PoolCentral.ino` reads `poolcentral-4.2.2`.
+- Later commits reviewed for this handover (24 Sept): `9261547`/`f498c6a` (Windows handoff), `c353997` (forced Workstation flash override), `5bc1b07`/`63d82dc` (Git inventory retired; hold buttons with a padlock; a board flashed as a Workstation loses its zone record), `2739586` (flash the cube when its tag is read); `main` at `6471a94`. The only-upgrade rule for automatic USB firmware was in the working tree, uncommitted.
 - Kimchi and Chips on site from: Thursday 17 September 2026.
 - Version 1 ({{v1-root}}): unchanged; describes the ten separate Tk apps, which still work and remain a fallback.
 - Screenshots in the handbook: simulated (`console/app.py --simulate --scenario docs`); yellow outlines mark controls; numbers, versions and readings in them are examples, not site settings. 43 captures in `console/docs/shots/manifest.json` (git `c955d9f`, 23 Sept 04:59 KST).
@@ -129,7 +130,7 @@ reported version next to the local build.
 | Preshow bridge | **Bench** | "Preshow media bridge" | — |
 | Mainshow controller | **Stations** | Mainshow controller panel | — |
 | Pool light test bridge, range test | **Bench** | — | — |
-| Unidentified | **Unidentified USB** | — | **Probe again**, **Make this board a…** (Workstation, Mainshow controller or Neocore cube). Zone boards are set up through the zone form ({{page:X09}}) |
+| Unidentified | **Unidentified USB** | — | **Probe again**, **Make this board a…** (Workstation, Mainshow controller or Neocore cube; **Override inventory protection…** for a board the inventory protects). Zone boards are set up through the zone form ({{page:X09}}) |
 
 - Roles come from identification, never from the cable or USB port name.
 - `console/probe.py` sends only `?`, a JSON `hello` or `STATUS`; never a command that arms or changes a board.
@@ -145,7 +146,7 @@ Flash refusals (Code-checked):
 |---|---|---|---|
 | Cube firmware, `cube.flash_firmware` (`console/commands.py`) | Any device whose role is not `cube`, `unknown` or none | "That board is a ‹role›; the cube flasher refuses it" | None. The Flash page intake also skips non-cubes and **Protected** ports ({{page:X03}}) |
 | Zone firmware, `zone.flash` (`console/web/panels/ZonePanel.js`) | Detection kind `cube` (inventory row with a number or tag), `station` (installed pairing station `3C:0F:02:AD:83:24`, or role `excluded`) or `other` (flash image recognised as Workstation, General Radio, pool central, range test, preshow bridge or Mainshow controller) (`zones/flasher/zone_detect.py`) | "REFUSED: ‹label›. Force flashing a cube unregisters it." | **Force flash** (`zone.flash_force`, hold to confirm): "Overwrites whatever the board was. A cube loses its LED firmware and is unregistered." |
-| Workstation / Mainshow controller firmware, `dongle.flash` (`console/jobs/dongle.py`, `zones/dbmanager/dongle.py::refusal`) | Installed pairing station; known zone boards; inventory cubes not marked excluded. A recorded Mainshow controller is refused only for non-mainshow firmware, and the console clears that check for Workstation firmware (a Workstation supersedes the controller), so in the console it never refuses a controller | e.g. "‹MAC› is a cube #‹n› in the inventory; refusing to overwrite cube firmware" | None. On success the MAC is recorded `excluded` ("recorded as excluded from cube service") and marked as controller or not |
+| Workstation / Mainshow controller firmware, `dongle.flash` (`console/jobs/dongle.py`, `zones/dbmanager/dongle.py::refusal`) | Installed pairing station; known zone boards; inventory cubes not marked excluded. A recorded Mainshow controller is refused only for non-mainshow firmware, and the console clears that check for Workstation firmware (a Workstation supersedes the controller), so in the console it never refuses a controller | e.g. "‹MAC› is a cube #‹n› in the inventory; refusing to overwrite cube firmware" | **Force write** (`dongle.flash_force`, destructive, hold to confirm; from commit `c353997`): Unidentified board panel › **Override inventory protection…** (or automatically when a **Make this board a…** hold is refused) opens the dialog **Override inventory protection?** with the refusal text, a **Firmware** choice (Workstation / Mainshow controller) and **Force write**. It skips `dongle.refusal` in both the job and the worker (the job log shows "Override: ‹reason›"). Hazard: "Overwrites whatever the board was: a zone leaves the show, a cube loses its LED firmware. A full backup is taken the first time. Hold to confirm." The installed station's port is not a flash candidate, so the button is disabled there. On success (normal or forced) the MAC is recorded `excluded` ("recorded as excluded from cube service"), marked as controller or not, and its old zone row is removed (`ZoneStore.forget`, event `zone_forgotten`, from `63d82dc`). Force write: Code-checked only (no unit test, never run on hardware) |
 
 Role changes: the cube panel's **Role** selector (`inventory.set_role`; **auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**) moves a board into or out of cube service. Refused while a station operation runs: "Finish or stop the current station operation before changing a role" (selector tooltip "Stop the active operation first").
 
@@ -160,7 +161,7 @@ The console recognises a station by its `hello` capability fields (`has_reader`,
 | Automatic zone database updates | Every relay-capable station, each for the zones its own radio heard in the last 20 s; one publishes at a time (`hub.zone_walk_allowed`) ({{page:X08}}) |
 | Show updates | Any station reporting `show:1`; automatic updates use the relay that heard the out-of-date cubes, and idle relays take 10 s query turns |
 
-With Settings › Automatic updates › `auto_firmware_usb` on (default), a legacy pairing station (`nct-pairing-*`) or General Radio (`general-radio-*`) plugged into the console over USB is upgraded to **workstation-1.0.0** once idle, and an older `workstation-*` or Mainshow controller is upgraded too. The installed station 3C:0F:02:AD:83:24 is never touched. Simulation-verified only; detail {{page:X09}}, {{page:X11}}.
+With Settings › Automatic updates › `auto_firmware_usb` on (default), a legacy pairing station (`nct-pairing-*`) or General Radio (`general-radio-*`) plugged into the console over USB is upgraded to **workstation-1.0.0** once idle, and an older `workstation-*` or Mainshow controller is upgraded too (never downgraded: a newer or unorderable version is only listed). The installed station 3C:0F:02:AD:83:24 is never touched. Simulation-verified only; detail {{page:X09}}, {{page:X11}}.
 
 | Station kind | Reader | Zone relay | Show / set_zone / pool / preshow |
 |---|---|---|---|
@@ -205,7 +206,7 @@ Workstation (workstation-1.0.0, banner `NCT WORKSTATION`) detail:
 | Panel title (`dongle.label`) | Workstation / General Radio / Mainshow controller by family; otherwise Pairing station (reader) or ESP-NOW dongle |
 | Panel tabs | **Pairing**, **Zone relay**, **Cubes & show**, **Pool lamp**, **Preshow cue**, **Console**; a tab is greyed out when the board lacks the capability |
 | Links | Primary pairing link = first connected link with a reader (pill **carries pairing + zone relay**; others **pairing goes via the primary link**). The zone auto-walk uses it if it relays, otherwise the first relay. The show relay is any link reporting `show:1` |
-| Unidentified board menu | **Make this board a…** offers three hold buttons: Workstation and Mainshow controller (`dongle.flash`) and Neocore cube (`cube.flash_firmware`) (`console/web/panels/others.js`) |
+| Unidentified board menu | **Make this board a…** offers three hold buttons: Workstation and Mainshow controller (`dongle.flash`) and Neocore cube (`cube.flash_firmware`), plus **Override inventory protection…** (`dongle.flash_force`, see the refusal table above) (`console/web/panels/others.js`) |
 | CLI | `zones/tools/workstation.py`; `general_radio.py` is an alias |
 | Metadata | Workstation MACs are recorded under the old key `general_radios` (`dongle.WORKSTATIONS_KEY`) |
 | Simulation | `--simulate` adds `/dev/sim.workstation`, `02:AA:BB:CC:DD:F0` |

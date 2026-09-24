@@ -246,7 +246,7 @@ Read the row's state pill and the reason under it. (Simulation-verified; no real
 | **waiting** (**Starts in N s**, **Waiting: in use…**, **Waiting: Register or Flash is on**) | Normal: it starts when the board and the console are free · 정상: 보드와 콘솔이 비면 시작 | Nothing; or **Skip** · 없음, 또는 **Skip** |
 | **needs build** | The firmware is still being built · 펌웨어 빌드 중 | Wait · 기다림 |
 | **failed** | The upgrade or build did not finish · 업그레이드나 빌드가 끝나지 않음 | **Retry**, or unplug and replug the board; copy the reason if it fails again · **Retry** 또는 다시 꽂기, 반복되면 이유 기록 |
-| **by hand** | Pool radios, pool central controller, preshow bridge, or an unconfigured board: never flashed automatically · 자동 플래시 안 함 | Pool set: upgrade radios and central together by hand ({{page:X06}}) · 풀 세트는 함께 수동 업그레이드 |
+| **by hand** | Pool radios, pool central controller, preshow bridge, or an unconfigured board: never flashed automatically. Also a board whose firmware is newer than this computer's build ("not downgraded") or cannot be compared with it ("Cannot tell whether…") · 자동 플래시 안 함. 이 컴퓨터의 빌드보다 새 펌웨어이거나 비교할 수 없는 보드도 해당 | Pool set: upgrade radios and central together by hand ({{page:X06}}). A newer board: update this computer's code instead, or leave it · 풀 세트는 함께 수동 업그레이드. 더 새 보드: 이 컴퓨터의 코드를 업데이트하거나 그대로 둠 |
 | **no build tools** | This computer cannot build firmware · 이 컴퓨터에서 빌드 불가 | Install arduino-cli with ESP32 core 3.3.11 on this computer ({{page:X10}}) · 이 컴퓨터에 arduino-cli와 ESP32 core 3.3.11 설치 |
 | **paused** / **off** | **Pause** was pressed, or the switch is off in Settings › **Automatic updates** · 일시 정지 또는 설정 꺼짐 | **Resume**, or switch it on · **Resume** 또는 켜기 |
 

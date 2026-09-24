@@ -67,6 +67,15 @@ What Kimchi and Chips changed, when, and on what evidence, from 17 to 23 Septemb
 | [5996e10](https://github.com/elliotwoods/jinhee-sos/commit/5996e10) | 23 Sept 04:47 | hojun | PoolCentral 4.2.2 frame map for three 8-channel relay modules |
 | [c955d9f](https://github.com/elliotwoods/jinhee-sos/commit/c955d9f) | 23 Sept 04:58 | Elliot Woods | Workstation device (handover v2 baseline) |
 | [6b26cdf](https://github.com/elliotwoods/jinhee-sos/commit/6b26cdf) | 23 Sept 18:52 | Elliot Woods | Handover handbook and extended reference (restructure); automatic firmware updates |
+| [9261547](https://github.com/elliotwoods/jinhee-sos/commit/9261547) | 23 Sept 18:52 | Elliot Woods | Windows workstation handoff: setup builds firmware, console auto-build, Workstation reader view |
+| [f498c6a](https://github.com/elliotwoods/jinhee-sos/commit/f498c6a) | 23 Sept 19:07 | Elliot Woods | Merge Windows workstation handoff |
+| [c353997](https://github.com/elliotwoods/jinhee-sos/commit/c353997) | 23 Sept 19:26 | Elliot Woods | Forced Workstation flash override and handover text revisions |
+| [5bc1b07](https://github.com/elliotwoods/jinhee-sos/commit/5bc1b07) | 23 Sept 19:44 | Elliot Woods | Git inventory removed (`inventory/devices/`, `scripts/sync_inventory.py`) |
+| [63d82dc](https://github.com/elliotwoods/jinhee-sos/commit/63d82dc) | 23 Sept 19:44 | Elliot Woods | Git inventory code retired; padlock hold buttons; a board flashed as a Workstation loses its zone record |
+| [83f8252](https://github.com/elliotwoods/jinhee-sos/commit/83f8252) | 23 Sept 20:21 | Elliot Woods | Korean for the forced Workstation flash override |
+| [2739586](https://github.com/elliotwoods/jinhee-sos/commit/2739586) | 23 Sept 20:46 | Elliot Woods | Workstation: flash the cube when its tag is read |
+| [c42fbf7](https://github.com/elliotwoods/jinhee-sos/commit/c42fbf7) | 23 Sept 20:46 | Elliot Woods | Handover v2 revisions: handbook restructure, web numbering, PDF tooling |
+| [6471a94](https://github.com/elliotwoods/jinhee-sos/commit/6471a94) | 24 Sept 16:28 | Elliot Woods | Docs: flash on tag read and handover research factsheets |
 
 Other commits in the range (second-laptop merges and inventory syncs, 21 Sept 00:26–18:58: `1b81371`, `c69b961`, `cc17e7c`, `935fdf9`, `06cb05c`, `7c23a1e`, `4639deb`, `4d34859`) are housekeeping; `c54c67e` (17 Sept 18:06) is the initial commit.
 

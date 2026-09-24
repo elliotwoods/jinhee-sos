@@ -4,7 +4,7 @@
 
 ## Summary
 
-The inventory (MAC → cube number, tag, role) lives in three copies that exchange records: the local SQLite database on each Mac, the Git inventory and the web inventory. Two more copies sit on hardware (the cube's NVS registration and each zone board's zone database) and change only by deliberate actions. Sync is a conflict-free three-way merge that never asks a question; publishing a zone database takes a web-allocated version, and a separate distribution step (over the air or USB) puts it on the zone boards. Operator steps: {{page:H3}} (register) and {{page:H4}} (zone databases).
+The inventory (MAC → cube number, tag, role) lives in two copies that exchange records: the local SQLite database on each computer and the web inventory. (The Git inventory, `inventory/devices/*.json`, was retired on 23 Sept, commits `5bc1b07` and `63d82dc`.) Two more copies sit on hardware (the cube's NVS registration and each zone board's zone database) and change only by deliberate actions. Sync is a conflict-free three-way merge that never asks a question; publishing a zone database takes a web-allocated version, and a separate distribution step (over the air or USB) puts it on the zone boards. Operator steps: {{page:H3}} (register) and {{page:H4}} (zone databases).
 
 ## Facts
 
@@ -13,7 +13,6 @@ The inventory (MAC → cube number, tag, role) lives in three copies that exchan
 | Copy | Where | Written by | Seen in the console |
 |---|---|---|---|
 | Local database | `pairing_station/data/devices.sqlite3` on each Mac (SQLite) | The console and the older apps; the authority on that Mac | **Inventory › Cubes**, **Inventory › Events** |
-| Git inventory | `inventory/devices/<MAC>.json`, one file per device | `scripts/sync_inventory.py` (also run by setup), then a normal commit/push by a person | — (repository files) |
 | Web inventory | One private Vercel Blob JSON document behind `web/` (https://nct-inventory.auroravision.xyz), conditional writes | **Sync** in the console top bar; `inventory_web/` app; `scripts/web_sync.py` | Sync chip, **Inventory › Web sync** |
 | Cube saved registration | The cube's NVS | An acknowledged registration or **Send saved mapping** over the radio; preserved by the cube flasher | Cube panel (what the cube reports over USB) |
 | Zone database on each board | Each zone board's `zdb` slots | Publish, then the Workstation over the air or USB | **Inventory › Zone database** (what each board last reported) |
@@ -21,13 +20,11 @@ The inventory (MAC → cube number, tag, role) lives in three copies that exchan
 ```mermaid
 flowchart LR
   L["Local database (SQLite)"]:::data
-  G["Git inventory (JSON per MAC)"]:::data
   W["Web inventory (Vercel Blob)"]:::data
   P["Published zone database (version + CRC)"]:::data
   C["Cube NVS registration"]:::dev
   Z["Zone boards (zdb slots)"]:::dev
   R["Register at the Workstation"]:::op
-  L <-->|"scripts/sync_inventory.py"| G
   L <-->|"Sync"| W
   W -->|"publish (web allocates version)"| P
   P -->|"Workstation radio / USB"| Z
@@ -39,7 +36,8 @@ flowchart LR
 ```
 
 - NVS: the ESP32 flash settings area that survives a firmware update. MAC: the fixed radio address; identifies the physical device.
-- Git and web sync keep separate baselines in SQLite metadata: `git_inventory_baseline_v1`, `web_inventory_baseline_v1`. Run them in any order; a change arriving through one is a local change for the other.
+- Web sync keeps its baseline in SQLite metadata `web_inventory_baseline_v1`.
+- Retired Git inventory (23 Sept, `5bc1b07` "get rid of git inventory", `63d82dc`): `inventory/devices/*.json`, `scripts/sync_inventory.py`, `inventory_sync.sync()` and its baseline key `git_inventory_baseline_v1` were removed; `/inventory/` is now in `.gitignore` (an old checkout may leave the folder behind; it is no longer read) and the `-merge` rule for it left `.gitattributes`. The web inventory is the only shared copy; `inventory_sync.py` keeps the record validation, merge and guarded apply that web sync uses. An old `git_inventory_baseline_v1` value in a database is simply unused.
 - Only one app per computer syncs at a time: lock file `devices.sync.lock` beside the database (`pairing_station/web_sync.py::sync_lock`).
 - Neither sync carries: local audit events (`nfc_seen` etc.), flash history, zone state, extra metadata, tokens, binary backups, number reservations. A new Mac may show a known mapping as "not yet scanned here". Back up the SQLite file separately ({{page:X10}}).
 - The four reserved numbers (2, 22, 39, 43) are seeded by code whenever the database opens.
@@ -49,7 +47,6 @@ flowchart LR
 | Action | Moves | Does not |
 |---|---|---|
 | **Sync** (top bar, or automatic sync) | Device records both ways with the web; publishes a new zone database if committed mappings changed; pulls a newer publication; uploads sightings | Send anything to a cube or zone board |
-| `scripts/sync_inventory.py` | Device records both ways with `inventory/devices/` | Commit/push; publish; touch hardware |
 | Publish (part of Sync) | A new zone database version, allocated by the web | Put it on any zone board |
 | Zone update (over the air / USB) | The published database onto zone boards | Change firmware or board identity |
 | Registration / **Send saved mapping** | Number and tag to one cube over the radio | Publish or update zone boards |
@@ -99,7 +96,7 @@ Worked example (cube MAC A, number 44, committed tag U; new scan of tag V):
 
 ### Sync decision rules
 
-Three-way merge: this Mac, the other side (web or Git), the baseline. Pure (`inventory_sync.merge_records`), always resolves, never asks, same answer on every computer.
+Three-way merge: this computer, the web, the baseline. Pure (`inventory_sync.merge_records`), always resolves, never asks, same answer on every computer.
 
 | Situation | Result |
 |---|---|
@@ -222,7 +219,7 @@ Nobody needs to press **Sync** any more; the button (and the Sync chip) still sy
 
 Top-bar Sync chip while `auto_sync` is on (`console/state.py::describe_auto`; clicking it syncs at once): **✓ Synced** · **⟳ Sync in 5 s** (countdown after a local change) · **Sync · retry in 2 min** (after a failure) · **Sync · offline** · **⟳ Sync · sign in**. **Inventory › Web sync** has an **Automatic** row ("on · a local change syncs within seconds; the web is checked every minute" / "off (Settings › Automatic updates)"). The Jobs list hides automatic syncs that succeed and shows failures. Attention cards `sync.publish_pending` (**Cube mappings changed but the zone database was not published**) and `sync.waiting` (**N downloaded change(s) are waiting to be applied**) are hidden while automatic sync is on and has no error; the **Web sync problem** card then says "It retries by itself; Sync now to try at once."
 
-Side effect (also true of a manual **Sync** and of `scripts/sync_inventory.py`): each sync writes metadata `auto_number=0`, so this computer no longer picks new numbers locally. With the web password stored, new numbers come from the web instead (next section).
+Side effect (also true of a manual **Sync** and of `scripts/web_sync.py sync`): each sync writes metadata `auto_number=0`, so this computer no longer picks new numbers locally. With the web password stored, new numbers come from the web instead (next section).
 
 ### Cube numbers from the web (`hub.claim_numbers`, commit 6b26cdf)
 
@@ -244,8 +241,8 @@ Detail of the local rules: {{page:X03}} › Number allocation.
 ### Workstation replacement
 
 - Plug a spare ESP32-C3 in: **Unidentified board** → card **Make this board a…** → hold **Workstation** (`dongle.flash`, `firmware: workstation`). Other targets on that card: Mainshow controller, Neocore cube.
-- Job: build if needed, full flash backup the first time per board, write, keep NVS, verify, reconnect; then role `excluded` and MAC recorded as a Workstation (`hub.record_workstation`). Outcome text: "… written to <MAC>; recorded as excluded from cube service".
-- Refusals (`dongle.refusal`): installed pairing station 3C:0F:02:AD:83:24; a known zone board; a cube in the inventory whose role is not `excluded` (set the old cube's role to **excluded** on its card first). No override.
+- Job: build if needed, full flash backup the first time per board, write, keep NVS, verify, reconnect; then role `excluded`, any zone row for that MAC removed (event `zone_forgotten`; also when a board first reports Workstation `roles`: log "‹MAC› is now a Workstation; removed its old zone record") and MAC recorded as a Workstation (`hub.record_workstation`). Outcome text: "… written to <MAC>; recorded as excluded from cube service".
+- Refusals (`dongle.refusal`): installed pairing station 3C:0F:02:AD:83:24; a known zone board; a cube in the inventory whose role is not `excluded` (set the old cube's role to **excluded** on its card first). Deliberate override: **Override inventory protection…** on the same panel, then hold **Force write** (`dongle.flash_force`; a refused **Workstation** hold opens that dialog by itself). It overwrites the board's old role: a zone leaves the show, a cube loses its LED firmware. Code-checked only ({{page:X02}}).
 - A Workstation works without its PN532; fit it (SDA GPIO4 / SCL GPIO3) only to register cubes with it.
 
 ## Procedures
@@ -295,7 +292,7 @@ Detail of the local rules: {{page:X03}} › Number allocation.
 
 - `pairing_station/database.py`, `inventory_sync.py` (`merge_records`, `_merge_device`, `_merge_role`, `reconcile`, `apply`, `validate`), `web_sync.py`, `sync_all.py`, `web_client.py`, `zone_publish.py`, `zone_registry.py` (`walk_candidates`, `tick`, `WALK_BACKOFF`); `console/showedit.py` (`choose_relay`, `RELAY_TURN`)
 - `zones/tools/zonedb.py`, `zones/dbmanager/dongle.py`, `zones/firmware/libraries/NctZone/src/NctZoneProtocol.h`, `NctZoneLink.h`
-- `scripts/sync_inventory.py`, `scripts/web_sync.py`, `web/src/lib/records.ts`
+- `scripts/web_sync.py`, `web/src/lib/records.ts`; commits `5bc1b07`, `63d82dc` (Git inventory retired)
 - `console/hub.py` (`station_session`, `relay_session`, `apply_auto_modes`, `zone_walk_allowed`, `auto_sync`, `watch_local_changes`, `auto_sync_finished`, `auto_error`), `console/jobs/sync.py` (`needs_sync`, `sync_job auto=`), `console/state.py` (`describe_auto`), `console/simdocs.py`, `console/web/components/Attention.js`, `console/web/panels/InventorySection.js`, `console/intake.py`, `console/advisor.py` (`sync.*`, `zone.*`, `dongle.old`, `tag.*`), `console/state.py`, `console/jobs/sync.py` (`check_job`), `console/jobs/dongle.py`, `console/commands.py`, `console/uitext.py`, `console/web/panels/WorkstationPanel.js`, `sections.js`, `others.js`, `console/web/lib/format.js`
 - `console/README.md` (Automatic updates), `docs/SETUP.md` §4, `console/TEST_REPORT_2026-09-23.md`
 - Old drafts `06-zone-databases.md`, `12-inventory-database-sync.md`

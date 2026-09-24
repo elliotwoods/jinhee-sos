@@ -548,3 +548,43 @@ blinks the LEDs), X11 and the Workstation row in console/README.md.
 **Applied** (2026-09-24): H3, X03, X11, console/README.md
 
 **Applied** (2026-09-24): H3 (B3), X03, X11, console/README.md.
+
+## 2026-09-24 · Post-6b26cdf code audit · Applied
+
+Commits reviewed: `9261547`/`f498c6a`, `6ad3f6e`, `c353997`, `5bc1b07`, `63d82dc`, `83f8252`, `2739586`, plus the
+working-tree change to `console/autoupgrade.py` (finished and tested per its author; uncommitted when written).
+
+- **Forced Workstation / Mainshow controller write** (`c353997`, Korean `83f8252`): Unidentified board panel ›
+  **Override inventory protection…** (KR 인벤토리 보호 무시…) opens **Override inventory protection?** with the refusal
+  text, a **Firmware** choice and a hold **Force write** (KR 강제 쓰기); it also opens by itself when a **Make this board
+  a…** hold is refused. Command `dongle.flash_force` (destructive) skips `dongle.refusal`; log "Override: ‹reason›";
+  first-time backup kept. Disabled on non-candidate ports (the protected station). Code-checked only (no test, no
+  hardware). Applied: H1 refusal table (Override column was "None"), X02 refusal table + Unidentified rows, X08
+  Workstation replacement ("No override" removed), X09 Repurposing hazards, X11 hold/USB identification/§9.
+- **Git inventory retired** (`5bc1b07`, `63d82dc`): `inventory/devices/*.json`, `scripts/sync_inventory.py`,
+  `inventory_sync.sync()`, `git_inventory_baseline_v1` and `console/tests/test_sim_isolation.py` removed; `/inventory/`
+  gitignored; setup now runs `scripts/web_sync.py sync` only when the web password is stored. Applied: X08 (two copies,
+  table, diagram, baselines, actions table, merge wording, sources), X03 `auto_number` row, X10 (setup steps, backup
+  table, SSL step, known issues). Item 6 of the Windows-handoff entry above (sync_inventory export, sim-isolation test)
+  is superseded.
+- **`63d82dc` other changes:** hold buttons show a padlock and a fill (0.7 s), the visible "Hold:" prefix is gone
+  (Workstation "(hold)" labels too); a board written as a Workstation/controller, or first reporting Workstation roles,
+  has its zone row removed (`ZoneStore.forget`, event `zone_forgotten`). Applied: H1 hold paragraph, X11, X02, X08, X09.
+  Screenshots showing hold buttons still show the old "Hold: …" label: recapture with `console/tools/docshots.py`.
+- **Windows handoff setup** (`9261547`/`f498c6a`): setup installs the Arduino toolchain and runs
+  `build_all_firmware.py --stale` (`--no-firmware` skips). Applied: X10 setup facts. Reader view was already in X11/H3.
+- **Only upgrade, never downgrade** (`console/autoupgrade.py`, Simulation-verified: `test_versions_are_ordered`,
+  `test_newer_boards_are_listed_never_downgraded`, `test_newer_workstation_and_unordered_plate_are_left_alone`):
+  newer boards and unorderable versions are listed as `report` (**by hand**) with "Newer than this computer's build
+  (‹version›); not downgraded" / "Cannot tell whether ‹running› is older than ‹version›; not flashed automatically
+  (flash it by hand if it should change)". Applied: H3 (cube auto-upgrade line), H4 (table row, new paragraph, WARNING,
+  Never automatic), H5 **by hand** row, X02, X03, X09, X11 (rule paragraph, table, heard-over-the-air line, evidence).
+  Update the evidence lines with the commit id once it is committed.
+- Revision pointers: X02 handover identity, X10, X12 Git evidence table, X13 release package now name `6471a94`.
+- `c353997` also carried handover-draft edits: they were the docs session's own batch 1/2 work (no Who callouts, H2
+  still present then and archived later in `c42fbf7`); no conflict with the current structure.
+- Not docs owner's files, stale after these commits: README.md "Share the inventory through Git" (l.35–52);
+  AGENTS.md Inventory invariants (l.123–124) and hygiene (l.296–297); docs/SETUP.md §2b checklist (l.127–128), §4
+  "Shared Git inventory" (l.173–200) and the web-inventory paragraph naming `git_inventory_baseline_v1` (l.207–212);
+  web/README.md l.4; web/package.json description; rangetest/README.md l.99; console/README.md USB upgrades (l.142–146,
+  "differs" → older-only) and the Unidentified board line (l.74, no override mentioned).

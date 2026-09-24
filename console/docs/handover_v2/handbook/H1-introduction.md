@@ -101,7 +101,7 @@ Not every board is a cube. The console checks a board's role before it writes fi
 |---|---|---|
 | Cube firmware · 큐브 펌웨어 | Any board whose role is not cube or unknown: "That board is a ‹role›; the cube flasher refuses it" · 역할이 큐브·미확인이 아닌 모든 보드 | None · 없음 |
 | Zone firmware · 존 펌웨어 | A board the inventory lists as a cube or an excluded device, or one running Workstation or controller firmware: "REFUSED: ‹label›. Force flashing a cube unregisters it." · 인벤토리에 큐브나 제외 장치로 올라 있는 보드, 워크스테이션·컨트롤러 펌웨어가 든 보드 | **Force flash** (hold to confirm). It overwrites the board; a cube loses its LED firmware and is unregistered · **Force flash**(길게 눌러 확인). 보드를 덮어씀. 큐브는 LED 펌웨어를 잃고 등록이 해제됨 |
-| Workstation / Mainshow controller firmware · 워크스테이션·메인쇼 컨트롤러 펌웨어 | Known cubes, known zone boards and the installed pairing station. The board written is recorded as excluded from cube service · 알려진 큐브, 알려진 존 보드, 설치된 등록 스테이션. 쓴 보드는 큐브 서비스에서 제외로 기록됨 | None · 없음 |
+| Workstation / Mainshow controller firmware · 워크스테이션·메인쇼 컨트롤러 펌웨어 | Known cubes, known zone boards and the installed pairing station. The board written is recorded as excluded from cube service · 알려진 큐브, 알려진 존 보드, 설치된 등록 스테이션. 쓴 보드는 큐브 서비스에서 제외로 기록됨 | **Override inventory protection…** on the **Unidentified board** panel, then hold **Force write**. A zone board leaves the show; a cube loses its LED firmware · **Unidentified board** 패널의 **Override inventory protection…** 후 **Force write**를 길게 누름. 존 보드는 쇼에서 빠지고, 큐브는 LED 펌웨어를 잃음 |
 
 To move a board into or out of cube service, change its **Role** in the cube panel (**auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**). The selector is locked while a station operation runs.
 <kr>보드를 큐브 서비스에 넣거나 빼려면 큐브 패널의 **Role**을 바꿉니다(**auto (cube)**, **LED · manually assigned**, **Reader / base station (excluded)**). 스테이션 작업 중에는 선택할 수 없습니다.</kr>
@@ -126,8 +126,8 @@ Above Attention, the **Automatic updates** panel shows what the console is bring
 Every result shows its **result status**: Sent → Delivered → Acknowledged → Verified, or Failed. Only Acknowledged and Verified count as success. Delivered only means the radio got it there.
 <kr>모든 결과에는 **결과 상태**가 표시됩니다: Sent → Delivered → Acknowledged → Verified, 또는 Failed. Acknowledged와 Verified만 성공입니다. Delivered는 무선으로 도착했다는 뜻일 뿐입니다.</kr>
 
-Risky buttons (for example a broadcast to every cube) need **hold to confirm**: press and hold the button. A single click does nothing.
-<kr>위험한 버튼(예: 모든 큐브에 방송)은 **길게 눌러 확인**해야 합니다. 버튼을 길게 누릅니다. 한 번 클릭으로는 실행되지 않습니다.</kr>
+Risky buttons (for example a broadcast to every cube) need **hold to confirm**: they show a padlock. Press and hold for about a second, until the fill reaches the end of the button; the padlock stays open while the command runs. A single click does nothing.
+<kr>위험한 버튼(예: 모든 큐브에 방송)은 **길게 눌러 확인**해야 하며 자물쇠 표시가 있습니다. 채움이 버튼 끝까지 찰 때까지 1초 정도 길게 누릅니다. 명령이 실행되는 동안 자물쇠는 열려 있습니다. 한 번 클릭으로는 실행되지 않습니다.</kr>
 
 **Language.** Use the **EN | KR** switch at the right of the top bar (also Settings › Appearance). The console remembers the choice on this computer; a console opened in a web browser keeps its own. In Korean mode, buttons also show their English name, so the button names in this handbook match the screen. Suggestion cards, logs and error messages stay in English.
 <kr>**언어.** 상단 바 오른쪽의 **EN | KR** 스위치(또는 Settings › Appearance)를 사용합니다. 선택은 이 컴퓨터의 콘솔에 저장됩니다. 웹 브라우저로 연 콘솔은 따로 저장합니다. 한국어 모드에서도 버튼에 영어 이름이 함께 표시되므로 이 핸드북의 버튼 이름과 화면이 일치합니다. 제안 카드, 로그, 오류 메시지는 영어로 유지됩니다.</kr>
