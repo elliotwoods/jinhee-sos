@@ -183,7 +183,7 @@ class AutoUpgrade:
         return 'queued', t['reason']
 
     def next_build(self, needed):
-        if not self.hub.settings.get('auto_build'):
+        if paths.PACKAGED or not self.hub.settings.get('auto_build'):
             return None
         queued = [t for t in self.targets if self.build_state(t)[0] == 'queued']
         queued.sort(key=lambda t: t['target'] not in needed)   # boards waiting for a build go first

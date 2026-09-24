@@ -45,3 +45,6 @@ console/data/
 
 # Built handover PDF: rebuild with console/tools/handover_pdf
 console/docs/*.pdf
+
+# Packaged app output (packaging/build_mac.py)
+/packaging/dist/

@@ -173,6 +173,8 @@ class Hub:
         except ValueError:
             saved = {}
         self.settings.update({k: bool(v) for k, v in saved.items() if k in self.settings})
+        if paths.PACKAGED:
+            self.settings['auto_build'] = False   # the app's firmware is fixed per release (no Arduino tools)
         if self.api_port:
             self.api = AppAPI(Facade(self), self.database.parent, self.api_port)
             self.api.namespace.update(hub=self, sessions=self.sessions, jobs=self.jobs, devices=self.devices,

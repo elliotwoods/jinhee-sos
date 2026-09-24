@@ -10,11 +10,15 @@ Name clashes to remember: `firmware` is zones/calibration/firmware.py (alias `po
 never imported here.
 """
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSOLE = ROOT / 'console'
+# Running from the packaged app (packaging/launcher.py): ROOT is a copy of the shipped tree in the user's
+# application-data folder. Firmware ships prebuilt with the app, so nothing is compiled.
+PACKAGED = os.environ.get('NCT_PACKAGED') == '1'
 ORDER = ['pairing_station', 'flashing_station', 'zones/tools', 'zones/flasher', 'zones/dbmanager',
          'zones/calibration', 'rangetest']
 

@@ -43,7 +43,7 @@ def build(hub, dirty):
     out = {}
     if 'meta' in dirty:
         out['meta'] = dict(database='simulated (temporary copy, discarded on exit)' if hub.simulate else str(hub.database), api_url=hub.api.url if hub.api else None, simulate=hub.simulate,
-                           started=hub.started_at, console_version=CONSOLE_VERSION, root=str(paths.ROOT))
+                           started=hub.started_at, console_version=CONSOLE_VERSION, root=str(paths.ROOT), packaged=paths.PACKAGED)
     if 'ports' in dirty:
         out['ports'] = hub.sections.get('ports', [])
     if 'devices' in dirty:
@@ -268,6 +268,8 @@ def builds(previous=None):
             out[name] = dict(state=dongle.build_state(firmware), version=firmware.version, label=firmware.label)
         except Exception as exc:
             out[name] = dict(state='missing', version=firmware.version, label=firmware.label, error=str(exc))
+    if paths.PACKAGED:   # prebuilt firmware only; a stray Arduino install on this computer is not used
+        out['tools'].update(packaged=True, arduino_cli=None, core_ok=None)
     out['tools'].setdefault('arduino_cli', hostos.arduino_cli())
     out['tools'].setdefault('core_ok', hostos.esp32_core().is_dir())
     return out

@@ -197,7 +197,7 @@ def rule_tools(ctx):
                    [action('recheck', 'Check the flashing tool again', 'tools.check'),
                     action('docs', 'Open the setup guide', 'docs.open', dict(path='docs/SETUP.md'))],
                    [evidence('tools', tools.get('esptool_text') or 'esptool check failed')])
-    if tools and (not tools.get('arduino_cli') or tools.get('core_ok') is False):
+    if tools and not tools.get('packaged') and (not tools.get('arduino_cli') or tools.get('core_ok') is False):
         missing = 'arduino-cli was not found' if not tools.get('arduino_cli') else 'the ESP32 core 3.3.11 directory is missing'
         yield make('tools.arduino', 'global', 'warn', 'Firmware builds are unavailable',
                    f'{missing}. Flashing existing verified builds still works.',
