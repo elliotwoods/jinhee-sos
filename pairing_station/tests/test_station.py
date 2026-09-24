@@ -244,6 +244,54 @@ class StationTests(unittest.TestCase):
         self.assertEqual(self.c.mode, '')
         self.assertIsNone(self.db.get(NEW))  # Preview must not allocate an ID.
 
+    def test_background_flash_gives_way_to_every_operation(self):
+        """The console's tag-read flash: lowest priority, never paused or left holding the Controller."""
+        self.db.reserve(NEW); self.db.rename(NEW,50); self.db.prepare(NEW,UID)
+        row=self.db.get(NEW)
+        self.c.notify('success','REGISTERED','kept')
+        banner=self.c.feedback
+        self.assertTrue(self.c.background_flash(row))
+        self.assertEqual((self.c.mode,self.sent[-1]['cmd'],self.sent[-1]['duration_ms']),('reader_flash','identify',2000))
+        self.assertIs(self.c.feedback,banner,'the registration banner is not cleared')
+        self.assertFalse(self.c.background_flash(row),'one at a time')
+        self.assertFalse(self.c.preview(NEW2))
+        old=self.c.request
+        # Anything real takes over at once: stop first, then its own command.
+        self.c.repair(NEW)
+        self.assertEqual([m['cmd'] for m in self.sent[-2:]],['stop','identify'])
+        self.assertEqual((self.c.mode,self.c.phase,self.sent[-1]['duration_ms']),('repair','identifying',0))
+        for late in (dict(event='flash_done',id=old),dict(event='stopped',id=self.sent[-2]['id']),dict(event='tag',id=old,uid=UID)):
+            self.c.event(late)
+        self.assertEqual((self.c.mode,self.c.phase),('repair','identifying'),'late replies of the flash are ignored')
+        self.c.stop(); self.c.event(dict(event='stopped',id=self.c.request))
+        for start in (lambda: self.c.transmit([self.db.get(NEW)]),lambda: self.c.flash([row],sequential=True),
+                      lambda: self.db.reserve(NEW2) and self.c.rename(NEW2,78),lambda: self.c.start_pair()):
+            self.assertTrue(self.c.background_flash(self.db.get(NEW)))
+            since=len(self.sent)
+            start()
+            self.assertEqual(self.sent[since]['cmd'],'stop','the station is stopped before the next command')
+            self.assertNotEqual(self.c.mode,'reader_flash')
+            if self.c.mode:
+                self.c.stop(); self.c.event(dict(event='stopped',id=self.c.request))
+        self.assertEqual(self.c.mode,'')
+        # flash_done ends it quietly; an error or a missing flash_done never pauses it or drops the link.
+        self.c.notify('success','REGISTERED','kept'); banner=self.c.feedback
+        self.assertTrue(self.c.background_flash(row))
+        self.c.event(dict(event='flash_done',id=self.c.request))
+        self.assertEqual((self.c.mode,self.c.active,self.c.connected),('',None,True))
+        self.assertTrue(self.c.background_flash(row))
+        self.c.event(dict(event='error',id=self.c.request,detail='Radio busy; stop first'))
+        self.assertEqual((self.c.mode,self.c.phase,self.c.connected),('','',True))
+        self.assertTrue(self.c.background_flash(row))
+        self.now+=11
+        self.c.tick()
+        self.assertEqual((self.c.mode,self.c.connected,self.sent[-1]['cmd']),('',True,'stop'))
+        self.assertIs(self.c.feedback,banner)
+        self.db.set_role(NEW2,'excluded')
+        self.assertFalse(self.c.background_flash(dict(mac=NEW2,cube_id=None)))
+        self.c.disconnected('test')
+        self.assertFalse(self.c.background_flash(row))
+
     def test_preview_does_not_interrupt_operations_and_stop_clears_queue(self):
         self.c.repair(NEW)
         request=self.c.request

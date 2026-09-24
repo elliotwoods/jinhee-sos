@@ -219,13 +219,15 @@ class FakeZone(FakeBoard):
 class FakeStation(FakeBoard):
     role = 'workstation'
     kind = 'json'
+    BUSY_TEXT = 'Station busy; stop first'   # pairing_station.ino; the Workstation says "Radio busy; stop first"
 
     def __init__(self, port, mac, firmware='nct-pairing-1.8-zones', nfc_ok=True, cubes=(), zones=()):
         super().__init__(port, mac)
         self.firmware, self.nfc_ok = firmware, nfc_ok
         self.cubes = list(cubes)       # MACs that answer discovery
         self.zones = list(zones)       # FakeZone models reachable over the air
-        self.identify = None
+        self.identify = None           # dict(mac, id, duration_ms, started): the held cube, as WsCube.h / pairing_station.ino
+        self.synthetic_tag_state = False  # opt in: an identify opens with tag_state present:true, as WsNfc.h beginIdentify does
         self.register = None
         self.sent = []                 # every command the host sent, so tests can assert what a legacy board never sees
         self.reader_uid = None         # the tag lying on the reader (place_tag / lift_tag)
@@ -258,6 +260,7 @@ class FakeStation(FakeBoard):
                        duration_ms=80, tag_present=self.reader_uid is not None)
             return [dict(out, uid=self.last_uid) if self.last_uid else out]
         if cmd == 'hello':
+            self.identify = None   # the firmware's hello stops the held cube (cube::stop), with no flash_done
             return [self.hello(rid)]
         if cmd == 'ping':
             return [dict(event='pong', id=rid)]
@@ -266,14 +269,20 @@ class FakeStation(FakeBoard):
             out += [dict(event='device', mac=m) for m in self.cubes]
             return out
         if cmd == 'identify':
-            self.identify = dict(mac=message.get('mac'), id=rid)
-            return [dict(event='identifying', id=rid, mac=message.get('mac')),
-                    dict(event='radio', id=rid, mac=message.get('mac'), type=6, status='delivered', detail=0)]
+            if self.identify:
+                return [dict(event='error', id=rid, detail=self.BUSY_TEXT)]
+            mac = message.get('mac')
+            self.identify = dict(mac=mac, id=rid, duration_ms=int(message.get('duration_ms') or 0), started=None)
+            out = [dict(event='tag_state', id='', present=True)] if self.synthetic_tag_state and self.nfc_ok else []
+            return out + [dict(event='radio', id=rid, mac=mac, type=6, status='delivered', detail=0),
+                          dict(event='identifying', id=rid, mac=mac)]
         if cmd == 'stop':
-            self.identify = None
-            return [dict(event='stopped', id=rid)]
+            held, self.identify = self.identify, None
+            out = [dict(event='radio', id=rid, mac=held['mac'], type=6, status='delivered', detail=0)] if held else []
+            return out + [dict(event='stopped', id=rid)]
         if cmd == 'register':
             mac = message.get('mac')
+            self.identify = None   # registering ends the identify flash of the held cube
             return [dict(event='attempt', id=rid, mac=mac, attempt=1),
                     dict(event='radio', id=rid, mac=mac, type=3, status='delivered', detail=0),
                     dict(event='ack_received', id=rid, mac=mac, detail='Allowing cube confirmation blink to finish'),
@@ -296,6 +305,20 @@ class FakeStation(FakeBoard):
             return out
         return [dict(event='error', id=rid, detail='Unknown command')]
 
+    def unsolicited(self, now):
+        """A timed identify ends by itself: SET_ZONE 0 to the cube (a `radio` event), then `flash_done`."""
+        held = self.identify
+        if not held or not held['duration_ms']:
+            return []
+        if held['started'] is None:
+            held['started'] = now
+            return []
+        if now - held['started'] < held['duration_ms'] / 1000:
+            return []
+        self.identify = None
+        return [dict(event='radio', id=held['id'], mac=held['mac'], type=6, status='delivered', detail=0),
+                dict(event='flash_done', id=held['id'])]
+
     def status_frame(self, z):
         return zonedb.STATUS.pack(zonedb.MAGIC, zonedb.PROTO, zonedb.ZONE_STATUS, 0, z.zone_type, z.point, z.name.encode()[:16],
                                   z.firmware.encode()[:16], z.db_version, z.db_count, z.db_crc, 0, 0, 0, int(time.monotonic()),
@@ -314,6 +337,7 @@ class FakeGeneralRadio(FakeStation):
     `dead` (cube MACs whose frames are never acknowledged).
     """
     role = 'workstation'
+    BUSY_TEXT = 'Radio busy; stop first'
     LOCKOUT_S, SHOW_LENGTH_S, FAIL_AFTER_S, BEACON_EVERY_S = 3.0, 298.0, 3.0, 5.0
 
     def __init__(self, port, mac, cubes=(), zones=(), central=None, bridge=None, clock=time.monotonic):
@@ -361,7 +385,7 @@ class FakeGeneralRadio(FakeStation):
         return out
 
     def unsolicited(self, now):
-        out = []
+        out = FakeStation.unsolicited(self, now)
         if self.unacked_since is not None and now - self.unacked_since >= self.FAIL_AFTER_S:
             self.unacked_since = None
             out.append(dict(event='preshow_fail', id='', point=self.preshow['point'], state=self.preshow['state'], seq=self.preshow['seq']))
@@ -399,6 +423,7 @@ class FakeGeneralRadio(FakeStation):
         """The radio's own verbs; None hands the command to the station protocol."""
         cmd, rid = message.get('cmd'), message.get('id', '')
         if cmd == 'hello':
+            self.identify = None
             return [self.hello(rid)] + self.beacons()
         if cmd == 'status':
             return [self.hello(rid, 'status')] + self.beacons()

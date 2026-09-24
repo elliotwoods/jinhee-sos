@@ -47,6 +47,7 @@ class DocStation(simulate.FakeStation):
         cmd, rid = message.get('cmd'), message.get('id', '')
         if cmd == 'register' and self.hold_register:
             mac = message.get('mac')
+            self.identify = None   # as FakeStation: registering ends the identify flash
             self.pending_register = dict(id=rid, mac=mac, cube_id=message.get('cube_id'))
             return [dict(event='attempt', id=rid, mac=mac, attempt=1),
                     dict(event='radio', id=rid, mac=mac, type=3, status='delivered', detail=0)]

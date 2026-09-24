@@ -44,6 +44,7 @@ export function SettingsSection() {
     <div class="card"><h3>${t('Behaviour')}</h3><div class="stack">
       <label class="check"><input type="checkbox" checked=${!!s.auto_sessions} onChange=${toggle('auto_sessions')} /> ${t('Open a live session automatically for every identified board')}</label>
       <label class="check"><input type="checkbox" checked=${!!s.preview_flash} onChange=${toggle('preview_flash')} /> ${t('Preview the selected cube with a 1 s flash (pairing station)')}</label>
+      <label class="check"><input type="checkbox" checked=${!!s.reader_flash} onChange=${toggle('reader_flash')} /> ${t('Workstation reader: signal the cube whose tag is read (a 2 s flash, or the zone chosen on the Workstation page), whether or not the page is open; never while the radio is busy or a main show is running')}</label>
       <div class="row"><label class="check"><input type="checkbox" checked=${!!s.audio} onChange=${toggle('audio')} /> ${t('Audio cues for USB cube flashing (the cube flasher\'s sounds: plugged in, start, each stage, success, failure)')}</label>
         <${ActionButton} name="audio.test" args=${{ cue: 'success' }} label=${t('Test sound')} className="btn quiet" /></div></div></div>
     <div class="card" data-doc="settings.auto"><h3>${t('Automatic updates')}</h3><div class="stack">

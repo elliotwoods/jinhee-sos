@@ -58,7 +58,7 @@ export function CubeActions({ row, mac }) {
   const st = section('station') || {};
   const inv = section('inventory') || {};
   const connected = st.present && st.connected;
-  const busy = connected && st.mode;
+  const busy = connected && st.mode && st.mode !== 'reader_flash';   // the tag-read flash gives way
   const reason = !st.present ? t('No pairing station connected') : !st.connected ? t('Station not connected') : !st.reader_ok ? t('NFC reader unavailable on the station') : busy ? t('Station busy: {mode}', { mode: st.mode }) : null;
   const excluded = row && row.role === 'excluded';
   const hasNumber = row && row.cube_id != null;

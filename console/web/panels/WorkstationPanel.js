@@ -148,7 +148,7 @@ function PairingVerbs({ device, s, caps }) {
   const [mac, setMac] = useState('');
   const live = device.state === 'session' && s.connected;
   const chosen = rows.find((r) => r.mac === mac);
-  const busy = !!s.mode;
+  const busy = !!s.mode && s.mode !== 'reader_flash';   // the tag-read flash gives way to anything started here
   const title = caps.reader ? t('Pairing goes via the primary link') : t('No NFC reader on this board');
   const detail = (caps.reader
     ? t('This board has a reader, but another link is the primary pairing link: the Cube panel and the pairing flows use it.')
@@ -198,7 +198,7 @@ function StationPairing({ st, caps }) {
     ${!caps.reader && html`<${Banner} kind="info" title=${t('No NFC reader on this board')} detail=${t('Discovery, identify flashes and sending saved mappings work through this link; a fresh tag scan needs a board with a reader (a Workstation or a pairing station).')} />`}
     <div class="row">
       <${ActionButton} name="pairing.discover" args=${{}} label=${t('Discover')} disabled=${!st.connected} />
-      <${ActionButton} name="pairing.start_pair" args=${{}} label=${t('Pair new cubes (auto)')} disabled=${!st.connected || !caps.reader || !st.reader_ok || !!st.mode} hazard=${t('Discovers new cubes, flashes each in turn and waits for its tag.')} />
+      <${ActionButton} name="pairing.start_pair" args=${{}} label=${t('Pair new cubes (auto)')} disabled=${!st.connected || !caps.reader || !st.reader_ok || (!!st.mode && st.mode !== 'reader_flash')} hazard=${t('Discovers new cubes, flashes each in turn and waits for its tag.')} />
       ${st.phase === 'paused' && html`<${ActionButton} name="pairing.retry" args=${{}} label=${t('Retry paused')} />`}
       ${st.mode && html`<${ActionButton} name="pairing.skip" args=${{}} label=${t('Skip')} />`}
       <${ActionButton} name="pairing.stop" args=${{}} label=${t('■ Stop')} className="btn danger" disabled=${!st.connected} />
@@ -213,7 +213,8 @@ function StationPairing({ st, caps }) {
 // The cube lying on this board's reader, as a zone plate's Monitor shows the cube on the plate. The hub reads the tag's
 // UID back from the reader (s.reader_tag, s.reader_history); the inventory says whose tag it is (committed first, then
 // pending); the actions go out over this board's own radio. Nothing here writes the inventory. The switch on top
-// (s.reader_flash, off at every launch) makes the hub flash the owning cube for 2 s on each tag placed.
+// (setting reader_flash, on by default; Workstation firmware only) makes the hub act on each tag placed, whether or not
+// this page is open: the 2 s flash or one SET_ZONE (reader_action), only while nothing else uses the radio.
 function ownerOf(uid) {
   const rows = (section('inventory') || {}).rows || [];
   const row = uid ? rows.find((r) => r.uid === uid) || rows.find((r) => r.pending_uid === uid) || null : null;
@@ -235,13 +236,16 @@ function ReaderCube({ device, s, caps }) {
   const zc = sent && s.zone_colors ? s.zone_colors[sent.zone] : null;
   const ring = zc ? { colour: zc[1], sub: t(zc[0]) } : { colour: ledToken(row), sub: row ? statusLabel(row.status) : uid ? t('Unknown tag') : '—' };
   const live = device.state === 'session' && s.connected;
-  const busy = !!s.mode;
+  const busy = !!s.mode && s.mode !== 'reader_flash';
   const off = !live || !mac || busy;
   const readout = tag.present ? (!tag.uid ? t('Reading the tag…') : number || (row ? t('no number') : t('Unknown tag'))) : picked ? number || (row ? t('no number') : t('Unknown tag')) : t('No cube on the reader');
   const held = (h) => (h.held_ms == null ? t('on the reader') : `${(h.held_ms / 1000).toFixed(1)} s`);
-  const autoFlash = (on) => run('radio.reader_flash', { device: device.id, on }).catch((x) => notify(x.message, 'bad'));
+  const setReader = (args) => run('radio.reader_flash', args).catch((x) => notify(x.message, 'bad'));
   const last = s.reader_flash_last;
-  const RESULTS = { flashed: tk('flashed'), 'flashed (pending tag)': tk('flashed (pending tag)'), 'unknown tag': tk('not flashed: unknown tag'), busy: tk('not flashed: the board was busy'), excluded: tk('not flashed: excluded device') };
+  const action = s.reader_action || 'flash';
+  const actionZone = action.startsWith('zone:') ? Number(action.slice(5)) : null;
+  const RESULTS = { flashed: tk('flashed'), 'flashed (pending tag)': tk('flashed (pending tag)'), 'unknown tag': tk('nothing sent: unknown tag'), busy: tk('nothing sent: the radio was busy'), excluded: tk('nothing sent: excluded device'), 'show running': tk('nothing sent: a main show is running') };
+  const resultText = (r) => (r.startsWith('zone ') ? t('zone {n} sent', { n: r.split(' ')[1] }) : t(RESULTS[r] || r));
   const columns = [
     { key: 'time', label: t('Time'), render: (h) => hhmmss(h.time) },
     { key: 'cube_id', label: t('Cube'), render: (h) => { const o = ownerOf(h.uid).row; return o && o.cube_id != null ? `#${o.cube_id}` : o ? t('no number') : t('unknown'); } },
@@ -251,10 +255,14 @@ function ReaderCube({ device, s, caps }) {
   ];
   const zoneButton = (z, label, hazard) => html`<${ActionButton} name="radio.set_zone" args=${{ device: device.id, mac, zone: z }} label=${label} className="btn small" disabled=${off || !caps.show_verbs} hazard=${hazard} />`;
   return html`<div class="card" data-doc="workstation.reader"><h3>${t('On the reader')}</h3>
-    <${ActivateSwitch} on=${!!s.reader_flash} onChange=${autoFlash} doc="workstation.reader_flash" label=${t('Flash the cube when its tag is read')}
-      detail=${s.reader_flash ? t('Each tag placed on the reader makes its cube flash blue/red for 2 s over this radio: the cube is registered and reachable. Nothing is sent while the board is busy.')
-        : t('Off: a tag on the reader is only shown here. It is off every time the console starts.')} />
-    ${s.reader_flash && last && html`<div class="row"><span class="lbl">${t('Last automatic flash')}</span><span class=${last.result.startsWith('flashed') ? 'ok-text' : 'warn-text'}>${last.cube_id != null ? `#${last.cube_id}` : last.uid} · ${t(RESULTS[last.result] || last.result)} · ${hhmmss(last.at)}</span></div>`}
+    ${s.reader_action_capable && html`<${ActivateSwitch} on=${!!s.reader_flash_setting} onChange=${(on) => setReader({ on })} doc="workstation.reader_flash" label=${t('Signal the cube when its tag is read')}
+      detail=${!s.reader_flash_setting ? t('Off: a tag on the reader is only shown here.')
+        : actionZone == null ? t('Each tag placed on the reader makes its cube flash blue/red for 2 s, then idle white: the cube is registered and reachable. Anything you start takes over at once; nothing is sent while the radio is busy or a main show is running.')
+        : t('Each tag placed on the reader sets its cube to {zone} (SET_ZONE {n}). Nothing is sent while the radio is busy or a main show is running.', { zone: t(ZONES[actionZone][1]), n: actionZone })} />
+      <div class="row" data-doc="workstation.reader_action"><span class="lbl">${t('On each tag')}</span>
+        <button class=${'btn small' + (actionZone == null ? ' on' : '')} aria-pressed=${actionZone == null ? 'true' : 'false'} onClick=${() => setReader({ action: 'flash' })}>${t('Flash 2 s')}</button>
+        ${ZONES.map(([z, name]) => html`<button class=${'btn small' + (actionZone === z ? ' on' : '')} aria-pressed=${actionZone === z ? 'true' : 'false'} onClick=${() => setReader({ action: `zone:${z}` })} title=${t('Sends SET_ZONE {zone} ({name}) to the cube.', { zone: z, name: t(name) })}>${t(name)}</button>`)}</div>`}
+    ${s.reader_flash && last && html`<div class="row"><span class="lbl">${t('Last automatic action')}</span><span class=${last.result.startsWith('flashed') || last.result.startsWith('zone ') ? 'ok-text' : 'warn-text'}>${last.cube_id != null ? `#${last.cube_id}` : last.uid} · ${resultText(last.result)} · ${hhmmss(last.at)}</span></div>`}
     ${!s.reader_ok && html`<div class="row"><${Pill} status="nfc.bad" /></div>`}
     <div class="grid2"><div>
       <${LedRing} colour=${ring.colour} label=${number || '—'} sub=${ring.sub} size=${140} blink=${row && row.telemetry && row.telemetry.command === 'identify'} /></div>

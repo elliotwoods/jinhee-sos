@@ -160,8 +160,8 @@ def capabilities(row, c):
     """What the cube card may offer right now, with the reason when it may not (the pairing app's button rules)."""
     excluded = row.get('role') == 'excluded'
     connected, reader, mode, phase = (c.connected, c.reader_ok, c.mode, c.phase) if c else (False, False, '', '')
-    idle = connected and not mode
-    previewing = mode == 'preview' and phase == 'flashing'
+    idle = connected and mode in ('', 'reader_flash')  # the tag-read flash gives way to anything started here
+    previewing = mode in ('preview', 'reader_flash') and phase == 'flashing'
     register_reason = ('Connect the NFC station to register; cube USB identification alone is not enough' if not connected else
                        'NFC reader is unavailable; check the station and reader connection' if not reader else
                        'This device is excluded as a reader or base station' if excluded else
@@ -177,7 +177,7 @@ def capabilities(row, c):
                     reason='' if not excluded and (not row.get('pending_uid') or row.get('cube_id') is None) and (not mode or previewing) else
                     'Finish or retry the pending registration before renaming' if row.get('pending_uid') and row.get('cube_id') is not None else
                     'Stop the active operation first' if mode else 'Excluded device'),
-        role=dict(enabled=not mode, reason='' if not mode else 'Stop the active operation first'),
+        role=dict(enabled=mode in ('', 'reader_flash'), reason='' if mode in ('', 'reader_flash') else 'Stop the active operation first'),
     )
 
 

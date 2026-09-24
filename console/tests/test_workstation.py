@@ -350,56 +350,152 @@ class WorkstationBesideLegacyTests(unittest.TestCase):
         self.assertTrue(tick_until(self.hub, lambda: station.reader['uid'] == uid))
         self.assertEqual(station.snapshot()['reader_history'][0]['cube_id'], 44)
 
-    def test_flash_on_tag_read(self):
-        session = self.session(self.workstation)
-        uid = '04:A2:2B:1C:53:80:01'
+    def _owned_tag(self, uid='04:A2:2B:1C:53:80:01'):
         self.hub.db.reserve(CUBE, source='test')
         self.hub.db.rename(CUBE, 44)
         self.hub.db.prepare(CUBE, uid, take_over=True)
-        received, handle = [], self.workstation.handle_json
-        self.workstation.handle_json = lambda m: (received.append(m), handle(m))[1]
-        identifies = lambda: [m for m in received if m.get('cmd') == 'identify']
-        # Off by default: a tag on the reader is only shown.
-        self.assertFalse(session.snapshot()['reader_flash'])
+        return uid
+
+    def _record(self, board):
+        received, handle = [], board.handle_json
+        board.handle_json = lambda m: (received.append(m), handle(m))[1]
+        return received
+
+    def _cycle(self, board, uid):
+        board.lift_tag()
+        run_ticks(self.hub, 3)
+        board.place_tag(uid)
+
+    def test_tag_read_flash_is_on_by_default_and_ends_by_itself(self):
+        session, c = self.session(self.workstation), self.session(self.workstation).controller
+        uid = self._owned_tag()
+        received = self._record(self.workstation)
+        sent = lambda cmd: [m for m in received if m.get('cmd') == cmd]
+        self.workstation.synthetic_tag_state = True   # as WsNfc.h: an identify opens with tag_state present:true
+        snap = session.snapshot()
+        self.assertEqual((snap['reader_flash'], snap['reader_action'], snap['reader_action_capable']), (True, 'flash', True))
+        c.notify('success', 'REGISTERED', 'kept')
+        banner = c.feedback
         self.workstation.place_tag(uid)
-        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == uid))
-        run_ticks(self.hub, 5)
-        self.assertEqual(identifies(), [])
-        self.workstation.lift_tag()
-        run_ticks(self.hub, 2)
-        # On: each placement flashes the owning cube once, for two seconds.
-        commands.run(self.hub, 'radio.reader_flash', dict(device=self.workstation.mac, on=True))
-        self.workstation.place_tag(uid)
-        self.assertTrue(tick_until(self.hub, lambda: len(identifies()) == 1))
-        self.assertEqual((identifies()[0]['mac'], identifies()[0]['duration_ms']), (CUBE, 2000))
+        self.assertTrue(tick_until(self.hub, lambda: len(sent('identify')) == 1))
+        self.assertEqual((sent('identify')[0]['mac'], sent('identify')[0]['duration_ms'], c.mode), (CUBE, 2000, 'reader_flash'))
         self.assertEqual(session.snapshot()['reader_flash_last']['result'], 'flashed (pending tag)')
         self.assertTrue(logs(self.hub, 'Flashing cube #44 for 2 s'))
-        # The identify's synthetic tag_state and a flicker while it runs do not flash the cube again.
+        # A reader flicker during the flash is not a new placement.
         self.workstation.emit(dict(event='tag_state', id='', present=False))
         self.workstation.emit(dict(event='tag_state', id='', present=True))
-        run_ticks(self.hub, 5)
-        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
-        run_ticks(self.hub, 20, dt=0.1)
-        self.assertEqual(len(identifies()), 1)
-        # Lifted while idle and placed again: a second flash.
-        self.workstation.lift_tag()
-        run_ticks(self.hub, 2)
-        self.workstation.place_tag(uid)
-        self.assertTrue(tick_until(self.hub, lambda: len(identifies()) == 2))
-        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
-        run_ticks(self.hub, 2)
-        self.workstation.lift_tag()
-        run_ticks(self.hub, 2)
-        # An unknown tag sends nothing.
-        self.workstation.place_tag('04:11:22:33')
+        # It ends by itself (flash_done): no Stop, no timeout, the link stays up, the banner stays.
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == ''))
+        run_ticks(self.hub, 40, dt=0.05)
+        self.assertEqual((len(sent('identify')), sent('stop'), c.connected, c.feedback), (1, [], True, banner))
+        self.assertEqual(session.reader['uid'], uid, 'the tag is still read back')
+        # A re-handshake with the tag still on the reader does not flash it again.
+        self.workstation.emit(self.workstation.hello(''))
+        self.assertTrue(tick_until(self.hub, lambda: c.connected and session.reader['uid'] == uid))
+        run_ticks(self.hub, 20, dt=0.05)
+        self.assertEqual(len(sent('identify')), 1)
+        # Lifted and placed again: a second flash.
+        self._cycle(self.workstation, uid)
+        self.assertTrue(tick_until(self.hub, lambda: len(sent('identify')) == 2))
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == ''))
+        # An unknown tag sends nothing and says so only in the placement line.
+        self._cycle(self.workstation, '04:11:22:33')
         self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == '04:11:22:33'))
-        self.assertEqual((len(identifies()), session.reader_flash_last['result']), (2, 'unknown tag'))
+        run_ticks(self.hub, 5)
+        self.assertEqual((len(sent('identify')), session.reader_flash_last['result']), (2, 'unknown tag'))
         self.assertNotIn('nfc_seen', [r[0] for r in self.hub.db.conn.execute('SELECT action FROM events')])
-        # Off again; a board without a reader refuses it.
-        commands.run(self.hub, 'radio.reader_flash', dict(device=self.workstation.mac, on=False))
+        # The legacy pairing station is never made to flash anything by a tag.
+        self.station.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: self.session(self.station).reader['uid'] == uid))
+        run_ticks(self.hub, 5)
+        self.assertNotIn('identify', self.station.sent)
+        self.assertFalse(self.session(self.station).snapshot()['reader_flash'])
+        # Switched off (persisted): a tag is only shown.
+        commands.run(self.hub, 'radio.reader_flash', dict(on=False))
         self.assertFalse(session.reader_flash)
-        with self.assertRaises(Exception):
-            commands.run(self.hub, 'radio.reader_flash', dict(device=self.radio.mac, on=True))
+        self.assertIn('"reader_flash": false', self.hub.db.metadata('console_settings'))
+        self._cycle(self.workstation, uid)
+        self.assertTrue(tick_until(self.hub, lambda: session.reader['uid'] == uid))
+        run_ticks(self.hub, 5)
+        self.assertEqual(len(sent('identify')), 2)
+
+    def test_tag_read_flash_gives_way_to_everything(self):
+        session, c = self.session(self.workstation), self.session(self.workstation).controller
+        uid = self._owned_tag()
+        received = self._record(self.workstation)
+        cmds = lambda: [m.get('cmd') for m in received if m.get('cmd') not in ('ping', 'status', 'nfc_poll', 'discover', 'zone_send')]
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == 'reader_flash'))
+        # An operator's colour takes over at once: the flash is stopped first.
+        commands.run(self.hub, 'radio.set_zone', dict(device=self.workstation.mac, mac=CUBE, zone=4))
+        self.assertEqual((cmds()[-3:], c.mode), (['identify', 'stop', 'set_zone'], ''))
+        # So does an identify from the page, and a registration.
+        self._cycle(self.workstation, uid)
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == 'reader_flash'))
+        commands.run(self.hub, 'radio.identify', dict(device=self.workstation.mac, macs=[CUBE], sequential=True))
+        self.assertEqual((cmds()[-2:], c.mode), (['stop', 'identify'], 'flash_all'))
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == ''))
+        self._cycle(self.workstation, uid)
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == 'reader_flash'))
+        c.repair(CUBE)
+        self.assertEqual((cmds()[-2:], c.mode, c.phase), (['stop', 'identify'], 'repair', 'identifying'))
+        run_ticks(self.hub, 10)
+        self.assertEqual((c.mode, c.phase), ('repair', 'identifying'), 'no late reply of the flash disturbs it')
+        # Tags read while it registers (the firmware's `tag` event) are left alone, quietly.
+        self.workstation.lift_tag()
+        run_ticks(self.hub, 3)
+        self.workstation.emit(dict(event='tag', id='', uid=uid))
+        run_ticks(self.hub, 10)
+        self.assertEqual(session.reader_flash_last['result'], 'busy')
+        self.assertFalse([l for l in self.hub.recent_logs if l.get('source') == 'reader' and l.get('level') == 'warn'])
+        c.stop()
+        self.assertTrue(tick_until(self.hub, lambda: c.mode == ''))
+        self.assertTrue(c.connected)
+
+    def test_tag_read_can_set_a_zone_instead(self):
+        session, c = self.session(self.workstation), self.session(self.workstation).controller
+        uid = self._owned_tag()
+        received = self._record(self.workstation)
+        with self.assertRaises(ValueError):
+            commands.run(self.hub, 'radio.reader_flash', dict(action='zone:9'))
+        commands.run(self.hub, 'radio.reader_flash', dict(action='zone:3'))
+        self.assertEqual((self.hub.db.metadata('console_reader_action'), session.snapshot()['reader_action']), ('zone:3', 'zone:3'))
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: any(m.get('cmd') == 'set_zone' for m in received)))
+        run_ticks(self.hub, 10)
+        zones = [m for m in received if m.get('cmd') == 'set_zone']
+        self.assertEqual([(m['mac'], m['zone']) for m in zones], [(CUBE, 3)])
+        self.assertEqual((c.mode, session.reader_flash_last['result']), ('', 'zone 3 sent'))
+        self.assertNotIn('identify', [m.get('cmd') for m in received])
+        # Nothing is sent while the radio is busy with another operation; a tag laid down meanwhile is read back
+        # and acted on once the radio is free.
+        count = lambda: len([m for m in received if m.get('cmd') == 'set_zone'])
+        commands.run(self.hub, 'radio.identify', dict(device=self.workstation.mac, macs=[CUBE]))
+        self._cycle(self.workstation, uid)
+        run_ticks(self.hub, 10)
+        self.assertEqual(count(), 1)
+        commands.run(self.hub, 'radio.stop', dict(device=self.workstation.mac))
+        self.assertTrue(tick_until(self.hub, lambda: count() == 2))
+        run_ticks(self.hub, 10)
+        self.assertEqual(count(), 2)
+
+    def test_tag_read_skips_a_cube_in_use_elsewhere_or_in_a_show(self):
+        session = self.session(self.workstation)
+        uid = self._owned_tag()
+        received = self._record(self.workstation)
+        # The primary (the legacy station) is registering this cube: the Workstation leaves it alone.
+        primary = self.session(self.station).controller
+        primary.repair(CUBE)
+        self.workstation.place_tag(uid)
+        self.assertTrue(tick_until(self.hub, lambda: session.reader_flash_last is not None))
+        self.assertEqual(session.reader_flash_last['result'], 'busy')
+        primary.stop()
+        self.assertTrue(tick_until(self.hub, lambda: primary.mode == ''))
+        # A main show is running: SET_ZONE would end it on the cube, so nothing is sent.
+        with patch.object(self.hub.showedit, 'controller_show_running', return_value=True):
+            self._cycle(self.workstation, uid)
+            self.assertTrue(tick_until(self.hub, lambda: session.reader_flash_last['result'] == 'show running'))
+        self.assertNotIn('identify', [m.get('cmd') for m in received])
 
     def test_identify_does_not_invent_a_tag(self):
         session = self.session(self.workstation)

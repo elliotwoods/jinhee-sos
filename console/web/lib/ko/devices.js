@@ -259,4 +259,5 @@ export default {
   'Zone type / point': '존 종류 / 포인트',
   '{tags} tags · {unknown} unknown · {fail} send failures': '태그 {tags} · 알 수 없음 {unknown} · 전송 실패 {fail}',
   'Messages from devices, suggestion cards, job stages and errors stay in English.': '장치 메시지, 제안 카드, 작업 단계, 오류는 영어로 표시됩니다.',
+  'Workstation reader: signal the cube whose tag is read (a 2 s flash, or the zone chosen on the Workstation page), whether or not the page is open; never while the radio is busy or a main show is running': 'Workstation 리더: 태그를 읽은 큐브에 신호 (2초 점멸 또는 Workstation 페이지에서 고른 존), 페이지가 열려 있지 않아도 동작하며 무선이 작업 중이거나 메인쇼 진행 중에는 하지 않음',
 };

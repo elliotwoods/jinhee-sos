@@ -37,11 +37,19 @@ last UID; polling stays on, as the Controller already asked). An identify's `tag
 Observation only: nothing is written to the database (not an `nfc_seen` scan) and the Controller still
 sees every one of these events.
 
-Flash on tag read (`reader_flash`, off whenever the link opens): each tag placed on the reader makes the cube that
-owns it do the Controller's two-second identify flash, so the operator sees the tag -> inventory -> MAC -> radio path
-work. Only when the Controller is idle (never over pairing, registration or another flash). A UID flashed this way is
-not flashed again until it is seen leaving while the Controller is idle: the identify's own synthetic `tag_state`
-must not look like a fresh placement and flash the cube in a loop.
+Tag-read action (settings `reader_flash`, default on, and `reader_action`): on a Workstation (the `nfc` role; never
+the legacy station), whether or not its page is open, each tag placed on the reader makes the cube that owns it
+either do a two-second identify flash (`flash`, the default: the operator sees tag -> inventory -> MAC -> radio work)
+or receive one SET_ZONE (`zone:0`-`zone:4`). It never gets in anyone's way:
+  - it acts only when this Controller is idle, no other link is working with that cube and no main show is known to
+    run (SET_ZONE, and so an identify, ends the show on that cube); otherwise it quietly does nothing;
+  - the flash is the Controller's background flash (mode `reader_flash`): any other operation, a colour send or a zone
+    update takes over at once (a `stop` goes first); a cube plugged in over USB leaves it running (it has no
+    registration to protect: hub.identified() skips it, and whatever starts next takes it over); an error or a missing
+    `flash_done` just ends it, and it never touches the registration feedback;
+  - a UID acted on is not acted on again until it is seen leaving the reader outside that flash (the identify's own
+    synthetic `tag_state` gaps must not look like a fresh placement) and a re-handshake does not re-arm it.
+No cube firmware change: the identify and SET_ZONE are what every cube since v1.3 answers.
 """
 import paths  # noqa: F401
 import re
@@ -66,6 +74,7 @@ FATAL_TEXT = 'Radio driver stopped answering; unplug and replug the board'
 LIVE_GENERAL = (1, 2, 0)  # the first General Radio that knows SHOW_LIVE (the page gates the mirror on this too)
 READER_EVENTS = {'tag_state', 'tag', 'nfc_poll_result'}
 READER_HISTORY = 20
+READER_ACTIONS = ('flash', 'zone:0', 'zone:1', 'zone:2', 'zone:3', 'zone:4')  # what a tag placed on the reader does
 
 
 def _at_least(firmware, prefix, minimum):
@@ -109,9 +118,8 @@ class WorkstationSession(Session):
         self.reader_history = []      # newest first: dict(time, uid, mac, cube_id, held_ms)
         self.reader_query = None      # the outstanding nfc_poll request id
         self.last_reader_query = 0.0
-        self.reader_flash = False     # flash the owning cube when a tag is placed (see the module docstring)
-        self.reader_flash_uid = None  # the UID last flashed that way, until it leaves the reader while idle
-        self.reader_flash_last = None # dict(uid, mac, cube_id, at, result) for the page
+        self.reader_flash_uid = None  # the UID last acted on, until it is seen leaving the reader (module docstring)
+        self.reader_flash_last = None # dict(uid, mac, cube_id, at, result, action) for the page
 
     # ---- what the board is, from its hello ----
     @property
@@ -210,6 +218,8 @@ class WorkstationSession(Session):
         zone = int(zone)
         if zone not in ZONE_NAMES:
             raise ValueError('Zone must be 0-4')
+        if mac != 'broadcast':
+            self.controller.yield_background()  # the tag-read flash gives way to an operator's colour
         if self.controller.mode and mac != 'broadcast':
             raise ValueError('Stop the pairing operation first; the radio is holding a cube')
         self.names[mac] = name or mac
@@ -352,7 +362,7 @@ class WorkstationSession(Session):
             self.fatal = None  # the board came back (power-cycled)
             self.hub.log(f'{self.label} answers again; its radio is up', 'ok', self.device.id, source='radio')
         self.status = dict(event)
-        self._tag_left()  # a (re-)handshake: whatever lies on the reader now is read back from scratch
+        self._tag_left(observed=False)  # a (re-)handshake: re-read what lies on the reader, without re-acting on it
         self.pool = dict(event.get('pool') or {})
         self.preshow = dict(event.get('preshow') or {})
         if event.get('mac'):
@@ -502,44 +512,82 @@ class WorkstationSession(Session):
         who = f'cube #{cube_id}' if cube_id is not None else mac or 'a tag the inventory does not know'
         self.hub.log(f'Tag {uid} on the {self.label} reader: {who}', 'info', self.device.id, source='reader')
         if self.reader_flash:
-            self._auto_flash(uid, mac, cube_id)
+            try:
+                self._reader_action(uid, mac, cube_id)
+            except Exception as exc:  # runs before the Controller sees this event: never let it fail the pump
+                self.hub.log(f'Tag-read action not sent: {exc}', 'warn', self.device.id, source='reader')
 
-    def set_reader_flash(self, on):
-        if on and not self.has_reader:
-            raise ValueError(f'{self.label} has no NFC reader')
-        if bool(on) != self.reader_flash:
-            self.hub.log(f'Flash on tag read turned {"ON" if on else "OFF"}', 'info', self.device.id, source='reader')
-        self.reader_flash, self.reader_flash_uid = bool(on), None
-        return dict(reader_flash=self.reader_flash)
+    @property
+    def reader_flash(self):
+        """The tag-read action is on: the console setting (default on) and a Workstation reader (the `nfc` role)."""
+        return bool(self.hub.settings.get('reader_flash', True)) and 'nfc' in self.roles and self.has_reader
 
-    def _auto_flash(self, uid, mac, cube_id):
-        """Flash the cube owning a tag just placed on the reader (two seconds, then idle), when the Controller is idle."""
+    @property
+    def reader_action(self):
+        action = getattr(self.hub, 'reader_action', None) or 'flash'
+        return action if action in READER_ACTIONS else 'flash'
+
+    def _reader_action(self, uid, mac, cube_id):
+        """Signal the cube owning a tag just placed on the reader: the two-second identify flash (a background flash
+        that anything else takes over) or one SET_ZONE. Only when nothing else is using that cube or this radio."""
         if uid == self.reader_flash_uid:
-            return  # already flashed for this placement (see the module docstring)
-        c = self.controller
+            return  # already done for this placement (see the module docstring)
+        c, action = self.controller, self.reader_action
         row = self.hub.db.get(mac) if mac else None
         who = f'cube #{cube_id}' if cube_id is not None else mac
+        text = None
         if not row:
-            result, text = 'unknown tag', f'Not flashed: no device in the inventory owns tag {uid}'
+            result = 'unknown tag'  # the placement line already says the inventory does not know it
         elif self.hub.db.excluded(mac):
-            result, text = 'excluded', f'Not flashed: {mac} is an excluded device'
+            result, text = 'excluded', f'Tag-read action skipped: {mac} is an excluded device'
         elif c.mode or not c.connected:
-            result, text = 'busy', f'Not flashed: the {self.label} is busy ({c.mode or "not connected"})'
+            result = 'busy'  # pairing, registration or another flash owns the radio: stay out of its way, quietly
+        elif self._held_elsewhere(mac):
+            result, text = 'busy', f'Tag-read action skipped: another radio is working with {who}'
+        elif self._show_running():
+            result, text = 'show running', f'Tag-read action skipped: a main show is running and SET_ZONE would stop it on {who}'
+        elif action == 'flash':
+            if not c.background_flash(row, 2000):
+                result = 'busy'
+            else:
+                self.reader_flash_uid = uid
+                result = 'flashed (pending tag)' if row.get('uid') != uid else 'flashed'
+                text = f'Flashing {who} for 2 s: its tag {uid} is on the reader' + (' (pending tag, not yet acknowledged)' if result != 'flashed' else '')
         else:
-            pending = row.get('uid') != uid
-            c.flash([row], sequential=True)
+            zone = int(action.split(':')[1])
+            self.set_zone(mac, zone, f'#{cube_id}' if cube_id is not None else mac)
             self.reader_flash_uid = uid
-            result = 'flashed (pending tag)' if pending else 'flashed'
-            text = f'Flashing {who} for 2 s: its tag {uid} is on the reader' + (' (pending tag, not yet acknowledged)' if pending else '')
-        self.reader_flash_last = dict(uid=uid, mac=mac, cube_id=cube_id, at=self.hub.wall(), result=result)
-        self.hub.log(text, 'info' if result.startswith('flashed') else 'warn', self.device.id, source='reader')
+            result = f'zone {zone} sent'
+            text = f'Setting {who} to {ZONE_NAMES[zone]} (SET_ZONE {zone}): its tag {uid} is on the reader'
+        self.reader_flash_last = dict(uid=uid, mac=mac, cube_id=cube_id, at=self.hub.wall(), result=result, action=action)
+        if text:
+            self.hub.log(text, 'info', self.device.id, source='reader')
 
-    def _tag_left(self):
+    def _held_elsewhere(self, mac):
+        """Another link's Controller is working with this cube (e.g. the primary station registering it)."""
+        for s in list(self.hub.sessions.values()):
+            other = getattr(s, 'controller', None)
+            if s is not self and isinstance(s, WorkstationSession) and other and other.mode and other.mode != 'reader_flash' \
+                    and (other.active or {}).get('mac') == mac:
+                return True
+        return False
+
+    def _show_running(self):
+        """A main show the console knows is playing: SET_ZONE (and so an identify) ends it on the cube."""
+        try:
+            if self.hub.showedit and self.hub.showedit.controller_show_running():
+                return True
+        except Exception:
+            pass
+        return bool(self.status.get('show_running'))
+
+    def _tag_left(self, observed=True):
         r, history = self.reader, self.reader_history
         if r['present'] and r['uid'] and history and history[0]['uid'] == r['uid'] and history[0]['held_ms'] is None:
             history[0]['held_ms'] = int(max(0.0, self.hub.wall() - (r['since'] or self.hub.wall())) * 1000)
-        if not self.controller.mode:
-            self.reader_flash_uid = None  # lifted while idle: the next placement flashes again
+        if observed and self.controller.mode != 'reader_flash':
+            # Seen leaving (not during our own flash, whose identify fakes reader gaps): the next placement acts again.
+            self.reader_flash_uid = None
         self.reader = self._no_tag()
 
     def cube_for_uid(self, uid):
@@ -621,6 +669,8 @@ class WorkstationSession(Session):
                     timeline=mainshow_app.TIMELINE, usable=self.usable(), info=st, problem=self.problem(),
                     reader_tag=dict(self.reader) if self.has_reader else None, reader_history=self.reader_history,
                     reader_flash=self.reader_flash, reader_flash_last=self.reader_flash_last,
+                    reader_flash_setting=bool(self.hub.settings.get('reader_flash', True)), reader_action=self.reader_action,
+                    reader_action_capable='nfc' in self.roles,
                     zone_colors=zonedb.ZONE_COLORS)
 
     def registry_snapshot(self):

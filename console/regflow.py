@@ -263,7 +263,7 @@ class RegistrationFlow:
                 return self.set_wait('Waiting for the pairing station to connect')
             if not controller.reader_ok:
                 return self.set_wait('The pairing link has no working NFC reader (plug in the pairing station)')
-            if controller.mode and controller.mode != 'preview':
+            if controller.mode and controller.mode not in ('preview', 'reader_flash'):  # repair() takes those over
                 return self.set_wait(f'The station is busy ({controller.mode}); waiting for it to finish')
             row = self.db.get(self.mac) or {}
             self.number = row.get('cube_id', self.number)

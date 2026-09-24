@@ -42,6 +42,7 @@ class Controller:
         return request
 
     def available(self, reader=False):
+        self.yield_background()
         if not self.connected:
             raise ValueError('Connect a ready station first')
         if self.mode:
@@ -88,6 +89,7 @@ class Controller:
     def repair(self, mac, number=None):
         if not self.connected or not self.reader_ok:
             raise ValueError('Connect a station with NFC ready first')
+        self.yield_background()
         if self.mode and not (self.mode == 'preview' and self.phase == 'flashing'):
             raise ValueError('An operation is active. Stop it first.')
         if self.db.excluded(mac): raise ValueError('This device is excluded as a reader / base station')
@@ -107,6 +109,7 @@ class Controller:
         self.identify()
 
     def rename(self, mac, number):
+        self.yield_background()
         if self.mode and not (self.mode == 'preview' and self.phase == 'flashing'):
             raise ValueError('Stop the current operation before renaming a device')
         row = self.db.validate_number(mac, number)
@@ -189,6 +192,32 @@ class Controller:
         self.batch = [row]
         self.total, self.progress = 0, 0
         self.next_flash()
+        return True
+
+    # ---- background flash (the console's tag-on-the-reader check): lowest priority, anything else takes over ----
+    def background_flash(self, row, duration_ms=2000):
+        """Identify-flash one cube for `duration_ms` only when nothing else runs. Returns False (sends nothing) otherwise.
+        Unlike flash() it leaves feedback and the batch alone, never pauses on an error and never drops the link on a
+        timeout; yield_background() ends it at once when a real operation starts."""
+        if not self.connected or self.mode or self.db.excluded(row['mac']):
+            return False
+        self.mode, self.phase = 'reader_flash', 'flashing'
+        self.active = row
+        self.request = self.emit('identify', mac=row['mac'], duration_ms=int(duration_ms))
+        self.deadline = self.clock() + 10
+        self.message = f'Reader check: flashing cube #{row.get("cube_id") or "?"} · {row["mac"]}'
+        return True
+
+    def yield_background(self):
+        """End a background flash now so another operation can start. The station gets `stop` before the next command
+        (serial order keeps stop-before-switch); its late stopped/flash_done/tag replies carry the old request id and are
+        ignored by event()."""
+        if self.mode != 'reader_flash':
+            return False
+        if self.connected:
+            self.emit('stop')
+        self.mode = self.phase = ''
+        self.request = self.active = self.deadline = None
         return True
 
     def next_flash(self):
@@ -374,6 +403,10 @@ class Controller:
                 self.choose()
             else:
                 self.complete('Pairing complete.')
+        elif kind == 'flash_done' and self.mode == 'reader_flash':
+            self.mode = self.phase = ''
+            self.request = self.active = self.deadline = None
+            self.message = 'Reader check flash complete. Radio results do not verify visible LEDs.'
         elif kind == 'flash_done' and self.phase == 'flashing':
             self.progress += 1
             self.next_flash()
@@ -388,6 +421,11 @@ class Controller:
             elif then == 'pair':
                 self.mode, self.phase = 'pair', 'waiting'
                 self.choose()
+        elif kind == 'error' and self.mode == 'reader_flash' and self.phase == 'flashing':
+            self.mode = self.phase = ''
+            self.request = self.active = self.deadline = None
+            self.message = 'Reader check flash refused: ' + str(e.get('detail', 'Station error'))
+            self.log(self.message)
         elif kind == 'error':
             if self.phase == 'registering':
                 self.db.result(self.active['mac'], False, e.get('detail', 'Station error'))
@@ -401,6 +439,11 @@ class Controller:
         if not self.connected:
             return
         if self.deadline is not None and self.clock() >= self.deadline:
+            if self.mode == 'reader_flash' and self.phase == 'flashing':
+                self.yield_background()  # a missing flash_done is not worth dropping the link over
+                self.message = 'Reader check flash: no flash_done from the station; stopped it.'
+                self.log(self.message)
+                return
             self.stop()
             self.disconnected('Station response timed out. Reconnect before continuing.')
             return

@@ -132,7 +132,10 @@ class Hub:
         # with old firmware are upgraded (autoupgrade.py).
         self.settings = dict(auto_sessions=True, preview_flash=True, audio=True, auto_zone_db_radio=True,
                              auto_zone_db_usb=True, auto_show=True, auto_pull=True, auto_sync=True, auto_register=False,
-                             auto_build=True, auto_firmware_usb=True)
+                             auto_build=True, auto_firmware_usb=True, reader_flash=True)
+        # What a tag placed on a Workstation's reader does while reader_flash is on (sessions/workstation.py):
+        # 'flash' (the two-second identify) or 'zone:N' (one SET_ZONE N). Persisted in metadata `console_reader_action`.
+        self.reader_action = 'flash'
         # Automatic sync bookkeeping (auto_sync()): the local-data fingerprint at the last sync, when a debounced
         # sync is due, the back-off after failures, and whether the web last rejected the password.
         self.autosync = dict(fingerprint=None, due=None, failures=0, retry_at=0.0, last_at=None, waiting=False)
@@ -173,6 +176,7 @@ class Hub:
         except ValueError:
             saved = {}
         self.settings.update({k: bool(v) for k, v in saved.items() if k in self.settings})
+        self.reader_action = self.db.metadata('console_reader_action') or 'flash'
         if paths.PACKAGED:
             self.settings['auto_build'] = False   # the app's firmware is fixed per release (no Arduino tools)
         if self.api_port:
@@ -625,7 +629,8 @@ class Hub:
         self.presume(device)
         if device.role == 'cube' and device.mac:
             station = self.station_session()
-            if station and station.controller.mode and (self.pinned_mac or '') != device.mac:
+            # A tag-read background flash has no registration to protect; whatever starts next takes it over.
+            if station and station.controller.mode not in ('', 'reader_flash') and (self.pinned_mac or '') != device.mac:
                 # As the pairing app did: a newly identified USB cube stops the active operation before it
                 # takes the pin, so an interrupted registration never continues on the wrong cube.
                 try:

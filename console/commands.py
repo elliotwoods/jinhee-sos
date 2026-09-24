@@ -52,6 +52,8 @@ def settings(hub, key, value):
     hub.settings[key] = bool(value)
     hub.save_settings()
     hub.apply_auto_modes()
+    if key == 'reader_flash':
+        hub.mark_dirty('sessions')   # the Workstation reader card shows it
     if key == 'auto_sync' and value and hub.workers and hub.auto_web:
         hub.check_sync_status()        # catch up now rather than at the next minute's check
     return hub.settings
@@ -364,6 +366,8 @@ def inventory_clear_number(hub, mac):
 @command('inventory.set_role')
 def inventory_set_role(hub, mac, role):
     session = hub.station_session()
+    if session:
+        session.controller.yield_background()
     if session and session.controller.mode:
         raise ValueError('Finish or stop the current station operation before changing a role')
     hub.db.set_role(mac, role)
@@ -419,6 +423,7 @@ def zones_identify(hub, mac, seconds=10, device=None):
 def zones_update(hub, mac, device=None):
     """Send the published database to one zone over the air (unicast announce, never forced)."""
     session = hub.zone_relay(device)
+    session.controller.yield_background()
     if session.controller.mode:
         raise ValueError('Stop the pairing operation first; the station is busy')
     p = session.zones.update(mac)
@@ -430,6 +435,7 @@ def zones_update(hub, mac, device=None):
 def zones_update_all(hub, device=None):
     """One broadcast run for every in-range zone that is out of date."""
     session = hub.zone_relay(device)
+    session.controller.yield_background()
     if session.controller.mode:
         raise ValueError('Stop the pairing operation first; the station is busy')
     candidates = [z['mac'] for z in session.zones.zone_rows() if z['in_range'] and z['state'] == 'behind']
@@ -857,9 +863,25 @@ def radio_identify(hub, device, macs, sequential=False):
 
 
 @command('radio.reader_flash', 'hardware')
-def radio_reader_flash(hub, device, on):
-    """Flash the cube that owns each tag placed on this board's reader (two seconds, only when idle; off at every launch)."""
-    return _radio(hub, device).set_reader_flash(bool(on))
+def radio_reader_flash(hub, on=None, action=None, device=None):
+    """What a tag placed on a Workstation's reader does to its cube (on by default, for every Workstation): the
+    two-second identify flash ('flash') or one SET_ZONE ('zone:0'..'zone:4'). Only ever when nothing else is running."""
+    from sessions.workstation import READER_ACTIONS, ZONE_NAMES
+    if action is not None:
+        if action not in READER_ACTIONS:
+            raise ValueError(f'Unknown tag-read action {action!r}; use one of {", ".join(READER_ACTIONS)}')
+        if action != hub.reader_action:
+            hub.reader_action = action
+            hub.db.set_metadata('console_reader_action', action)
+            what = 'flash 2 s' if action == 'flash' else f'set zone {action[5:]} ({ZONE_NAMES[int(action[5:])]})'
+            hub.log(f'Tag-read action: {what}', 'info', source='reader')
+    if on is not None and bool(on) != hub.settings.get('reader_flash', True):
+        hub.settings['reader_flash'] = bool(on)
+        hub.save_settings()
+        hub.log(f'Tag-read action turned {"ON" if on else "OFF"} for every Workstation', 'info', source='reader')
+    hub.mark_dirty('sessions')
+    hub.mark_dirty('settings')
+    return dict(reader_flash=hub.settings.get('reader_flash', True), reader_action=hub.reader_action)
 
 
 @command('radio.transmit', 'hardware')
