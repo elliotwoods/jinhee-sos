@@ -307,6 +307,16 @@ Zone error codes (`Zone "‹zone›" reports: …`):
 
 The code persists until the next successful operation.
 
+### Workstation panel › On the reader: flash on tag read
+
+- Control: **Flash the cube when its tag is read**, an ON/OFF switch at the top of the **On the reader** card (the card appears only on a board with a reader). Command `radio.reader_flash {device, on}` (hardware kind: one click, warning tooltip "Visible on the cube; it returns to idle afterwards. Only while the board is idle, never during pairing or registration."). Refused with "‹label› has no NFC reader" on a reader-less board.
+- ON detail: "Each tag placed on the reader makes its cube flash blue/red for 2 s over this radio: the cube is registered and reachable. Nothing is sent while the board is busy."
+- OFF detail: "Off: a tag on the reader is only shown here. It is off every time the console starts."
+- Behaviour: each tag placed makes the owning device (committed `uid` first, else `pending_uid`) do the Controller's 2 s identify flash (same as **Flash 2 s**) over this board's radio. Default off; off at every console start and whenever the link reopens; not saved. Sends only while the Controller is idle and connected. One flash per placement: a UID is not flashed again until it is seen leaving the reader while idle (lift and place again). No database write; not an `nfc_seen` scan.
+- "Last automatic flash" row (shown while the switch is ON): `#<n> · <result> · <time>` (the UID when the device has no number). Results: **flashed** · **flashed (pending tag)** · **not flashed: unknown tag** · **not flashed: the board was busy** · **not flashed: excluded device**.
+- Log lines (source `reader`): "Flashing cube #44 for 2 s: its tag ‹uid› is on the reader" (+ " (pending tag, not yet acknowledged)") · "Not flashed: no device in the inventory owns tag ‹uid›" · "Not flashed: ‹mac› is an excluded device" · "Not flashed: the ‹label› is busy (‹mode›)" · "Flash on tag read turned ON" / "… OFF".
+- Evidence: **Simulation-verified** (`console/tests/test_workstation.py::test_flash_on_tag_read`). Commit `2739586`. Not yet run on a real Workstation. Procedure: {{page:H3}} B3.
+
 ### Result status
 
 Sent → **Delivered** (radio acknowledgement only; "Delivered ≠ acknowledged by the application") → **Acknowledged** (the board answered) → **Verified** (read back independently). Only Acknowledged and Verified count as success. **No radio ACK** means the radio did not confirm delivery (off, out of range, other channel). Radio dots: **Heard** (discovery reply within 10 s) / **Not heard** ("A grey dot does not mean the cube is off"). Never judge battery from a radio dot or an inventory status.
@@ -460,6 +470,7 @@ flowchart TD
 - `console/web/components/TopBar.js` (page order, EN | KR switch), `console/web/app.js` (⌘1–7), `console/web/lib/i18n.js` (`nct.lang`, `?lang=`)
 - `console/web/panels/sections.js` (Settings), `others.js` (Automatic intake), `ZonePanel.js` (Monitor, leases), `WorkstationPanel.js`, `ShowSection.js`
 - `console/web/components/StatusBar.js`, `TopBar.js`, `console/web/app.js` (shortcuts)
+- Flash on tag read: `console/sessions/workstation.py` (`set_reader_flash`, `_auto_flash`), `console/commands.py` (`radio.reader_flash`), `console/uitext.py`, `console/web/panels/WorkstationPanel.js` (`ReaderCube`), `console/tests/test_workstation.py::test_flash_on_tag_read`, commit `2739586`
 - `console/locks.py`, `console/app.py`, `console/window.py`, `console/probe.py`, `console/intake.py`, `console/regflow.py`
 - `pairing_station/app.py:341`, `zones/dbmanager/app.py:891`, `zones/mainshow/app.py:609`, `flashing_station/app.py`
 - `pairing_station/controller.py`, `pairing_station/I2C_DEBUG.md`, `pairing_station/VALIDATION.md`

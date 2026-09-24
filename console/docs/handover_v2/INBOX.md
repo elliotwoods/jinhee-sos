@@ -545,4 +545,6 @@ blinks the LEDs), X11 and the Workstation row in console/README.md.
 - `console/web/panels/WorkstationPanel.js` (`ReaderCube`)
 - `console/tests/test_workstation.py::test_flash_on_tag_read`
 
-HOLD until the current Notion publishes of H3, X03 and X11 finish.
+**Applied** (2026-09-24): H3, X03, X11, console/README.md
+
+**Applied** (2026-09-24): H3 (B3), X03, X11, console/README.md.

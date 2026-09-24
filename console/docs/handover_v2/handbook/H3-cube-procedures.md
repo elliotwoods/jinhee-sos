@@ -161,6 +161,31 @@ Edge cases, in short: <kr>예외 상황 요약:</kr>
 More detail: {{page:X03}}, cards: {{page:X11}}
 <kr>자세한 내용: {{page:X03}}, 카드: {{page:X11}}</kr>
 
+### B3. Check that a cube is registered, using the Workstation reader | B3. 워크스테이션 리더로 큐브 등록 확인
+
+Place a cube's tag on the Workstation's reader and the cube flashes blue/red for 2 s. That proves the tag belongs to a cube in the inventory and the radio reaches that cube. Use it to check a batch of cubes quickly, without a zone.
+<kr>큐브의 태그를 워크스테이션 리더에 올리면 큐브가 2초 동안 파랑/빨강으로 깜박입니다. 태그가 인벤토리의 큐브 것이고 무선이 그 큐브에 닿는다는 증거입니다. 존 없이 여러 큐브를 빠르게 확인할 때 사용합니다.</kr>
+
+1. Open the Workstation panel. The **On the reader** card must be there and show no NFC warning (the card appears only on a board with a reader). <kr>워크스테이션 패널을 엽니다. **On the reader** 카드가 있고 NFC 경고가 없어야 합니다(리더가 있는 보드에만 카드가 나타남).</kr>
+2. Turn on **Flash the cube when its tag is read**, the switch at the top of the card. <kr>카드 맨 위의 스위치 **Flash the cube when its tag is read**를 켭니다.</kr>
+3. Place a cube's tag on the reader. The card shows the cube's number, and the cube flashes blue/red for 2 s. "Last automatic flash" shows the number, the result and the time. <kr>큐브의 태그를 리더에 올립니다. 카드에 큐브 번호가 나오고 큐브가 2초 동안 파랑/빨강으로 깜박입니다. "Last automatic flash"에 번호, 결과, 시각이 표시됩니다.</kr>
+4. Check the cubes one by one. Lift each tag off the reader before you place the next. <kr>큐브를 한 대씩 확인합니다. 다음 태그를 올리기 전에 앞의 태그를 리더에서 뗍니다.</kr>
+5. Turn the switch off when you are done. <kr>끝나면 스위치를 끕니다.</kr>
+
+| Result · 결과 | What it means · 의미 | What to do · 조치 |
+|---|---|---|
+| The cube flashes (**flashed**) · 큐브가 깜박임 | Registered, and the radio reaches it · 등록됨, 무선 도달 | Nothing · 없음 |
+| **Unknown tag** / **not flashed: unknown tag** | No cube owns this tag · 이 태그의 큐브 없음 | Register the cube (B) · 큐브 등록(B) |
+| A number shows, nothing flashes · 번호는 나오나 깜박임 없음 | The cube is off, out of range, or the inventory has the wrong cube for this tag · 큐브 꺼짐, 범위 밖, 또는 태그에 다른 큐브가 기록됨 | Check it is on and near; press **Discover**; **Send saved mapping** · 전원·거리 확인, **Discover**, **Send saved mapping** |
+| **flashed (pending tag)** | The registration was never acknowledged · 등록이 확인되지 않음 | **Send saved mapping** again · **Send saved mapping** 다시 |
+| **not flashed: the board was busy** | Another operation was running · 다른 작업 진행 중 | Stop it, then place the tag again · 작업을 멈추고 태그를 다시 올림 |
+
+The switch only blinks the cube's LEDs: it writes no firmware and nothing to the database. It is off every time the console starts. Each placement flashes once: lift the tag and place it again to repeat. Nothing is sent while the board is busy with pairing, registration or another flash.
+<kr>이 스위치는 큐브 LED를 깜박이게만 합니다. 펌웨어를 쓰지 않고 데이터베이스에도 아무것도 기록하지 않습니다. 콘솔을 시작할 때마다 꺼져 있습니다. 한 번 올릴 때 한 번만 깜박이므로, 다시 하려면 태그를 뗐다가 다시 올립니다. 보드가 페어링, 등록, 다른 깜박임으로 바쁜 동안에는 아무것도 보내지 않습니다.</kr>
+
+Evidence: Simulation-verified. More detail: {{page:X03}}, {{page:X11}}
+<kr>근거: Simulation-verified. 자세한 내용: {{page:X03}}, {{page:X11}}</kr>
+
 ## C. Show design | C. 쇼 디자인
 
 The **Show editor** changes the main show: the finale animation every cube plays from its own memory. You edit a working copy, preview it, publish it as a new version, then send it to the cubes. Only cubes on firmware v1.5.0 or later can receive a new show; older cubes keep the built-in original.
@@ -351,6 +376,7 @@ Evidence: the Show editor screens are Simulation-verified. More detail: {{page:X
 | B: **REGISTERED**, green **Registered · ACK** | The cube answered (Acknowledged) · 큐브 응답 | **Send saved mapping**; {{page:H5}} |
 | B: **Cube #N registered and synced** | Registered and zone database published · 등록·게시 완료 | **Sync again** |
 | B: the cube lights correctly at a reader · 리더에서 정상 점등 | Zones know the new tag · 존이 새 태그를 앎 | {{page:H4}}; {{page:H5}} |
+| B3: the cube flashes when its tag is on the Workstation reader · 워크스테이션 리더에 태그를 올리면 큐브가 깜박임 | Registered and reachable by radio · 등록됨, 무선 도달 | **Send saved mapping**; register it (B) · 등록(B) |
 | C: **saved on this computer**, **same as published vN** | The working copy is the published show · 작업본 = 게시본 | **Publish** |
 | C: every cube in range `current` · 범위 내 모든 큐브 `current` | Cubes hold the new show · 큐브가 새 쇼 보유 | **Update all to vN**, or USB · 또는 USB |
 | C: a test cube plays the change · 시험 큐브가 변경 재생 | End-to-end proof · 최종 확인 | {{page:H5}} |

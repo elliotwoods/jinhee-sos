@@ -124,6 +124,7 @@ Other behaviour:
 | **Flash LEDs until Stop** (`pairing.flash`) | Cube card | Blinks the LEDs only. Not a firmware write |
 | **Unpin** | Cube card | Removes the USB pin. Unplugging does not remove it; the next identified cube replaces it |
 | **Discover** · **Identify (flash until Stop)** · **Flash 2 s** | Workstation panel | Find a cube without USB. LED blink only |
+| **Flash the cube when its tag is read** (`radio.reader_flash {device, on}`) | Workstation panel › **On the reader** card (boards with a reader only) | ON/OFF switch. Each tag placed on the reader makes its owning cube (committed `uid`, else `pending_uid`) do the same 2 s blue/red flash as **Flash 2 s**, over this board's radio: proves the cube is registered and reachable. Off at every console start and whenever the link reopens; not saved. Sends only while the Controller is idle and connected; one flash per placement (lift and place again). No database write, not an `nfc_seen` scan. Results in "Last automatic flash": flashed / flashed (pending tag) / not flashed: unknown tag / not flashed: the board was busy / not flashed: excluded device. Simulation-verified. Procedure: {{page:H3}} B3 |
 | **Pair new cubes (auto)** (`pairing.start_pair`) | Workstation panel › **Pairing** | Discovers unregistered cubes, flashes each in turn, waits for its tag, numbers it (lowest free above 32, never 2, 22, 39 or 43) only while `auto_number` is 1; after any sync the number comes from the web (web password stored) or the cube is left **Needs number** and skipped (see Number allocation). Skips existing registrations. Controls: **Skip**, **Retry paused**, **■ Stop** |
 | **NFC status** | Workstation panel › **Pairing** | Polls, last read time |
 | **Recover NFC reader** (`station.nfc_recover`) | Workstation panel | I²C bus clear and PN532 re-initialisation. Refused while an operation runs |
@@ -188,7 +189,7 @@ Registration status pills (`console/uitext.py` STATUS):
 | Many unregistered cubes, no USB | **Pair new cubes (auto)** | **Skip**, **Retry paused**, **■ Stop** |
 | Station link lost mid-operation | Re-handshake every 3 s | The interrupted operation is never replayed automatically |
 
-> [!WARNING] **Two kinds of "flash".** **Identify (flash until Stop)**, **Flash 2 s** (Workstation panel) and **Flash LEDs until Stop** (cube card) only blink the LEDs. **Flash cube firmware** (cube **Firmware** tab) and the **Flash cubes** page write firmware.
+> [!WARNING] **Two kinds of "flash".** **Identify (flash until Stop)**, **Flash 2 s** and the **Flash the cube when its tag is read** switch (Workstation panel) and **Flash LEDs until Stop** (cube card) only blink the LEDs. **Flash cube firmware** (cube **Firmware** tab) and the **Flash cubes** page write firmware.
 
 > [!DANGER] The installed original pairing station `3C:0F:02:AD:83:24` is **Protected** (`flashing_station/core.py` `PROTECTED`): never probed, never flashed, and its port is never opened by the flasher. Excluded-role MACs are protected the same way. A replacement station must be identified and recorded ({{page:X09}}).
 
