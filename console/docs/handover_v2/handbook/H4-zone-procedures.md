@@ -23,8 +23,8 @@ It never starts a show, and it never presses a button on a suggestion card for y
 
 ### 2. Automatic unless you switch it off | 2. 끄지 않으면 자동
 
-These are on by default. Each has a switch in Settings › **Automatic updates**, and the console remembers your choice on this computer.
-<kr>기본으로 켜져 있습니다. 각각 Settings › **Automatic updates**에 스위치가 있으며, 콘솔은 선택을 이 컴퓨터에 저장합니다.</kr>
+These are on by default. Each has a switch in Settings › **Automatic updates** (the Workstation reader's is in Settings › Behaviour), and the console remembers your choice on this computer.
+<kr>기본으로 켜져 있습니다. 각각 Settings › **Automatic updates**에 스위치가 있으며(워크스테이션 리더는 Settings › Behaviour), 콘솔은 선택을 이 컴퓨터에 저장합니다.</kr>
 
 | What happens · 하는 일 | What you see · 화면 | How to stop it · 멈추는 법 |
 |---|---|---|
@@ -35,6 +35,7 @@ These are on by default. Each has a switch in Settings › **Automatic updates**
 | **Web pulls:** a newer zone database (checked every minute) and a newer main show (every 5 min, while a Workstation is connected) are downloaded · **웹에서 받기:** 새 존 데이터베이스(1분마다)와 새 메인쇼(5분마다, 워크스테이션 연결 시) 내려받기 | A **Log** line when something new arrives · 새것이 오면 **Log** 줄 | Switch **Pull a newer zone database and show from the web…** off |
 | **Firmware builds:** when firmware source on this computer changes, it is built, one build at a time. Building never writes to a board · **펌웨어 빌드:** 이 컴퓨터의 펌웨어 소스가 바뀌면 한 번에 하나씩 빌드. 빌드는 보드에 쓰지 않음 | **Automatic updates** panel: **queued**, **building**; **no build tools** if this computer cannot build · 패널 상태 | Switch **Build firmware when its source changes…** off; **Pause** |
 | **Firmware upgrades over USB:** a board plugged in whose firmware is older than this computer's build is flashed (see the warning below). It only upgrades, never downgrades · **USB 펌웨어 업그레이드:** 꽂은 보드의 펌웨어가 이 컴퓨터의 빌드보다 오래되었으면 플래시(아래 경고 참고). 업그레이드만 하고 다운그레이드는 하지 않음 | **Automatic updates** panel: **Starts in N s**, then **upgrading** · 패널 상태 | **Skip** on its row before it starts; **Pause**; or switch **Upgrade the firmware of USB boards that are out of date…** off |
+| **Workstation reader:** each tag laid on a Workstation's reader makes its cube flash blue/red for 2 s (or, if chosen, sets its zone). Never while the radio is busy or a show the console knows about is running; anything you start takes over at once ({{page:H3}} B3) · **워크스테이션 리더:** 리더에 올린 태그의 큐브가 2초 깜박임(선택하면 존 설정). 무선이 작업 중이거나 콘솔이 아는 쇼가 진행 중이면 하지 않음. 직접 시작한 작업이 즉시 우선 | The cube blinks; **On the reader** › "Last automatic action" · 큐브가 깜박임 | Switch **Signal the cube when its tag is read** off on the **On the reader** card, or Settings › Behaviour |
 
 Zone databases and shows never go backwards: a board or cube accepts only a higher version, and one that holds a newer version is left alone. A zone board marked **Newer / differs** is never overwritten.
 <kr>존 데이터베이스와 쇼는 절대 이전 버전으로 돌아가지 않습니다. 보드와 큐브는 더 높은 버전만 받고, 더 새 버전을 가진 것은 건드리지 않습니다. **Newer / differs**로 표시된 존 보드는 덮어쓰지 않습니다.</kr>

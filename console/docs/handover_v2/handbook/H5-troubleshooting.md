@@ -15,6 +15,7 @@ Find the symptom in the index and go to its section. Card titles and buttons are
 | Several good cubes fail at one reader, or it reads nothing · 여러 큐브가 한 리더에서 실패, 또는 아무것도 못 읽음 | That reader: position, power, zone database · 그 리더: 위치, 전원, 존 데이터베이스 | 3 |
 | Registration fails · 등록 실패 | Workstation link, its reader, the cube answering · 워크스테이션 연결, 리더, 큐브 응답 | 2 |
 | **Register** greyed out · **Register** 비활성 | Hover it: the tooltip gives the reason · 툴팁의 이유 | {{page:H3}} B |
+| A cube blinks blue/red, or changes zone, when its tag is laid on the Workstation · 워크스테이션에 태그를 올리면 큐브가 깜박이거나 존이 바뀜 | Intended: on by default. To stop it, switch **Signal the cube when its tag is read** off, or choose **Flash 2 s** under **On each tag** · 의도된 동작(기본 켜짐). 스위치를 끄거나 **Flash 2 s** 선택 | {{page:H3}} B3 |
 | Tag is read but the cube's colour does not change · 태그는 읽지만 큐브 색이 그대로 | Cube on, in range, holding its number? · 큐브 켜짐, 범위 안, 번호 보유 여부 | 4 |
 | Cube is red at the preshow, but no butterfly · 프리쇼에서 빨강인데 나비 없음 | Bridge port: no other program holding it · 브리지 포트 점유 여부 | 5 |
 | The main show does not start, or only on some cubes · 메인쇼 미시작 또는 일부만 재생 | Were the cubes tagged at the entrance? · 입구 태그 여부 | 6 |

@@ -496,6 +496,8 @@ names `general_radio.py`.
 
 ## 2026-09-23 · from workstation-auto-flash-tag · "Flash the cube when its tag is read" (NOT committed yet; Simulation-verified, unit tests only)
 
+> **Superseded 2026-09-24** (enable-default-tag-flash, below): the switch is now **Signal the cube when its tag is read**, ON by default and saved (`reader_flash`); "off every time the console starts / off at every launch", "Last automatic flash", the "not flashed: …" results, the "Not flashed: …" log lines, `radio.reader_flash {device, on}` and step 5 "turn the switch OFF" no longer apply.
+
 The user wants this written up as a common procedure: H3, new section after B, "Check that a cube is registered, using
 the Workstation reader". Also update X03 (the cube tools table and the "Two kinds of flash" warning: this switch only
 blinks the LEDs), X11 and the Workstation row in console/README.md.
@@ -588,3 +590,35 @@ working-tree change to `console/autoupgrade.py` (finished and tested per its aut
   "Shared Git inventory" (l.173–200) and the web-inventory paragraph naming `git_inventory_baseline_v1` (l.207–212);
   web/README.md l.4; web/package.json description; rangetest/README.md l.99; console/README.md USB upgrades (l.142–146,
   "differs" → older-only) and the Unidentified board line (l.74, no override mentioned).
+
+## 2026-09-24 · from enable-default-tag-flash · Workstation tag-read action on by default, with an action picker · Applied
+
+Uncommitted working-tree change. Evidence: Simulation-verified (`console/tests/test_workstation.py::test_tag_read_*` (4),
+`pairing_station/tests/test_station.py::test_background_flash_gives_way_to_every_operation`, a simulated console run).
+No hardware test. Supersedes the 2026-09-23 workstation-auto-flash-tag entry ("off at every launch").
+
+- Every Workstation (`nfc` role) acts on each tag placed on its reader, whether or not its page is open; the legacy
+  pairing station never does (manual **Flash 2 s** only). Default action: 2 s identify flash (blue/red, then idle
+  white). Picker **On each tag**: **Flash 2 s** · **idle** · **preshow** · **desert** · **pool** · **mainshow** (one
+  SET_ZONE N; the zone stays). No cube firmware change, no NVS, no inventory write, not an `nfc_seen` scan.
+- Never in the way: nothing sent while that radio is busy, another link works with the cube, or a main show the console
+  knows about is running; the flash is Controller mode `reader_flash` ("Reader check: flashing cube #‹n› · ‹mac›") that
+  any operator action takes over at once (`stop` first); refused/unfinished flash just ends; registration banner
+  untouched; a USB cube identified meanwhile no longer logs "Stopped the active pairing operation…". One action per
+  placement; a reconnect does not repeat it; a tag laid down while busy is read back and acted on once free.
+- Strings: switch **Signal the cube when its tag is read**; row **On each tag**; row "Last automatic action"; results
+  flashed / flashed (pending tag) / zone N sent / nothing sent: unknown tag / nothing sent: the radio was busy / nothing
+  sent: excluded device / nothing sent: a main show is running. Settings › Behaviour checkbox "Workstation reader:
+  signal the cube whose tag is read (a 2 s flash, or the zone chosen on the Workstation page), whether or not the page
+  is open; never while the radio is busy or a main show is running". Setting `reader_flash` (default true,
+  `console_settings`); metadata `console_reader_action` (`flash` | `zone:0`…`zone:4`); command
+  `radio.reader_flash {on?, action?}`. Log lines listed in X11.
+- Applied: H3 B3 rewritten as "Check a cube on the Workstation reader" (on by default, 5 steps, results table, staging
+  variant, running-show WARNING) and its success-table row; H4 "What the console does by itself" group 2 row + intro
+  (switch in Settings › Behaviour); H5 symptom-index row; X02 Workstation detail row + role-change note; X03 tools row,
+  "Two kinds of flash" warning, USB-plug-in row; X11 settings row, section "Workstation panel › On the reader: tag-read
+  action", close-out line, sources; X13 two hardware checks for the next bench session; `console/README.md` Workstation
+  row.
+- Code note (not a docs change): the `sessions/workstation.py` docstring says "a cube plugged in takes over at once";
+  `hub.identified()` actually leaves a running tag-read flash alone (it finishes its 2 s or the next operation takes it
+  over). The docs describe the code.

@@ -161,30 +161,37 @@ Edge cases, in short: <kr>예외 상황 요약:</kr>
 More detail: {{page:X03}}, cards: {{page:X11}}
 <kr>자세한 내용: {{page:X03}}, 카드: {{page:X11}}</kr>
 
-### B3. Check that a cube is registered, using the Workstation reader | B3. 워크스테이션 리더로 큐브 등록 확인
+### B3. Check a cube on the Workstation reader | B3. 워크스테이션 리더로 큐브 확인
 
-Place a cube's tag on the Workstation's reader and the cube flashes blue/red for 2 s. That proves the tag belongs to a cube in the inventory and the radio reaches that cube. Use it to check a batch of cubes quickly, without a zone.
-<kr>큐브의 태그를 워크스테이션 리더에 올리면 큐브가 2초 동안 파랑/빨강으로 깜박입니다. 태그가 인벤토리의 큐브 것이고 무선이 그 큐브에 닿는다는 증거입니다. 존 없이 여러 큐브를 빠르게 확인할 때 사용합니다.</kr>
+Place a cube's tag on the Workstation's reader and the cube flashes blue/red for 2 s, then turns idle white. That proves the tag belongs to a cube in the inventory and the radio reaches that cube. This is on by default, on every Workstation, whether or not its page is open. The older installed pairing station never does it.
+<kr>큐브의 태그를 워크스테이션 리더에 올리면 큐브가 2초 동안 파랑/빨강으로 깜박인 뒤 대기 흰색이 됩니다. 태그가 인벤토리의 큐브 것이고 무선이 그 큐브에 닿는다는 증거입니다. 기본으로 켜져 있으며, 모든 워크스테이션에서 페이지가 열려 있지 않아도 동작합니다. 설치된 이전 등록 스테이션은 이 동작을 하지 않습니다.</kr>
 
-1. Open the Workstation panel. The **On the reader** card must be there and show no NFC warning (the card appears only on a board with a reader). <kr>워크스테이션 패널을 엽니다. **On the reader** 카드가 있고 NFC 경고가 없어야 합니다(리더가 있는 보드에만 카드가 나타남).</kr>
-2. Turn on **Flash the cube when its tag is read**, the switch at the top of the card. <kr>카드 맨 위의 스위치 **Flash the cube when its tag is read**를 켭니다.</kr>
-3. Place a cube's tag on the reader. The card shows the cube's number, and the cube flashes blue/red for 2 s. "Last automatic flash" shows the number, the result and the time. <kr>큐브의 태그를 리더에 올립니다. 카드에 큐브 번호가 나오고 큐브가 2초 동안 파랑/빨강으로 깜박입니다. "Last automatic flash"에 번호, 결과, 시각이 표시됩니다.</kr>
-4. Check the cubes one by one. Lift each tag off the reader before you place the next. <kr>큐브를 한 대씩 확인합니다. 다음 태그를 올리기 전에 앞의 태그를 리더에서 뗍니다.</kr>
-5. Turn the switch off when you are done. <kr>끝나면 스위치를 끕니다.</kr>
+1. Check that a Workstation is connected. Its **On the reader** card shows no NFC warning. <kr>워크스테이션이 연결되어 있는지 확인합니다. **On the reader** 카드에 NFC 경고가 없어야 합니다.</kr>
+2. Place a cube's tag on the reader. The cube flashes for 2 s. <kr>큐브의 태그를 리더에 올립니다. 큐브가 2초 동안 깜박입니다.</kr>
+3. Read the result on the card: the cube's number, and "Last automatic action" with the result and the time. <kr>카드에서 결과를 확인합니다. 큐브 번호와 "Last automatic action"에 결과와 시각이 나옵니다.</kr>
+4. Lift the tag. Each placement acts once: lift it and place it again to repeat. <kr>태그를 뗍니다. 한 번 올릴 때 한 번만 동작하므로, 다시 하려면 뗐다가 다시 올립니다.</kr>
+5. Place the next cube's tag, and so on. <kr>다음 큐브의 태그를 올리고, 같은 방법으로 계속합니다.</kr>
 
 | Result · 결과 | What it means · 의미 | What to do · 조치 |
 |---|---|---|
-| The cube flashes (**flashed**) · 큐브가 깜박임 | Registered, and the radio reaches it · 등록됨, 무선 도달 | Nothing · 없음 |
-| **Unknown tag** / **not flashed: unknown tag** | No cube owns this tag · 이 태그의 큐브 없음 | Register the cube (B) · 큐브 등록(B) |
-| A number shows, nothing flashes · 번호는 나오나 깜박임 없음 | The cube is off, out of range, or the inventory has the wrong cube for this tag · 큐브 꺼짐, 범위 밖, 또는 태그에 다른 큐브가 기록됨 | Check it is on and near; press **Discover**; **Send saved mapping** · 전원·거리 확인, **Discover**, **Send saved mapping** |
-| **flashed (pending tag)** | The registration was never acknowledged · 등록이 확인되지 않음 | **Send saved mapping** again · **Send saved mapping** 다시 |
-| **not flashed: the board was busy** | Another operation was running · 다른 작업 진행 중 | Stop it, then place the tag again · 작업을 멈추고 태그를 다시 올림 |
+| **flashed** (the cube flashes · 큐브가 깜박임) | Registered, and the radio reaches it · 등록됨, 무선 도달 | Nothing · 없음 |
+| **flashed (pending tag)** | The registration was never acknowledged · 등록이 확인되지 않음 | **Send saved mapping** again · 다시 보내기 |
+| **nothing sent: unknown tag** | No cube owns this tag · 이 태그의 큐브 없음 | Register the cube (B) · 큐브 등록(B) |
+| A number shows, nothing flashes · 번호는 나오나 깜박임 없음 | The cube is off, out of range, or the inventory has the wrong cube for this tag · 큐브 꺼짐, 범위 밖, 또는 태그에 다른 큐브가 기록됨 | Check it is on and near; **Discover**; **Send saved mapping** · 전원·거리 확인 |
+| **nothing sent: the radio was busy** | Something else was using the radio or this cube · 다른 작업이 무선이나 큐브를 사용 중 | Wait, then place the tag again · 기다렸다가 다시 올림 |
+| **nothing sent: a main show is running** | The console knows a show is playing · 콘솔이 쇼 진행을 알고 있음 | Wait until the show ends · 쇼가 끝날 때까지 대기 |
 
-The switch only blinks the cube's LEDs: it writes no firmware and nothing to the database. It is off every time the console starts. Each placement flashes once: lift the tag and place it again to repeat. Nothing is sent while the board is busy with pairing, registration or another flash.
-<kr>이 스위치는 큐브 LED를 깜박이게만 합니다. 펌웨어를 쓰지 않고 데이터베이스에도 아무것도 기록하지 않습니다. 콘솔을 시작할 때마다 꺼져 있습니다. 한 번 올릴 때 한 번만 깜박이므로, 다시 하려면 태그를 뗐다가 다시 올립니다. 보드가 페어링, 등록, 다른 깜박임으로 바쁜 동안에는 아무것도 보내지 않습니다.</kr>
+**Staging: make each cube mainshow-ready.** Under **On each tag**, choose **mainshow** instead of **Flash 2 s**. Each tag placed now sets its cube to that zone, and the cube stays there. The other choices are **idle**, **preshow**, **desert** and **pool**. Choose **Flash 2 s** again when you are done: the choice is remembered.
+<kr>**준비: 큐브마다 메인쇼 준비 상태로.** **On each tag**에서 **Flash 2 s** 대신 **mainshow**를 고릅니다. 이제 태그를 올릴 때마다 그 큐브가 해당 존으로 설정되고 그대로 유지됩니다. 다른 선택지는 **idle**, **preshow**, **desert**, **pool**입니다. 끝나면 다시 **Flash 2 s**를 고릅니다. 선택은 저장됩니다.</kr>
 
-Evidence: Simulation-verified. More detail: {{page:X03}}, {{page:X11}}
-<kr>근거: Simulation-verified. 자세한 내용: {{page:X03}}, {{page:X11}}</kr>
+It never gets in the way. Nothing is sent while the radio is busy or another radio is working with that cube, and anything you start (registration, a colour, a zone update) takes over at once. It only blinks LEDs or sets a zone: no firmware, nothing written to the cube's memory or to the inventory. To turn it off, use the switch **Signal the cube when its tag is read** at the top of the card, or Settings › Behaviour.
+<kr>다른 작업을 방해하지 않습니다. 무선이 작업 중이거나 다른 무선이 그 큐브와 작업 중이면 아무것도 보내지 않으며, 직접 시작한 작업(등록, 색, 존 업데이트)이 즉시 우선합니다. LED를 깜박이거나 존을 설정할 뿐, 펌웨어·큐브 메모리·인벤토리에는 아무것도 쓰지 않습니다. 끄려면 카드 맨 위의 스위치 **Signal the cube when its tag is read** 또는 Settings › Behaviour를 사용합니다.</kr>
+
+> [!WARNING] Never tap a cube that is in a running show on the Workstation. The console skips only when it knows a show is running; otherwise the flash or zone ends the show on that cube.
+> 진행 중인 쇼에 있는 큐브를 워크스테이션에 올리지 않습니다. 콘솔은 쇼 진행을 알고 있을 때만 건너뜁니다. 그렇지 않으면 깜박임이나 존 설정이 그 큐브의 쇼를 끝냅니다.
+
+Evidence: Simulation-verified (not yet run on a real Workstation). More detail: {{page:X03}}, {{page:X11}}
+<kr>근거: Simulation-verified(실제 워크스테이션에서는 아직 실행하지 않음). 자세한 내용: {{page:X03}}, {{page:X11}}</kr>
 
 ## C. Show design | C. 쇼 디자인
 
@@ -376,7 +383,7 @@ Evidence: the Show editor screens are Simulation-verified. More detail: {{page:X
 | B: **REGISTERED**, green **Registered · ACK** | The cube answered (Acknowledged) · 큐브 응답 | **Send saved mapping**; {{page:H5}} |
 | B: **Cube #N registered and synced** | Registered and zone database published · 등록·게시 완료 | **Sync again** |
 | B: the cube lights correctly at a reader · 리더에서 정상 점등 | Zones know the new tag · 존이 새 태그를 앎 | {{page:H4}}; {{page:H5}} |
-| B3: the cube flashes when its tag is on the Workstation reader · 워크스테이션 리더에 태그를 올리면 큐브가 깜박임 | Registered and reachable by radio · 등록됨, 무선 도달 | **Send saved mapping**; register it (B) · 등록(B) |
+| B3: the cube flashes for 2 s when its tag is laid on the Workstation reader; **flashed** · 워크스테이션 리더에 태그를 올리면 큐브가 2초 깜박임 | Registered and reachable by radio · 등록됨, 무선 도달 | **Send saved mapping**; register it (B) · 등록(B) |
 | C: **saved on this computer**, **same as published vN** | The working copy is the published show · 작업본 = 게시본 | **Publish** |
 | C: every cube in range `current` · 범위 내 모든 큐브 `current` | Cubes hold the new show · 큐브가 새 쇼 보유 | **Update all to vN**, or USB · 또는 USB |
 | C: a test cube plays the change · 시험 큐브가 변경 재생 | End-to-end proof · 최종 확인 | {{page:H5}} |
