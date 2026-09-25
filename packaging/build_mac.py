@@ -139,11 +139,13 @@ def notary(args, profile):
     """One notarytool call with JSON output; None on a network failure (the caller retries)."""
     result = subprocess.run(['xcrun', 'notarytool', *map(str, args), '--keychain-profile', profile,
                              '--output-format', 'json'], capture_output=True, text=True)
-    for text in (result.stdout, result.stderr):   # a timed-out wait reports its JSON on stderr
-        try:
-            return json.loads(text)
-        except ValueError:
-            pass
+    # The JSON is the last line starting with '{': a timed-out wait reports it on stderr, after any warnings.
+    for line in reversed((result.stdout + '\n' + result.stderr).splitlines()):
+        if line.startswith('{'):
+            try:
+                return json.loads(line)
+            except ValueError:
+                pass
     if 'NSURLErrorDomain' in result.stdout + result.stderr:
         return None
     raise SystemExit(f'notarytool failed: {result.stdout}{result.stderr}')
