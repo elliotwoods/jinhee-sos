@@ -807,6 +807,11 @@ canvas.ring, canvas.chart, canvas.band { display: block; max-width: 100%; }
 .activate.on .activate-track { background: var(--accent); border-color: var(--accent); }
 .activate.on .activate-knob { transform: translateX(30px); background: var(--on-accent); }
 .activate.on .activate-state { color: var(--accent); }
+/* The same panel holding a choice (Off or one of several automatic actions) instead of an ON/OFF switch. */
+.activate.choose { cursor: default; }
+.activate.choose:hover { background: var(--surface-raised); }
+.activate.choose.on:hover { background: var(--accent-soft); }
+.activate.choose .filters { align-self: flex-start; margin-top: var(--space-2); }
 @media (prefers-reduced-motion: reduce) { .activate-track, .activate-knob { transition: none; } }
 .point-row { margin-bottom: var(--space-3); }
 

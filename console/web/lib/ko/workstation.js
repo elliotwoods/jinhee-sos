@@ -180,7 +180,6 @@ export default {
   'Colour sent': '보낸 색',
   'since {time}': '{time}부터',
   'No device in the inventory owns this tag. Register the cube to give it this tag.': '인벤토리에 이 태그를 가진 장치가 없습니다. 큐브를 등록하면 이 태그가 지정됩니다.',
-  'Actions apply to the cube on the reader, or to a selected history row': '동작 대상: 리더 위의 큐브 또는 선택한 이력 행',
   'Open cube page': '큐브 페이지 열기',
   // ReaderCube: automatic identify blink when a tag is read ("flash" = LED blink, 점멸; not a firmware write)
   'flashed': '점멸함',

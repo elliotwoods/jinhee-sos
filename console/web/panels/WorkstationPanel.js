@@ -6,7 +6,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { useSections, useRouteTab } from '../lib/hooks.js';
 import { ledToken } from '../lib/theme.js';
 import { section, stationEvents } from '../store.js';
-import { Pill, KeyValue, Explainer, Banner, ProgressBar, Tabs, Ladder, ActivateSwitch } from '../components/basics.js';
+import { Pill, KeyValue, Explainer, Banner, ProgressBar, Tabs, Ladder } from '../components/basics.js';
 import { ActionButton, HoldButton } from '../components/actions.js';
 import { DataTable, LogPane } from '../components/data.js';
 import { LedRing, MemberGrid } from '../components/canvas.js';
@@ -236,11 +236,11 @@ function ReaderCube({ device, s, caps }) {
   const zc = sent && s.zone_colors ? s.zone_colors[sent.zone] : null;
   const ring = zc ? { colour: zc[1], sub: t(zc[0]) } : { colour: ledToken(row), sub: row ? statusLabel(row.status) : uid ? t('Unknown tag') : '—' };
   const live = device.state === 'session' && s.connected;
-  const busy = !!s.mode && s.mode !== 'reader_flash';
-  const off = !live || !mac || busy;
   const readout = tag.present ? (!tag.uid ? t('Reading the tag…') : number || (row ? t('no number') : t('Unknown tag'))) : picked ? number || (row ? t('no number') : t('Unknown tag')) : t('No cube on the reader');
   const held = (h) => (h.held_ms == null ? t('on the reader') : `${(h.held_ms / 1000).toFixed(1)} s`);
   const setReader = (args) => run('radio.reader_flash', args).catch((x) => notify(x.message, 'bad'));
+  // One choice, Off or the action: what happens automatically to the cube whose tag is read, not a one-shot command.
+  const choice = (checked, label, args, title) => html`<button class=${'btn small' + (checked ? ' primary' : '')} role="radio" aria-checked=${checked ? 'true' : 'false'} title=${title} onClick=${() => setReader(args)}>${label}</button>`;
   const last = s.reader_flash_last;
   const action = s.reader_action || 'flash';
   const actionZone = action.startsWith('zone:') ? Number(action.slice(5)) : null;
@@ -253,15 +253,16 @@ function ReaderCube({ device, s, caps }) {
     { key: 'held_ms', label: t('Held'), render: held },
     { key: 'registry', label: t('Inventory'), render: (h) => { const o = ownerOf(h.uid); return o.row ? `${statusLabel(o.row.status)}${o.pending ? ' · ' + t('pending tag') : ''}` : t('unknown to this computer'); } },
   ];
-  const zoneButton = (z, label, hazard) => html`<${ActionButton} name="radio.set_zone" args=${{ device: device.id, mac, zone: z }} label=${label} className="btn small" disabled=${off || !caps.show_verbs} hazard=${hazard} />`;
   return html`<div class="card" data-doc="workstation.reader"><h3>${t('On the reader')}</h3>
-    ${s.reader_action_capable && html`<${ActivateSwitch} on=${!!s.reader_flash_setting} onChange=${(on) => setReader({ on })} doc="workstation.reader_flash" label=${t('Signal the cube when its tag is read')}
-      detail=${!s.reader_flash_setting ? t('Off: a tag on the reader is only shown here.')
-        : actionZone == null ? t('Each tag placed on the reader makes its cube flash blue/red for 2 s, then idle white: the cube is registered and reachable. Anything you start takes over at once; nothing is sent while the radio is busy or a main show is running.')
-        : t('Each tag placed on the reader sets its cube to {zone} (SET_ZONE {n}). Nothing is sent while the radio is busy or a main show is running.', { zone: t(ZONES[actionZone][1]), n: actionZone })} />
-      <div class="row" data-doc="workstation.reader_action"><span class="lbl">${t('On each tag')}</span>
-        <button class=${'btn small' + (actionZone == null ? ' on' : '')} aria-pressed=${actionZone == null ? 'true' : 'false'} onClick=${() => setReader({ action: 'flash' })}>${t('Flash 2 s')}</button>
-        ${ZONES.map(([z, name]) => html`<button class=${'btn small' + (actionZone === z ? ' on' : '')} aria-pressed=${actionZone === z ? 'true' : 'false'} onClick=${() => setReader({ action: `zone:${z}` })} title=${t('Sends SET_ZONE {zone} ({name}) to the cube.', { zone: z, name: t(name) })}>${t(name)}</button>`)}</div>`}
+    ${s.reader_action_capable && html`<div class=${'activate choose' + (s.reader_flash_setting ? ' on' : '')} data-doc="workstation.reader_flash">
+      <span class="activate-text"><strong>${t('Signal the cube when its tag is read')}</strong>
+        <span>${!s.reader_flash_setting ? t('Off: a tag on the reader is only shown here.')
+          : actionZone == null ? t('Each tag placed on the reader makes its cube flash blue/red for 2 s, then idle white: the cube is registered and reachable. Anything you start takes over at once; nothing is sent while the radio is busy or a main show is running.')
+          : t('Each tag placed on the reader sets its cube to {zone} (SET_ZONE {n}). Nothing is sent while the radio is busy or a main show is running.', { zone: t(ZONES[actionZone][1]), n: actionZone })}</span>
+        <span class="filters" role="radiogroup" aria-label=${t('On each tag')} data-doc="workstation.reader_action">
+          ${choice(!s.reader_flash_setting, t('Off'), { on: false })}
+          ${choice(s.reader_flash_setting && actionZone == null, t('Flash 2 s'), { on: true, action: 'flash' })}
+          ${ZONES.map(([z, name]) => choice(s.reader_flash_setting && actionZone === z, t(name), { on: true, action: `zone:${z}` }, t('Sends SET_ZONE {zone} ({name}) to the cube.', { zone: z, name: t(name) })))}</span></span></div>`}
     ${s.reader_flash && last && html`<div class="row"><span class="lbl">${t('Last automatic action')}</span><span class=${last.result.startsWith('flashed') || last.result.startsWith('zone ') ? 'ok-text' : 'warn-text'}>${last.cube_id != null ? `#${last.cube_id}` : last.uid} · ${resultText(last.result)} · ${hhmmss(last.at)}</span></div>`}
     ${!s.reader_ok && html`<div class="row"><${Pill} status="nfc.bad" /></div>`}
     <div class="grid2"><div>
@@ -274,11 +275,7 @@ function ReaderCube({ device, s, caps }) {
         [t('On the reader'), tag.present && tag.since ? t('since {time}', { time: hhmmss(tag.since) }) : picked ? `${hhmmss(picked.time)} · ${held(picked)}` : '—']]} />`}
       ${uid && !row && html`<div class="warn-text">${t('No device in the inventory owns this tag. Register the cube to give it this tag.')}</div>`}
       </div></div>
-    <div class="row"><span class="note">${number ? t('Actions apply to cube #{n}', { n: row.cube_id }) : t('Actions apply to the cube on the reader, or to a selected history row')}</span></div>
     <div class="row">
-      <${ActionButton} name="radio.identify" args=${{ device: device.id, macs: [mac], sequential: true }} label=${t('Flash 2 s')} className="btn small" disabled=${off} hazard=${t('A two-second blue/red flash on the cube, then idle.')} />
-      ${zoneButton(0, t('Clear (idle white)'), t('Sends SET_ZONE 0 to the cube.'))}
-      ${ZONES.slice(1).map(([z, name]) => zoneButton(z, t(name), t('Sends SET_ZONE {zone} ({name}) to the cube.', { zone: z, name: t(name) })))}
       <${ActionButton} name="radio.stop" args=${{ device: device.id }} label=${t('Stop')} className="btn small danger" disabled=${!live} />
       ${mac && html`<button class="btn small" onClick=${() => goDevice('cube:' + mac)}>${t('Open cube page')}</button>`}</div>
     ${history.length > 0 && html`<${DataTable} columns=${columns} rows=${history} keyOf=${key} selected=${selected} onSelect=${(k) => setSelected(k === selected ? null : k)} maxRows=${5} />`}
