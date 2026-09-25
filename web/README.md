@@ -1,8 +1,9 @@
 # NCT device inventory (web)
 
-Shared web copy of the Neocore device inventory: the same per-MAC records as
-`inventory/devices/*.json`, kept in step with each computer's local SQLite by
-`inventory_web/` (desktop app) or `scripts/web_sync.py` (CLI).
+Shared web copy of the Neocore device inventory, and since 2026-09-23 the only one (the Git
+inventory `inventory/devices/*.json` was retired): one record per MAC, kept in step with each
+computer's local SQLite by the NCT Console (automatic sync), `inventory_web/` (desktop app) or
+`scripts/web_sync.py` (CLI).
 
 Deployed as Vercel project `kimchiandchips/nct-inventory` at
 https://nct-inventory.auroravision.xyz (also https://nct-inventory.vercel.app).

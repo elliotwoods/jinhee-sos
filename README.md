@@ -4,7 +4,26 @@ Python desktop tools and ESP32 firmware for Neocore cubes, the NFC pairing stati
 
 **Coding agents:** start with [AGENTS.md](AGENTS.md). For a complete new-machine setup, inventory migration, firmware builds, tests and troubleshooting, use [docs/SETUP.md](docs/SETUP.md).
 
-## Flash cubes on another Mac
+## Install the NCT Console (standalone app)
+
+Operators only need the standalone app. Download it from the
+[GitHub releases page](https://github.com/elliotwoods/jinhee-sos/releases) (latest `console-v…` release). No Python,
+Git or Arduino software is needed, and every maintained firmware is included, prebuilt and verified.
+
+- **Mac** (Apple Silicon, macOS 13 or later): open `NCT-Console-<version>.dmg` and drag **NCT Console** to
+  Applications. It is signed and notarized, so it opens without a security warning.
+- **Windows** (x64, Windows 10/11): unzip `NCT-Console-<version>-windows-x64.zip` somewhere permanent (for example
+  `C:\NCT Console`) and run `NCT Console.exe`. It is not code-signed yet: at the first start SmartScreen says
+  *Windows protected your PC*; click **More info → Run anyway**. It needs the Microsoft Edge WebView2 runtime
+  (already on Windows 11).
+
+Each computer starts with its own device database (holding only the 32 original mappings), in `~/Library/Application Support/NCT Console` (Mac) or
+`%LOCALAPPDATA%\NCT Console` (Windows). Enter the shared web password when the console asks and the inventory
+downloads. Installing a newer release replaces the program files and keeps the database, password, flash runs and
+backups. The app never compiles firmware: new firmware comes with a new app release. The handover PDF
+(`NCT_Console_Handover_v2_<build>.pdf`) is attached to the same release.
+
+## Run from a checkout (developers)
 
 Install Git and Python 3.14 with Tk (using Homebrew):
 
@@ -13,15 +32,19 @@ brew install git python@3.14 python-tk@3.14
 git clone https://github.com/elliotwoods/jinhee-sos.git
 cd jinhee-sos
 ./Setup.command
-./flashing_station/Launch.command
+./console/Launch.command
 ```
 
 On **Windows**: install Python 3.14 from python.org (with tcl/tk) and Git, clone, then double-click `Setup.bat` and
-`flashing_station\Launch.bat`. Windows is ported and CI-tested but not yet bench-tested: see
+`console\Launch.bat`. Windows is ported and CI-tested but not yet bench-tested: see
 [docs/SETUP.md section 2b](docs/SETUP.md#2b-prepare-a-windows-pc). Wherever this page says
 `pairing_station/.venv/bin/python`, use `pairing_station\.venv\Scripts\python.exe`.
 
-Setup creates a local Python environment, installs pinned dependencies, and verifies the included firmware hashes. An internet connection is needed for setup. Setup also installs the Arduino firmware toolchain (Arduino CLI, ESP32 core 3.3.11, pinned libraries) and rebuilds any firmware that is missing or out of date; that part is optional (`--no-firmware` skips it) and Arduino is **not required** to flash the included cube firmware.
+Setup creates a local Python environment, installs pinned dependencies, and verifies the included firmware hashes. An internet connection is needed for setup. Setup also installs the Arduino firmware toolchain (Arduino CLI, ESP32 core 3.3.11, pinned libraries) and rebuilds any firmware that is missing or out of date; that part is optional (`--no-firmware` skips it) and Arduino is **not required** to flash the included cube firmware. Building the standalone apps and publishing a release: [docs/SETUP.md](docs/SETUP.md) and `packaging/`.
+
+## Flash cubes
+
+In the console, open **Flash** (⌘2) and turn it on; every cube plugged in then gets the current firmware and the published main show over USB. The older separate cube flasher (`./flashing_station/Launch.command`) still works from a checkout:
 
 1. Connect a Neocore cube using a USB data cable.
 2. Check the detected device and its prominently displayed database/original number.
@@ -32,36 +55,15 @@ The bundled firmware is **v1.7.0-USB.1** (v1.5.0 made the show data; v1.6.0 adds
 
 The flasher preserves NVS, verifies uploaded data, records the MAC, and registers cubes with NFC unknown when no NFC mapping exists. Known registration stations are protected from cube flashing; keep the station separate from the cube flashing workflow.
 
-## Share the inventory through Git
-
-The public `inventory/devices/` directory has one JSON record per MAC, including cube number, NFC mapping, pending state, and device role. SQLite remains the local working database. Setup imports the shared inventory automatically.
-
-**Close both desktop apps before synchronizing.** After provisioning on any computer:
-
-```sh
-pairing_station/.venv/bin/python scripts/sync_inventory.py
-git add inventory/
-git commit -m "Update device inventory"
-git pull --no-rebase
-pairing_station/.venv/bin/python scripts/sync_inventory.py
-git push
-```
-
-Different MACs merge automatically. If both computers change the same device, Git deliberately reports a conflict: edit that device's JSON to the correct complete record, `git add` it, and finish the merge with `git commit`. Run sync again before reopening the apps. Duplicate cube numbers or NFC tags across devices stop import with an actionable error; correct the JSON and retry. Existing unexported local edits also cause an explicit conflict instead of being overwritten.
-
-Shared inventory uses physical label numbers assigned explicitly in the pairing app, avoiding independent computers assigning the same next number. Clear fields with `null`; deleting a device file is deliberately unsupported. Sync does not transmit changes to cube firmware; use the pairing app when a registration needs transmission. Git sync requires no connected hardware.
-
-Runtime SQLite files, API tokens, logs, and flash backups stay private. Git contains MAC/NFC mappings intentionally. Flash history and backups can be transferred separately by privately copying `flashing_station/data/` with the apps closed.
-
 ## Share the inventory through the web
 
-The same records can also be kept in step through a small web service ([web/](web/README.md)), so computers stay current without commit/pull. It works alongside Git sync: both exchange identical records and keep separate baselines, so they can run in any order.
+Every computer keeps its device records in step through a small web service ([web/](web/README.md)). It is the only shared copy of the inventory: the Git inventory (`inventory/devices/`, `scripts/sync_inventory.py`) was retired on 23 September 2026. The NCT Console syncs by itself (Settings › Automatic updates); the separate Web Sync app below does the same by hand.
 
 ```sh
 ./inventory_web/Launch.command
 ```
 
-The app asks for the shared web inventory password each time it opens (it is never saved; ask the team for it). Click **Sync now**. Local changes upload; web changes download. Web changes are written locally only while the pairing and cube-flasher apps are closed; otherwise they wait for the next sync. The read-only web view is https://nct-inventory.auroravision.xyz: sign in with the same password to browse cubes as a grid or table with search and filters, see when and how each cube was last seen (radio, NFC, USB, zone taps), and see computers, zone boards and recent activity. Cube sightings are uploaded whenever a computer runs Web Sync.
+Enter the shared web inventory password once when asked (ask the team for it); it is stored on this computer in `pairing_station/data/web_password`, outside Git, and every app reuses it. Click **Sync now**. Local changes upload; web changes download. Web changes are written locally only while the pairing and cube-flasher apps are closed; otherwise they wait for the next sync. The read-only web view is https://nct-inventory.auroravision.xyz: sign in with the same password to browse cubes as a grid or table with search and filters, see when and how each cube was last seen (radio, NFC, USB, zone taps), and see computers, zone boards and recent activity. Cube sightings are uploaded whenever a computer runs Web Sync.
 
 Sync never stops to ask for a decision. If the same device changed on this computer and on the web, the newest change to a device wins (its number, tags and their status are taken together; the role merges on its own, the more cautious role winning), and a number or NFC tag claimed by two devices stays with the newest claim, exactly like a local take-over: the other device drops to "needs number" or loses the tag. Every such decision is logged as a `sync_resolved` event, and when a device on this computer gives way, Sync says so afterwards (that cube stays out of the zone database until it is numbered/registered again). To reverse a decision, make the change again on either computer and Sync. A failed or interrupted Sync never loses anything: click Sync again. The pairing, cube-flasher, zone-flasher and calibration apps show a one-line web inventory status (up to date / newer web changes / local changes not uploaded / offline). They never block or fail when the web is unreachable. Headless equivalent: `pairing_station/.venv/bin/python scripts/web_sync.py status|sync`.
 

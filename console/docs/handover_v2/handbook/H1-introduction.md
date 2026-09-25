@@ -135,6 +135,20 @@ Risky buttons (for example a broadcast to every cube) need **hold to confirm**: 
 More detail: {{page:H4}} · {{page:X11}}
 <kr>자세한 내용: {{page:H4}} · {{page:X11}}</kr>
 
+### Installing the console | 콘솔 설치
+
+Install the console as an app from the project's GitHub releases page (github.com/elliotwoods/jinhee-sos/releases, the newest `console-v…` release). No other software is needed; every firmware the console writes is inside the app.
+<kr>콘솔은 프로젝트의 GitHub 릴리스 페이지(github.com/elliotwoods/jinhee-sos/releases, 가장 최근 `console-v…` 릴리스)에서 앱으로 설치합니다. 다른 소프트웨어는 필요 없습니다. 콘솔이 쓰는 모든 펌웨어가 앱 안에 들어 있습니다.</kr>
+
+- **Mac** (Apple Silicon): open the `.dmg` file and drag **NCT Console** to Applications. <kr>**Mac**(Apple Silicon): `.dmg` 파일을 열고 **NCT Console**을 Applications로 끌어 놓습니다.</kr>
+- **Windows PC**: unzip the `windows-x64.zip` file into a permanent folder, for example `C:\NCT Console`, and start `NCT Console.exe`. The first time, Windows warns *Windows protected your PC*: click **More info**, then **Run anyway**. <kr>**Windows PC**: `windows-x64.zip` 파일을 `C:\NCT Console` 같은 고정 폴더에 풀고 `NCT Console.exe`를 실행합니다. 처음에는 *Windows의 PC 보호* 경고가 나옵니다. **추가 정보**, **실행**을 차례로 누릅니다.</kr>
+
+A new computer starts without the current inventory. Enter the shared web password when the console asks, and the inventory downloads. To update, install the newer release the same way: the inventory, password and flash history stay. New firmware always comes with a new console release.
+<kr>새 컴퓨터에는 현재 인벤토리가 없습니다. 콘솔이 물으면 공유 웹 비밀번호를 입력하면 인벤토리를 내려받습니다. 업데이트할 때는 새 릴리스를 같은 방법으로 설치합니다. 인벤토리, 비밀번호, 플래시 기록은 유지됩니다. 새 펌웨어는 항상 새 콘솔 릴리스에 함께 들어옵니다.</kr>
+
+More detail: {{page:X10}}
+<kr>자세한 내용: {{page:X10}}</kr>
+
 ## The 12 most important names | 가장 중요한 이름 12개
 
 Use these names; the screen and every page use them too.

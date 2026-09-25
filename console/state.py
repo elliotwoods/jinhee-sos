@@ -36,7 +36,7 @@ import hostos
 import zone_build
 import zonedb
 
-CONSOLE_VERSION = '0.1.0'
+CONSOLE_VERSION = '0.1.1'
 
 
 def build(hub, dirty):

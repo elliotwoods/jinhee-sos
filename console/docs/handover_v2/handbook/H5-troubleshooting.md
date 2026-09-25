@@ -22,7 +22,7 @@ Find the symptom in the index and go to its section. Card titles and buttons are
 | Pool frame lights wrong, flickering or stuck · 풀존 프레임 조명 오류·깜빡임·멈춤 | Pool radio id, calibration, pool central controller · 풀 라디오 id, 보정, 풀 중앙 컨트롤러 | 7 |
 | The console will not start, or a USB board is not identified · 콘솔 미실행 또는 USB 보드 미식별 | Another NCT app already open, or another program holds the port · 다른 NCT 앱 실행 중, 또는 다른 프로그램이 포트 점유 | 8 |
 | The Sync chip does not reach **✓ Synced**, or a cube lost its number · Sync 칩이 **✓ Synced**가 안 됨 또는 큐브 번호 사라짐 | Password, network, or a newer change elsewhere · 비밀번호, 네트워크, 다른 곳의 새 변경 | 9 |
-| The console opens in a web browser · 콘솔이 웹 브라우저에서 열림 | Started without its launcher; WebView2 missing (Windows) · 실행 파일로 시작하지 않음, WebView2 없음(Windows) | 10 |
+| The console opens in a web browser · 콘솔이 웹 브라우저에서 열림 | WebView2 missing (Windows); a checkout started without its launcher · WebView2 없음(Windows), 체크아웃을 실행 파일 없이 시작 | 10 |
 | A row in **Automatic updates** does not finish · **Automatic updates** 행이 끝나지 않음 | Board in use, a failed flash, a pool board, or missing build tools · 사용 중인 보드, 플래시 실패, 풀 보드, 빌드 도구 없음 | 11 |
 
 A firmware-difference card in **Attention** is information only. The cube still works with every zone.
@@ -221,8 +221,13 @@ More detail: {{page:X08}}
 > [!INFO] **Symptom:** the console opens as a page in the web browser instead of its own window. No error is shown.
 > **증상:** 콘솔이 자체 창 대신 웹 브라우저의 페이지로 열립니다. 오류 메시지는 없습니다.
 
-Usual cause: the console was not started through its launcher after Setup. On Windows, the WebView2 runtime may be missing. (Code-checked)
-<kr>흔한 원인: Setup 후 실행 파일로 콘솔을 시작하지 않았습니다. Windows에서는 WebView2 런타임이 없을 수 있습니다. (Code-checked)</kr>
+Usual cause: on Windows, the WebView2 runtime is missing. From a source checkout (not the installed app), the console was not started through its launcher after Setup. (Code-checked)
+<kr>흔한 원인: Windows에서는 WebView2 런타임이 없습니다. 소스 체크아웃(설치한 앱이 아닌 경우)에서는 Setup 후 실행 파일로 콘솔을 시작하지 않았습니다. (Code-checked)</kr>
+
+Installed app: close it, install the Microsoft Edge WebView2 Runtime (Windows), then start **NCT Console** again. Still a browser? Install the app again from the release. <kr>설치한 앱: 앱을 닫고 Microsoft Edge WebView2 Runtime을 설치한 뒤(Windows) **NCT Console**을 다시 시작합니다. 그래도 브라우저면 릴리스에서 앱을 다시 설치합니다.</kr>
+
+Source checkout:
+<kr>소스 체크아웃:</kr>
 
 1. Close the page and the window the console was started from. Start it again only with `console/Launch.command` (Mac) or `console/Launch.bat` (Windows). <kr>페이지와 콘솔을 시작한 창을 닫습니다. `console/Launch.command`(Mac) 또는 `console/Launch.bat`(Windows)로만 다시 시작합니다.</kr>
 2. Still a browser? Run `Setup.command` / `Setup.bat` again, then the launcher. <kr>그래도 브라우저면 `Setup.command` / `Setup.bat`을 다시 실행한 뒤 실행 파일로 시작합니다.</kr>

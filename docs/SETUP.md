@@ -11,7 +11,8 @@ All shell commands below start in the repository root unless stated otherwise.
 | Run pairing/zone/calibration GUIs | Python with Tk, Python dependencies, appropriate already-programmed hardware |
 | Flash the bundled Neocore cube build | Above plus bundled binaries/manifest; esptool is installed by setup |
 | Build changed cube, station, or zone firmware | Arduino CLI/IDE, ESP32 core, Arduino libraries, build scripts |
-| Move ongoing registration work | Shared inventory sync or a private SQLite backup; a clone alone is not the full local state |
+| Only run the NCT Console | The standalone app (section 1b); no checkout, Python, Git or Arduino |
+| Move ongoing registration work | Web inventory sync or a private SQLite backup; a clone alone is not the full local state |
 | Run software tests | Python dependencies; desktop session for Tk; C++ compiler for host firmware tests |
 
 **macOS is the bench-tested workstation environment.** The setup script accepts
@@ -27,6 +28,32 @@ Serial ports, esptool flashing and audio cannot be covered there: work through t
 
 Linux uses the macOS (POSIX) branches and is not verified: install Tk, give your user
 serial-port permission (`dialout`), and expect no audio cues and no bundled launchers.
+
+## 1b. Standalone app (no setup)
+
+Operators who only run the console can install the standalone NCT Console from the
+[GitHub releases page](https://github.com/elliotwoods/jinhee-sos/releases). No Python, Git or
+Arduino is needed.
+
+- **Mac:** `NCT-Console-<version>.dmg` (Apple Silicon, macOS 13 or later, signed and notarized).
+  Open it and drag **NCT Console** to Applications.
+- **Windows x64:** `NCT-Console-<version>-windows-x64.zip`. Unzip it somewhere permanent and run
+  `NCT Console.exe`. The app is unsigned, so SmartScreen warns on first start: **More info** →
+  **Run anyway**. The window uses the Edge WebView2 runtime; without it the console opens in the
+  default browser instead.
+
+The app's data lives in `~/Library/Application Support/NCT Console` (Mac) or
+`%LOCALAPPDATA%\NCT Console` (Windows), under `runtime/`. That folder is a copy of the tree the app
+ships (`packaging/launcher.py`). An update replaces the shipped files and keeps everything else:
+databases, the web password, flash runs and backups.
+
+Firmware is prebuilt for each release. The app never compiles firmware: automatic builds are off and
+their setting is hidden, and the "Firmware builds are unavailable" card does not appear.
+
+A new computer starts with only the original 32 seeded mappings. Enter the web password in the console
+and it downloads the shared inventory by itself.
+
+The rest of this guide (checkout and Setup) is for developers and anyone building firmware.
 
 ## 2. Prepare another Mac
 
@@ -68,8 +95,9 @@ python3.14 scripts/setup.py
 Setup creates `pairing_station/.venv`, installs the pinned flasher dependencies
 (currently pyserial 3.5 and esptool 5.3.1, also sufficient for the other Python
 apps) and the NCT Console's pywebview (`console/requirements.txt`; on Windows also pythonnet, and
-the WebView2 runtime that ships with Edge is used for the window), validates the bundled cube manifest/binary hashes, and synchronizes the
-shared inventory. It then sets up the firmware toolchain of section 6 (Arduino CLI through winget on
+the WebView2 runtime that ships with Edge is used for the window), validates the bundled cube manifest/binary hashes, and syncs the web
+inventory when the web password is already stored on this computer (otherwise it says how to fetch
+the inventory and carries on; it never asks for the password). It then sets up the firmware toolchain of section 6 (Arduino CLI through winget on
 Windows or Homebrew on macOS when neither it nor Arduino IDE 2 is installed, ESP32 core 3.3.11, the
 pinned libraries, machine-local library configs) and builds every firmware target that is missing or
 older than its source (`scripts/build_all_firmware.py --stale`). A toolchain or build failure is
@@ -85,7 +113,8 @@ pairing_station/.venv/bin/python -m serial.tools.list_ports -v
 
 If setup reports missing or modified firmware artifacts, obtain the complete
 bundled files from the repository or rebuild them. Do not suppress hash validation.
-If inventory sync reports conflicts, follow section 4 instead of deleting the DB.
+If the inventory sync does not finish, rerun `pairing_station/.venv/bin/python scripts/web_sync.py sync`;
+do not delete the DB. Sync never needs a decision (section 4).
 
 ## 2b. Prepare a Windows PC
 
@@ -124,8 +153,7 @@ CI proves imports, locks, paths, encodings and the sync logic. With a board plug
 - [ ] Two copies of one app: the second is refused. Pairing app open + cube flasher: the port is refused.
 - [ ] Audio cues and the volume slider in the cube flasher; monospace log panes (Consolas); mouse-wheel
       scrolling in the pairing dashboard.
-- [ ] Web Sync stores the password and a second app reuses it; `git status` is clean after
-      `scripts\sync_inventory.py` (no CRLF churn in `inventory/devices/`).
+- [ ] Web Sync stores the password and a second app reuses it.
 
 ## 3. Launch the tools
 
@@ -161,55 +189,25 @@ Some pool launch entries contain explicit example port arguments: change them fo
 your machine (the Windows variants drop them: pick the port in the app). These configs use
 `pairing_station/.venv/bin/python`, or `.venv/Scripts/python.exe` on Windows. The prerequisite
 entry creates that environment using `python3` on PATH (`py -3` on Windows) and runs pip; unlike
-`Setup.command`, it does **not** verify bundled firmware or synchronize inventory.
+`Setup.command`, it does **not** verify bundled firmware or sync the inventory.
 Use full setup for a fresh workstation. Check `python3 -m tkinter` if using the
 VS Code prerequisite entry with a different interpreter than `python3.14`.
 
 ## 4. Transfer the real inventory and private state
 
 A new clone does not contain the original computer's private runtime database.
-There are two different transfer mechanisms; choose deliberately.
-
-### Shared Git inventory
-
-`inventory/devices/` contains one JSON record per MAC. It shares device fields and
-roles with conflict checks. SQLite remains the local working database.
-
-Close the pairing and cube flashing apps before sync. On the source machine:
-
-```sh
-pairing_station/.venv/bin/python scripts/sync_inventory.py
-git status --short
-```
-
-Review the changed inventory records. Commit/push them through the team's normal
-Git workflow when authorized. On the destination, pull the intended revision and
-run setup or:
-
-```sh
-pairing_station/.venv/bin/python scripts/sync_inventory.py
-```
-
-If both machines edited the same MAC the newest change wins, and if two records now
-share a cube number or NFC tag (also after Git merged two people's files) the newest
-claim keeps it; both are logged as `sync_resolved` events (see the web inventory rules
-below). Records are never deleted: a deleted JSON file is restored from SQLite. Clear
-nullable fields with `null` when appropriate. A successful
-sync does not transmit registrations to cubes or publish the zone database.
-
-Shared inventory is **not** a complete SQLite backup. Local audit events (`nfc_seen`),
-flash history, extra metadata, zone state, tokens, and binary backups are not all
-represented by per-device JSON. A new machine may therefore show a known mapping
-as not yet scanned locally. The four permanent number reservations (2, 22, 39, 43)
-are seeded by current code when opening the database.
+There are two different transfer mechanisms; choose deliberately. The Git inventory
+(`inventory/devices/*.json`, `scripts/sync_inventory.py`) was retired on 2026-09-23; the web
+inventory is now the only shared copy.
 
 ### Shared web inventory
 
 The web inventory (`web/`, deployed at https://nct-inventory.auroravision.xyz)
-holds the same per-MAC records as Git. The two mechanisms interoperate: each keeps
-its own baseline in SQLite metadata (`git_inventory_baseline_v1`,
-`web_inventory_baseline_v1`), and a change arriving through one is simply a local
-change to the other. Run them in any order.
+holds one record per MAC: number, NFC tags and their status, and role. SQLite remains
+the local working database. The NCT Console syncs by itself (Settings › Automatic updates,
+`auto_sync`, on by default); the other apps have a **Sync** button, and
+`pairing_station/.venv/bin/python scripts/web_sync.py sync` (or `status`) works from a terminal.
+The last successful sync is the baseline, kept in SQLite metadata (`web_inventory_baseline_v1`).
 
 No per-computer setup beyond entering the password once is needed. All computers use one
 shared password. It is never stored in Git or in source: the first Sign in (the NCT Console, Web Sync
@@ -221,22 +219,27 @@ inventory as a single private Vercel Blob JSON document with conditional writes,
 two computers pushing at once are re-checked rather than overwritten.
 
 **Sync now** uploads local changes at any time. Downloaded changes are applied
-only while the pairing and cube flasher apps are closed (same locks as Git sync);
+only while the pairing and cube flasher apps are closed (their instance locks);
 otherwise they wait and the apps' status line says so. Sync never needs a decision
 (`inventory_sync.merge_records`): a number, tag or role changed on one side only wins
 over the other side's bookkeeping change; when both sides changed a device differently,
 the newest change to a device wins (its number, tags and their status are taken together; the role merges on its own, the more cautious role winning), and a number or NFC tag claimed by two devices stays with the newest claim, exactly like a local take-over: the other device drops to "needs number" or loses the tag
 (`inventory_sync.reconcile`). Each decision is a `sync_resolved` event, every record
 written by a sync is a `sync_applied` event, and Sync tells the operator when a device
-on this computer gave way. Retransmitting a saved mapping is not a change and never
+on this computer gave way. A missing record never deletes a device. Retransmitting a saved mapping is not a change and never
 takes a tag. A local write that lands while a sync is running is merged, not
 overwritten, and only one app per computer syncs at a time (`devices.sync.lock`). The
 server rejects a push that would create a duplicate number or NFC tag, using the
 same rules as `inventory_sync.validate`; the desktop then merges again by itself. The first sync of a fresh database lets
-web records replace its untouched original seeds, as the Git sync does.
+web records replace its untouched original seeds. Every completed sync switches the
+database to manual numbering (`metadata.auto_number`): independent computers cannot safely
+allocate the next free number.
 
-As with Git, web sync does not transmit registrations to cubes, publish the zone
-database, or carry events, flash history, zone state or reservations.
+Web sync does not transmit registrations to cubes, publish the zone
+database, or carry events, flash history, zone state or reservations. It is therefore
+**not** a complete SQLite backup: a new machine may show a known mapping as not yet
+scanned locally. The four permanent number reservations (2, 22, 39, 43) are seeded by
+current code when opening the database.
 
 ### Preserve complete local SQLite state
 
@@ -389,29 +392,35 @@ uses. Every other target is stale when one of its four images (`<sketch>.ino.bin
 `.partitions.bin`, `.merged.bin`) is missing or older than a compiled source (`.ino`, `.h`, `.hpp`, `.c`,
 `.cpp`, `.S`) in the sketch or its library folders, ignoring `build/` folders and the output folder.
 
-The NCT Console also rebuilds the builds it flashes (cube, zones, Workstation, Mainshow controller) on its
-own while Settings › Automatic updates › "Build firmware when its source changes (cube, zone plates,
+In a checkout, the NCT Console also rebuilds the builds it flashes (cube, zones, Workstation, Mainshow
+controller) on its own while Settings › Automatic updates › "Build firmware when its source changes (cube, zone plates,
 Workstation, Mainshow controller), one build at a time, before anything is flashed from it" is on (setting
 `auto_build`, default on): one build at a time, never while a hardware job runs, and a failed build is
 retried only after its source changes or **Retry** in the Automatic updates panel. Its partner
 `auto_firmware_usb` (also on by default) then upgrades out-of-date USB boards from those builds; see
-[console/README.md](../console/README.md#automatic-firmware-autoupgradepy).
+[console/README.md](../console/README.md#automatic-firmware-autoupgradepy). The standalone app never builds
+(section 1b).
 
 Or choose **Build all firmwares** in VS Code and press F5. Fourteen targets are included (the
-`--dry-run` output is the authoritative list); the zone and diagnostic rows below are the main ones:
+`--dry-run` output is the authoritative list; boards and library folders are in
+`scripts/build_all_firmware.py`):
 
-| Target | Board/settings | Output |
-|---|---|---|
-| Neocore USB | XIAO ESP32-C3, 4 MB, no OTA; exact FQBN in `flashing_station/core.py` | `flashing_station/build/` |
-| PreshowZone | ESP32-C3 SuperMini, CDC on, no OTA | `zones/build/PreshowZone/` |
-| TagPlateZone | Same | `zones/build/TagPlateZone/` |
-| DesertZone | Same | `zones/build/DesertZone/` |
-| ResetZone | Same | `zones/build/ResetZone/` |
-| PoolZone | Same, including custom data partitions | `zones/build/PoolZone/` |
-| Pairing station | ESP32-C3 dev module, CDC on | `pairing_station/build/` |
-| Pool radio diagnostic | ESP32-C3 SuperMini, CDC on, no OTA | `poolzone_test/build/` |
-| Pool central diagnostic | ESP32-C3 dev module, CDC on | `poolzone_test/build/central/` |
-| Registration console | ESP32-C3 dev module, CDC on | `registration_console/build/` |
+| Target | Sketch | Board/settings | Output |
+|---|---|---|---|
+| Neocore USB | `flashing_station/firmware/neocore_usb/` | XIAO ESP32-C3, 4 MB, no OTA; exact FQBN in `flashing_station/core.py` | `flashing_station/build/` |
+| PreshowZone | `zones/firmware/PreshowZone/` | ESP32-C3 SuperMini, CDC on, no OTA | `zones/build/PreshowZone/` |
+| TagPlateZone | `zones/firmware/TagPlateZone/` | Same | `zones/build/TagPlateZone/` |
+| DesertZone | `zones/firmware/DesertZone/` | Same | `zones/build/DesertZone/` |
+| PoolZone | `zones/firmware/PoolZone/` | Same, including custom data partitions | `zones/build/PoolZone/` |
+| ResetZone | `zones/firmware/ResetZone/` | Same | `zones/build/ResetZone/` |
+| Pairing station (legacy) | `pairing_station/firmware/pairing_station/` | ESP32-C3 dev module, CDC on | `pairing_station/build/` |
+| Pool radio test | `poolzone_test/firmware/PoolRadioTest/` | ESP32-C3 SuperMini, CDC on, no OTA | `poolzone_test/build/` |
+| Pool central | `zones/firmware/PoolCentral/` | ESP32-C3 dev module, CDC on | `zones/build/PoolCentral/` |
+| Preshow bridge | `zones/firmware/PreshowBridge/` | ESP32-C3 dev module, CDC on | `zones/build/PreshowBridge/` |
+| Mainshow controller | `zones/firmware/MainshowController/` | ESP32-C3 dev module, CDC on | `zones/build/MainshowController/` |
+| Workstation | `zones/firmware/Workstation/` | ESP32-C3 dev module, CDC on | `zones/build/Workstation/` |
+| Registration console | `registration_console/` | ESP32-C3 dev module, CDC on | `registration_console/build/` |
+| Range test | `rangetest/firmware/RangeTest/` | XIAO ESP32-C3, 4 MB, no OTA | `rangetest/build/` |
 
 The command never uploads. It continues to report other targets if one fails and
 returns nonzero if any failed. Only use outputs from successful builds; files from
@@ -424,12 +433,31 @@ Individual builds:
 ```sh
 pairing_station/.venv/bin/python flashing_station/build.py
 pairing_station/.venv/bin/python zones/flasher/zone_build.py PoolZone
-arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --libraries pairing_station/.arduino/libraries --libraries zones/firmware/libraries --output-dir pairing_station/build pairing_station/firmware/pairing_station
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --libraries zones/firmware/libraries --libraries 'live files/libraries' --libraries pairing_station/.arduino/libraries --output-dir zones/build/Workstation zones/firmware/Workstation
 ```
+
+The aggregate script also adds a separate `--build-path` cache and, when the venv's esptool matches the
+core's, points the core at it (`hostos.arduino_build_args`); the plain command above builds the same sketch.
 
 Archived `live files` sketches and duplicate historical root sketches are not all
 built by the aggregate command. Their board, pin, library and network assumptions
 must be reviewed separately before intentionally reviving one.
+
+### Making a release (developers)
+
+The standalone app's version is `CONSOLE_VERSION` in `console/state.py`.
+
+1. On the Mac, with the Developer ID identity and the notarytool keychain profile `notary` in the
+   keychain, run `pairing_station/.venv/bin/python packaging/build_mac.py`. It checks the firmware
+   builds and compiles any that are out of date (no uploads), stages the shipped tree, freezes the app
+   with PyInstaller in `packaging/.venv`, signs and verifies it, writes the tree zip, then notarizes and
+   staples the app and the disk image. After an interruption during notarization, continue with
+   `--resume ID` (the submission id it printed). Output goes to `packaging/dist/`.
+2. Create a GitHub release tagged `console-v<version>` with `NCT-Console-<version>.dmg` and
+   `NCT-Console-<version>-tree.zip` attached.
+3. Run the `windows-app` workflow (Actions › windows-app › Run workflow, enter the tag). It builds the
+   Windows app from that tree zip on `windows-latest`, so both apps ship the same files and firmware,
+   and attaches `NCT-Console-<version>-windows-x64.zip` to the release.
 
 ## 8. Run tests before hardware work
 

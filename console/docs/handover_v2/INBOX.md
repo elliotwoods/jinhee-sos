@@ -637,3 +637,17 @@ of the Off, Flash 2 s and pool states). No hardware test.
   tab; manual SET_ZONE: **Cubes & show**.
 - Applied: `console/README.md` Workstation row; H3 B3 (intro, staging, turning it off); H5 symptom row; X03 tools row;
   X11 close-out line, tag-read section (controls, rest of the card, `zone:N`, evidence); X13 bench check.
+
+## 2026-09-25 · from jinhee-sos-5a · standalone apps and releases (88337cb, 2b1613d; docs session absent) · Applied
+
+- Standalone app: signed and notarized Mac dmg (Apple Silicon), unsigned Windows x64 zip built by the `windows-app`
+  workflow from the Mac release's tree zip; data under `~/Library/Application Support/NCT Console` or
+  `%LOCALAPPDATA%\NCT Console` (`runtime/` copy of the shipped tree); `NCT_PACKAGED=1` disables automatic builds and
+  the **Firmware builds are unavailable** card. Releases `console-v0.1.0` and `console-v0.1.1` (with the handover PDF).
+- Evidence: Code-checked; Mac notarization and `spctl` passed in the build; Windows app simulated start on the CI
+  runner only; neither used with boards.
+- **Applied:** H1 new "Installing the console"; H5 §10 (installed app first, checkout second); X10 (Source and
+  release, new Standalone app facts, Install/update and Make a release procedures, Known issues); X13 Release package
+  row; root README (install section first, Git inventory section removed, stored web password), console/README
+  (Standalone app), docs/SETUP.md sweep (Git inventory retired, §7 targets, standalone app, making a release).
+

@@ -16,6 +16,28 @@ radio, a cube, a legacy General Radio and a Workstation, `/dev/sim.workstation` 
 be exercised without hardware. `--browser` serves the same page to the default browser (also used
 automatically when the native webview is unavailable, e.g. no WebView2 runtime on Windows).
 
+## Standalone app (`packaging/`)
+
+Operators install the console as an app from the GitHub releases (`console-v<version>`, version from
+`CONSOLE_VERSION` in `state.py`): a signed, notarized `NCT-Console-<version>.dmg` for Apple Silicon Macs and an
+unsigned `NCT-Console-<version>-windows-x64.zip`. PyInstaller freezes only the interpreter and third-party
+packages; `packaging/launcher.py` copies the shipped tree (Git-known sources under the tool folders, minus tests and
+`console/docs`, plus each firmware build's flashable images and manifest; `packaging/stage.py`) to
+`<app data>/runtime` (`~/Library/Application Support/NCT Console`, `%LOCALAPPDATA%\NCT Console`), restoring the
+repository's modification times, and runs `console/app.py` from there, so paths and data work as in a checkout. An
+update replaces only the files the previous version shipped; databases, the web password, flash runs and backups
+stay. The launcher also stands in for Python when the console starts esptool.
+
+The launcher sets `NCT_PACKAGED=1` (`paths.PACKAGED`): firmware is fixed per release, so automatic builds are off
+and their Settings checkbox hidden, and the **Firmware builds are unavailable** card never appears. No effect in a
+checkout.
+
+Release: `packaging/build_mac.py` on the Mac (firmware current check, stage, freeze, sign, verify, tree zip,
+notarize and staple app and disk image; `--resume ID` after an interruption), a GitHub release carrying the dmg and
+`NCT-Console-<version>-tree.zip`, then the `windows-app` workflow, which builds the Windows app from that tree zip on
+`windows-latest` (nothing is compiled there, so both apps ship identical firmware) and attaches its zip. The Windows
+app has been checked in a simulated start on the runner only, not with USB boards.
+
 ## How it is built
 
 - `hub.py` is the owner thread: SQLite, every serial session, the controllers (`pairing_station/

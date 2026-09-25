@@ -14,6 +14,7 @@ ESP32 firmware families. Distinguish the roles before touching hardware:
 | Neocore LED cube | `flashing_station/firmware/neocore_usb/` | LED behavior, ESP-NOW registration, saved ID/NFC mapping, USB identity. From v1.5.0 the main show is data (v1.6.0 adds per-cube fanning by the registered cube number): compiled-in `DefaultShow.h` (generated from `shows/mainshow.json`) or a newer published show received over ESP-NOW and kept in NVS namespace `show`; joins a running show from `SHOW_TIMECODE` |
 | NFC pairing station (legacy) | `pairing_station/firmware/pairing_station/` | Frozen at nct-pairing-1.8-zones, which the installed, protected station runs: PN532 scanning, selected-cube identification, registration relay, zone database distribution. New boards get the Workstation firmware instead |
 | NCT Console | `console/` | All of the tools below in one pywebview window: owner-thread hub, USB identification without resets, per-role sessions, jobs, advisor suggestion cards, vendored Preact front end. Keeps every database current automatically by default (zone databases over the air through one relay and over USB, the main show over the air, web pulls; saved switches in Settings › Automatic updates), a Register page that registers cubes as they are plugged in (USB → number → NFC scan → Sync; off by default), and a Flash page (`flashflow.py`) that flashes cubes as they are plugged in and brings their main show up to date over USB (off at every launch). Holds every old app's instance lock while running |
+| Standalone app | `packaging/` (`build_mac.py`, `build_win.py`, `stage.py`, `launcher.py`, `nct_console.spec`), `.github/workflows/windows-app.yml` | The NCT Console as a signed, notarized Mac app and an unsigned Windows x64 app, released on GitHub as `console-v<CONSOLE_VERSION>`. Runs the shipped tree from a copy in the user's app-data folder; `NCT_PACKAGED=1` turns off firmware builds (firmware is prebuilt per release). The Windows app is built from the Mac release's tree zip |
 | Pairing GUI | `pairing_station/app.py` | Inventory, number assignment, NFC registration, USB pinning, zone controls |
 | Cube USB flasher | `flashing_station/app.py`, `backend.py`, `nvs.py` | Identity checks, builds/uploads, NVS preservation, flash receipts; optional show stage (console only) writes the published main show into NVS namespace `show` over USB via `nvs.py` (NVS format-2 reader/writer that refuses anything it cannot parse fully), verified by read-back and the `SHOW:` boot reply |
 | Zone firmwares | `zones/firmware/{PreshowZone,TagPlateZone,DesertZone,PoolZone,ResetZone}/` | NFC-driven show zones; PoolZone also has slider calibration; ResetZone returns a cube to idle (`SET_ZONE 0`) at the end of the show |
@@ -90,8 +91,8 @@ and `Launch.bat`. `.github/workflows/tests.yml` runs the suites on `windows-late
 - `usb_identify.py`: optional USB identification and reported-version checks; no upload.
 - `port_lock.py`: advisory serial ownership shared with flashers, plus pyserial exclusivity.
 - `http_api.py`: loopback control running Python on the Tk/SQLite owner thread.
-- `inventory_sync.py`: public per-MAC JSON synchronization, validation, the conflict-free merge;
-  also the shared three-way `merge`/`apply`/`validate` used by the web sync.
+- `inventory_sync.py`: record validation, the conflict-free three-way merge and the guarded
+  `apply` used by the web sync (the Git inventory it once also served was retired on 2026-09-23).
 - `web_client.py`, `web_sync.py`, `web_status.py`: stdlib client for `web/`, web
   three-way sync (own baseline), and the background read-only status line the apps
   show. Status must never block, raise into, or write from a host app.
@@ -120,10 +121,9 @@ or a newly identified cube replaces the pin. Filter/search must not hide that pi
 ## Inventory invariants
 
 `pairing_station/data/devices.sqlite3` is the local authoritative database. CSV is
-an export, not an editable import. `inventory/devices/*.json` is the shared Git
-inventory; see setup instructions for synchronization and the merge rules.
-The web inventory (`web/`) stores the same records; `web/src/lib/records.ts` mirrors
-`inventory_sync.validate`. Change record fields or validation in both together, or a
+an export, not an editable import. The web inventory (`web/`, synced by `pairing_station/web_sync.py`)
+is the only shared copy; see setup instructions for synchronization and the merge rules.
+`web/src/lib/records.ts` mirrors `inventory_sync.validate`. Change record fields or validation in both together, or a
 computer could be unable to apply what the server accepted.
 
 - MAC identifies a physical device. Number and NFC ownership are mutable.
@@ -135,7 +135,7 @@ computer could be unable to apply what the server accepted.
 - `reserved_numbers` permanently excludes **2, 22, 39, 43** from automatic allocation,
   even without known MAC/NFC data. Explicit manual assignment remains allowed.
 - Manual-number mode is stored in `metadata.auto_number`. Do not repopulate cleared
-  IDs on discovery. Setup/inventory sync enables manual mode.
+  IDs on discovery. Every completed web sync enables manual mode.
 - `uid` is the committed tag; `pending_uid` is a proposed/retryable assignment.
   Do not report a pending or radio-delivered registration as acknowledged.
 - An interactive NFC scan may take ownership of another device's committed or
@@ -293,7 +293,7 @@ append-only troubleshooting notes may describe superseded behavior; inspect curr
 code/tests before relying on them. Update conflicting instructions when relevant.
 
 Never commit API tokens, private SQLite/WAL files, flash backups, Wi-Fi credentials,
-virtualenvs, temporary logs, or generated private documents. MAC/NFC records in
-`inventory/` are intentionally shared; don't publish additional private artifacts.
+virtualenvs, temporary logs, or generated private documents. MAC/NFC records are shared
+through the web inventory, not Git; don't publish additional private artifacts.
 Do not commit/push or synchronize other people's inventory changes merely as a
 side effect of editing code unless that is part of the requested task.

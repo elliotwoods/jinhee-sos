@@ -4,7 +4,7 @@
 
 ## Summary
 
-How to set up a Mac or Windows computer to run the NCT Console, what a full backup contains beyond the shared inventory, and how to restore or move to another machine. Commands match `docs/SETUP.md`, which stays the full reference. Setup installs software only; it never flashes a board.
+How to install the standalone NCT Console app (operators) or set up a Mac or Windows computer from a source checkout (developers), how a release is made, what a full backup contains beyond the shared inventory, and how to restore or move to another machine. Commands match `docs/SETUP.md`, which stays the full reference. Setup installs software only; it never flashes a board.
 
 ## Facts
 
@@ -12,9 +12,29 @@ How to set up a Mac or Windows computer to run the NCT Console, what a full back
 
 - Repository: https://github.com/elliotwoods/jinhee-sos
 - 23 Sept commits: `de08bb0` (NCT Console, show system), `d43eaa4` (handover docs, Korean UI, Flash page), `c955d9f` (Workstation), `5996e10` (PoolCentral 4.2.2, Hojun), `6b26cdf` (handover restructure, automatic firmware updates), then `9261547`/`f498c6a` (Windows handoff: setup builds firmware, Workstation reader view), `c353997` (forced Workstation flash override), `5bc1b07`/`63d82dc` (Git inventory retired), `2739586` (flash the cube when its tag is read) and the docs commits `c42fbf7`, `6471a94`. `main` was at `6471a94` on 24 Sept, pushed to GitHub; `PoolCentral.ino` reads `poolcentral-4.2.2`.
-- No release has been tagged.
+- 24–25 Sept: `88337cb` (standalone macOS app), `e8dae50`/`da8b503`/`51cfe6c` (notarization robustness), `2b1613d` (standalone Windows app), `e5896f6`/`926ac6f` (Workstation tag-read action) and the docs commits `05b424e`, `6b06669`.
+- Releases (GitHub, tag `console-v<version>`, version = `CONSOLE_VERSION` in `console/state.py`): **console-v0.1.0** (25 Sept, from `88337cb`) and **console-v0.1.1** (25 Sept, from RELEASE_COMMIT: everything above plus this documentation). Each carries the Mac disk image, the Windows zip, the shipped-tree zip and, from 0.1.1, the handover PDF.
 
 > [!WARNING] Engineering Six should agree one source revision and its matching verified builds before deployment and record that commit id in the sign-off ({{page:X13}}).
+
+### Standalone app
+
+The console ships as an app for operators, so a console computer needs no Python, Git or Arduino software (`packaging/`, `console/README.md` › Standalone app).
+
+| Item | Mac | Windows |
+|---|---|---|
+| File | `NCT-Console-<version>.dmg` | `NCT-Console-<version>-windows-x64.zip` |
+| Platform | Apple Silicon, macOS 13+; not Intel | x64, Windows 10/11; needs Edge WebView2 |
+| Signing | Developer ID (Hyunjeong Son, 439VPD8YRZ), hardened runtime, notarized and stapled (app and disk image) | Unsigned: SmartScreen warns on first start (**More info → Run anyway**) |
+| Built by | `packaging/build_mac.py` on the Mac that holds the identity and the notarytool profile `notary` | `packaging/build_win.py` in the `windows-app` GitHub workflow, from the release's `NCT-Console-<version>-tree.zip` |
+| Data folder | `~/Library/Application Support/NCT Console` | `%LOCALAPPDATA%\NCT Console` |
+| Status | Notarized; Gatekeeper assessment (`spctl`) passes in the build; not yet used with boards from the app | Simulated start on the CI runner only; never used with boards |
+
+- PyInstaller freezes only the interpreter and third-party packages (pywebview 6.2.1, pyserial 3.5, esptool 5.3.1; pythonnet 3.1.0 on Windows). The console itself runs from source: `packaging/launcher.py` copies the shipped tree to `<data folder>/runtime/`, restoring the repository's modification times (the build check compares them), and starts `console/app.py` there. So `pairing_station/data/` (database, `web_password`, `api.curl`) and `flashing_station/data/` (flash runs, backups) live under `runtime/`.
+- The shipped tree (`packaging/stage.py`) is the Git-known source under the tool folders, without tests, `console/docs/`, `console/tools/`, databases, logs or zips, plus every firmware build's flashable images and manifest. `runtime/.shipped.json` lists what the last install wrote; an update deletes only files the previous version shipped and no longer does, so data files are never touched.
+- The launcher sets `NCT_PACKAGED=1` (`console/paths.py` `PACKAGED`). Firmware is fixed per release: automatic builds are off and their Settings checkbox is hidden, and the **Firmware builds are unavailable** card never appears (a stray Arduino install is ignored). Flashing uses the prebuilt images through esptool inside the app.
+- `build_mac.py` refuses to package unless every shipped firmware build is current (it compiles stale ones first; `--skip-firmware` only checks), and checks the firmware again inside the finished app. The Windows app is built from the Mac release's tree zip, so both ship identical files and firmware; nothing is compiled on Windows.
+- A new computer starts with its own device database seeded with the 32 original mappings (`original_32.json` ships). Enter the web password and the first sync downloads the inventory, replacing untouched seeds.
 
 ### Environments
 
@@ -94,6 +114,21 @@ Each app folder has `Launch.command` (Mac) and `Launch.bat` (Windows). From a te
 > [!DANGER] Never copy or share `pairing_station/data/web_password` or `pairing_station/data/api.curl`; both are recreated per computer. Never commit the SQLite database, its `-wal` file or flash backups.
 
 ## Procedures
+
+### Install or update the standalone app
+
+1. Open https://github.com/elliotwoods/jinhee-sos/releases and take the newest `console-v…` release.
+2. Mac: open the `.dmg`, drag **NCT Console** to Applications (replace the old one when updating), start it from Applications.
+3. Windows: unzip the `windows-x64.zip` to a permanent folder (e.g. `C:\NCT Console`; when updating, delete the old folder's contents first), start `NCT Console.exe`, answer SmartScreen with **More info → Run anyway**. Install the Edge WebView2 runtime if the console opens in a browser.
+4. First start on a computer: enter the shared web password when asked; the inventory downloads by itself.
+5. The app and a source checkout on the same computer use different databases (the app's is under its data folder); they do not share inventory except through the web.
+
+### Make a release (developer Mac)
+
+1. Commit everything; set `CONSOLE_VERSION` in `console/state.py`; push `main`.
+2. `pairing_station/.venv/bin/python packaging/build_mac.py` (first run creates `packaging/.venv` from Homebrew Python 3.14). Output in `packaging/dist/`: the app, `NCT-Console-<version>.dmg`, `NCT-Console-<version>-tree.zip`. Apple's notarization can take minutes to hours; after an interruption, `--resume <submission id>` continues without rebuilding.
+3. Tag `console-v<version>`, push the tag, and create the GitHub release with the dmg, the tree zip and the handover PDF (`console/docs/NCT_Console_Handover_v2_<build>.pdf`).
+4. GitHub › Actions › **windows-app** › Run workflow with the tag. It builds and checks the Windows app from the tree zip and attaches `NCT-Console-<version>-windows-x64.zip` to the release.
 
 ### Set up a Mac
 
@@ -194,7 +229,8 @@ flowchart TD
 |---|---|
 | Windows never run with hardware: WebView2 window, browser fallback, serial, esptool, audio untested | Code-checked, Simulation-verified (CI) |
 | Instance-lock refusal: old app refused while the console ran (23 Sept); reverse direction by test only | Bench-verified (one direction); Simulation-verified (`console/tests/test_locks.py`) |
-| Release revision not agreed or tagged (`main` at `6471a94` on 24 Sept) | Code-checked (`git log`, 24 Sept) |
+| Releases are tagged (`console-v0.1.1`), but Engineering Six has not yet agreed the revision to deploy | Code-checked (GitHub releases, 25 Sept) |
+| Standalone Windows app unsigned and never run with boards; standalone Mac app not yet used with boards | Simulation-verified (CI start) / Code-checked |
 | The console falls back to a browser with no error message (pywebview missing, or no WebView2 on Windows); seen on a new computer | Code-checked (`console/app.py::native_available`); user report of a new computer opening in a browser |
 | "SSL: certificate verify failed" during setup on another computer; the step (pip, or the since-retired `scripts/sync_inventory.py`) and the cause are not confirmed. Likely python.org macOS Python without `Install Certificates.command`, else TLS interception | User report only; To confirm |
 
@@ -203,7 +239,7 @@ flowchart TD
 - `docs/SETUP.md` §1–§6, §9, §10; `scripts/setup.py`, `Setup.command`, `Setup.bat`, `console/Launch.command`, `console/Launch.bat`
 - `console/app.py` (options, `native_available`), `console/locks.py`, `console/window.py`, `console/httpbridge.py`, `console/requirements.txt`
 - `pairing_station/hostos.py`, `pairing_station/web_client.py`, `pairing_station/web_sync.py`
-- `git log` / `git status`, 23 Sept
+- `git log` / `git status`, 23 and 25 Sept; `packaging/` (`build_mac.py`, `build_win.py`, `stage.py`, `launcher.py`), `.github/workflows/windows-app.yml`
 - Old draft `14-computer-setup-backups.md`
 
 <span color="red">*This document was written by Kimchi and Chips*</span>
