@@ -1,0 +1,48 @@
+# Standalone NCT Console for Windows (x64), built from a macOS release's shipped tree so both apps carry the
+# same files and firmware (packaging/build_win.py). Run by hand after the Mac release exists:
+#   Actions > windows-app > Run workflow > tag (e.g. console-v0.1.0)
+# The release must have NCT-Console-<version>-tree.zip attached (packaging/build_mac.py writes it).
+# Unsigned: SmartScreen warns on first start ("More info" > "Run anyway").
+name: windows-app
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag with the shipped tree attached
+        required: true
+      upload:
+        description: Attach the Windows zip to that release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Packaging tools (pinned)
+        run: python -m pip install --quiet pywebview==6.2.1 pythonnet==3.1.0 pyserial==3.5 esptool==5.3.1 pyinstaller==6.22.3
+      - name: Shipped tree from the release
+        run: gh release download "${{ inputs.tag }}" --pattern 'NCT-Console-*-tree.zip' --dir "$RUNNER_TEMP"
+      - name: Build and verify
+        run: python packaging/build_win.py "$RUNNER_TEMP"/NCT-Console-*-tree.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nct-console-windows
+          path: packaging/dist/NCT-Console-*-windows-x64.zip
+          if-no-files-found: error
+      - name: Attach to the release
+        if: ${{ inputs.upload }}
+        run: gh release upload "${{ inputs.tag }}" packaging/dist/NCT-Console-*-windows-x64.zip --clobber

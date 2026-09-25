@@ -11,7 +11,9 @@ Steps, each refusing to continue on failure:
                 Developer ID identity, hardened runtime and packaging/entitlements.plist
   4. verify     codesign --verify --deep --strict, esptool through the app, firmware checks from the app's tree
   5. notarize   app, then staple; disk image (app + Applications link), sign, notarize, staple
-Output: packaging/dist/NCT Console.app and packaging/dist/NCT-Console-<version>.dmg
+Output: packaging/dist/NCT Console.app, packaging/dist/NCT-Console-<version>.dmg and
+packaging/dist/NCT-Console-<version>-tree.zip (the shipped tree; attach it to the release: the Windows build,
+packaging/build_win.py, packages exactly this tree)
 
 Needs, on this Mac only (never in git): the "Developer ID Application" identity in the login keychain and a
 notarytool keychain profile (default name `notary`, created with `xcrun notarytool store-credentials`).
@@ -25,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -135,6 +138,18 @@ def verify(sign):
     print('Every shipped firmware build is current inside the app.')
 
 
+def tree_archive(short):
+    """The shipped tree and its import list, for packaging/build_win.py (same files as this Mac app)."""
+    archive = DIST / f'NCT-Console-{short}-tree.zip'
+    archive.unlink(missing_ok=True)
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.write(BUILD / 'imports.json', 'imports.json')
+        for path in sorted((BUILD / 'tree').rglob('*')):
+            if path.is_file():
+                z.write(path, path.relative_to(BUILD).as_posix())
+    print(f'Shipped tree for the Windows build: {archive}')
+
+
 def notary(args, profile):
     """One notarytool call with JSON output; None on a network failure (the caller retries)."""
     result = subprocess.run(['xcrun', 'notarytool', *map(str, args), '--keychain-profile', profile,
@@ -230,6 +245,7 @@ def main():
     python = venv()
     freeze(python, short, count, sign)
     verify(sign)
+    tree_archive(short)
     if sign and not options.no_notarize:
         package(short, options.profile)
     else:
