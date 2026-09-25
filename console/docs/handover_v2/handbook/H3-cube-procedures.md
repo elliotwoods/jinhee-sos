@@ -163,8 +163,8 @@ More detail: {{page:X03}}, cards: {{page:X11}}
 
 ### B3. Check a cube on the Workstation reader | B3. 워크스테이션 리더로 큐브 확인
 
-Place a cube's tag on the Workstation's reader and the cube flashes blue/red for 2 s, then turns idle white. That proves the tag belongs to a cube in the inventory and the radio reaches that cube. This is on by default, on every Workstation, whether or not its page is open. The older installed pairing station never does it.
-<kr>큐브의 태그를 워크스테이션 리더에 올리면 큐브가 2초 동안 파랑/빨강으로 깜박인 뒤 대기 흰색이 됩니다. 태그가 인벤토리의 큐브 것이고 무선이 그 큐브에 닿는다는 증거입니다. 기본으로 켜져 있으며, 모든 워크스테이션에서 페이지가 열려 있지 않아도 동작합니다. 설치된 이전 등록 스테이션은 이 동작을 하지 않습니다.</kr>
+Place a cube's tag on the Workstation's reader and the cube flashes blue/red for 2 s, then turns idle white. That proves the tag belongs to a cube in the inventory and the radio reaches that cube. This is on by default, on every Workstation, whether or not its page is open. The older installed pairing station never does it. What happens is one setting at the top of the **On the reader** card, **Signal the cube when its tag is read**: **Off**, **Flash 2 s** (the default), or a zone. It is not a button to press: the choice applies to every tag placed from then on.
+<kr>큐브의 태그를 워크스테이션 리더에 올리면 큐브가 2초 동안 파랑/빨강으로 깜박인 뒤 대기 흰색이 됩니다. 태그가 인벤토리의 큐브 것이고 무선이 그 큐브에 닿는다는 증거입니다. 기본으로 켜져 있으며, 모든 워크스테이션에서 페이지가 열려 있지 않아도 동작합니다. 설치된 이전 등록 스테이션은 이 동작을 하지 않습니다. 동작은 **On the reader** 카드 맨 위의 설정 하나, **Signal the cube when its tag is read**로 정합니다. **Off**, **Flash 2 s**(기본), 또는 존 중 하나를 고릅니다. 누르는 버튼이 아니라, 고른 동작이 이후 올리는 모든 태그에 적용됩니다.</kr>
 
 1. Check that a Workstation is connected. Its **On the reader** card shows no NFC warning. <kr>워크스테이션이 연결되어 있는지 확인합니다. **On the reader** 카드에 NFC 경고가 없어야 합니다.</kr>
 2. Place a cube's tag on the reader. The cube flashes for 2 s. <kr>큐브의 태그를 리더에 올립니다. 큐브가 2초 동안 깜박입니다.</kr>
@@ -181,11 +181,11 @@ Place a cube's tag on the Workstation's reader and the cube flashes blue/red for
 | **nothing sent: the radio was busy** | Something else was using the radio or this cube · 다른 작업이 무선이나 큐브를 사용 중 | Wait, then place the tag again · 기다렸다가 다시 올림 |
 | **nothing sent: a main show is running** | The console knows a show is playing · 콘솔이 쇼 진행을 알고 있음 | Wait until the show ends · 쇼가 끝날 때까지 대기 |
 
-**Staging: make each cube mainshow-ready.** Under **On each tag**, choose **mainshow** instead of **Flash 2 s**. Each tag placed now sets its cube to that zone, and the cube stays there. The other choices are **idle**, **preshow**, **desert** and **pool**. Choose **Flash 2 s** again when you are done: the choice is remembered.
-<kr>**준비: 큐브마다 메인쇼 준비 상태로.** **On each tag**에서 **Flash 2 s** 대신 **mainshow**를 고릅니다. 이제 태그를 올릴 때마다 그 큐브가 해당 존으로 설정되고 그대로 유지됩니다. 다른 선택지는 **idle**, **preshow**, **desert**, **pool**입니다. 끝나면 다시 **Flash 2 s**를 고릅니다. 선택은 저장됩니다.</kr>
+**Staging: make each cube mainshow-ready.** In **Signal the cube when its tag is read**, choose **mainshow** instead of **Flash 2 s**. Each tag placed now sets its cube to that zone, and the cube stays there. The other choices are **idle**, **preshow**, **desert** and **pool**. Choose **Flash 2 s** again when you are done: the choice is remembered.
+<kr>**준비: 큐브마다 메인쇼 준비 상태로.** **Signal the cube when its tag is read**에서 **Flash 2 s** 대신 **mainshow**를 고릅니다. 이제 태그를 올릴 때마다 그 큐브가 해당 존으로 설정되고 그대로 유지됩니다. 다른 선택지는 **idle**, **preshow**, **desert**, **pool**입니다. 끝나면 다시 **Flash 2 s**를 고릅니다. 선택은 저장됩니다.</kr>
 
-It never gets in the way. Nothing is sent while the radio is busy or another radio is working with that cube, and anything you start (registration, a colour, a zone update) takes over at once. It only blinks LEDs or sets a zone: no firmware, nothing written to the cube's memory or to the inventory. To turn it off, use the switch **Signal the cube when its tag is read** at the top of the card, or Settings › Behaviour.
-<kr>다른 작업을 방해하지 않습니다. 무선이 작업 중이거나 다른 무선이 그 큐브와 작업 중이면 아무것도 보내지 않으며, 직접 시작한 작업(등록, 색, 존 업데이트)이 즉시 우선합니다. LED를 깜박이거나 존을 설정할 뿐, 펌웨어·큐브 메모리·인벤토리에는 아무것도 쓰지 않습니다. 끄려면 카드 맨 위의 스위치 **Signal the cube when its tag is read** 또는 Settings › Behaviour를 사용합니다.</kr>
+It never gets in the way. Nothing is sent while the radio is busy or another radio is working with that cube, and anything you start (registration, a colour, a zone update) takes over at once. It only blinks LEDs or sets a zone: no firmware, nothing written to the cube's memory or to the inventory. To turn it off, choose **Off** in **Signal the cube when its tag is read** at the top of the card, or use Settings › Behaviour.
+<kr>다른 작업을 방해하지 않습니다. 무선이 작업 중이거나 다른 무선이 그 큐브와 작업 중이면 아무것도 보내지 않으며, 직접 시작한 작업(등록, 색, 존 업데이트)이 즉시 우선합니다. LED를 깜박이거나 존을 설정할 뿐, 펌웨어·큐브 메모리·인벤토리에는 아무것도 쓰지 않습니다. 끄려면 카드 맨 위의 **Signal the cube when its tag is read**에서 **Off**를 고르거나 Settings › Behaviour를 사용합니다.</kr>
 
 > [!WARNING] Never tap a cube that is in a running show on the Workstation. The console skips only when it knows a show is running; otherwise the flash or zone ends the show on that cube.
 > 진행 중인 쇼에 있는 큐브를 워크스테이션에 올리지 않습니다. 콘솔은 쇼 진행을 알고 있을 때만 건너뜁니다. 그렇지 않으면 깜박임이나 존 설정이 그 큐브의 쇼를 끝냅니다.

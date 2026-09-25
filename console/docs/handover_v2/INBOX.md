@@ -622,3 +622,18 @@ No hardware test. Supersedes the 2026-09-23 workstation-auto-flash-tag entry ("o
 - Code note (not a docs change): the `sessions/workstation.py` docstring says "a cube plugged in takes over at once";
   `hub.identified()` actually leaves a running tag-read flash alone (it finishes its 2 s or the next operation takes it
   over). The docs describe the code.
+
+## 2026-09-25 · from jinhee-sos-04 · Workstation tag-read action is one selector, not a switch plus buttons · Applied
+
+Commit `926ac6f`. Evidence: Simulation-verified (console JS 42/42, console Python 301 OK, simulated console screenshots
+of the Off, Flash 2 s and pool states). No hardware test.
+
+- The **On the reader** card's ON/OFF switch and **On each tag** picker became one selector, **Signal the cube when its
+  tag is read**: **Off** · **Flash 2 s** · **idle** · **preshow** · **desert** · **pool** · **mainshow**. It is a
+  saved setting that applies to every tag read from then on, not an on-demand action. Same settings and command as
+  before (`reader_flash`, `console_reader_action`, `radio.reader_flash {on?, action?}`); **Off** keeps the chosen action.
+- The card's one-shot **Flash 2 s**, **Clear (idle white)** and zone buttons, and the note "Actions apply to the cube on
+  the reader, or to a selected history row", are removed. **Stop** and **Open cube page** stay. Manual flash: Pairing
+  tab; manual SET_ZONE: **Cubes & show**.
+- Applied: `console/README.md` Workstation row; H3 B3 (intro, staging, turning it off); H5 symptom row; X03 tools row;
+  X11 close-out line, tag-read section (controls, rest of the card, `zone:N`, evidence); X13 bench check.
